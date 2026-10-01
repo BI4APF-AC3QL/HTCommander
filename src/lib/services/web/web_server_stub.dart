@@ -10,6 +10,7 @@ shared code keeps compiling.
 */
 
 import 'dart:typed_data';
+import 'remote_access_config.dart';
 
 /// Callback raised when a WebSocket [client] connects or disconnects.
 typedef WebSocketClientCallback = void Function(WebSocketClient client);
@@ -35,7 +36,7 @@ class WebSocketClient {
 
 /// Inert web stub of the static web + WebSocket server.
 class WebServer {
-  WebServer(this.port);
+  WebServer(this.port, {RemoteAccessConfig? remoteConfig});
 
   final int port;
 
@@ -52,7 +53,7 @@ class WebServer {
 
   Future<bool> start() async => false;
 
-  void stop() {}
+  Future<void> stop() async {}
 
   void dispose() {}
 

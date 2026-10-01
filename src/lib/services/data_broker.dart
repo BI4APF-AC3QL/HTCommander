@@ -75,6 +75,7 @@ class DataBroker {
     'AllStarPassword',
     'AllStarWtToken',
     'AllStarNodePassword',
+    'webServerPassword',
   };
   final Map<String, Future<void>> _secretWrites = {};
 

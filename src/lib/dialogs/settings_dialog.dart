@@ -30,6 +30,7 @@ import '../services/winlink_gateway_service.dart';
 import '../services/sherpa_model_manager.dart';
 import '../widgets/contact_avatar.dart';
 import 'app_settings.dart';
+import 'remote_access_dialog.dart';
 import 'aprs_route_dialog.dart';
 import 'contact_logo_picker_dialog.dart';
 import 'echolink_create_account_dialog.dart';
@@ -3647,6 +3648,25 @@ class _SettingsDialogState extends State<SettingsDialog>
                 const SizedBox(height: 16),
                 const Divider(),
                 const SizedBox(height: 16),
+                if (!kIsWeb) ...[
+                  FilledButton.tonalIcon(
+                    icon: const Icon(Icons.phonelink),
+                    label: Text(Localizations.localeOf(context).languageCode == 'zh'
+                        ? '手机远程操控设置' : 'Phone remote control settings'),
+                    onPressed: () async {
+                      await showDialog<bool>(context: context,
+                          builder: (_) => const RemoteAccessDialog());
+                      if (!mounted) return;
+                      final current = AppSettings.loadFromDataBroker();
+                      setState(() {
+                        _settings.webServerEnabled = current.webServerEnabled;
+                        _settings.webServerPort = current.webServerPort;
+                        _webPortController.text = current.webServerPort.toString();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 // AGWPE Server
                 Row(
                   children: [

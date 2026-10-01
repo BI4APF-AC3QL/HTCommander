@@ -5,7 +5,7 @@ http://www.apache.org/licenses/LICENSE-2.0
 
 A minimal HTTP + WebSocket server that serves the Flutter web build (see
 [_resolveWebAppDir]) and bridges the radio to connected browsers over a
-WebSocket at `/websocket.aspx`. Bound to all interfaces (`anyIPv4`).
+WebSocket at `/websocket.aspx`. LAN listening requires explicit remote opt-in.
 
 The served Flutter UI connects back over that WebSocket to share the host's
 radio instead of using the browser's Web Bluetooth (see
@@ -17,6 +17,7 @@ framing). The bridge logic that connects WebSocket clients to the radio lives in
 */
 
 import 'dart:io';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -24,6 +25,9 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../data_broker_client.dart';
+import 'remote_access_config.dart';
+import 'remote_web_auth.dart';
+import 'remote_mobile_page.dart';
 
 /// Callback raised when a WebSocket [client] connects or disconnects.
 typedef WebSocketClientCallback = void Function(WebSocketClient client);
@@ -74,7 +78,17 @@ class WebSocketClient {
 /// Serves the Flutter web build over HTTP and bridges the radio over a
 /// WebSocket on desktop platforms.
 class WebServer {
-  WebServer(this.port) : _broker = DataBrokerClient();
+  WebServer(this.port, {RemoteAccessConfig? remoteConfig})
+    : remoteConfig = remoteConfig ?? const RemoteAccessConfig(),
+      _broker = DataBrokerClient() {
+    _auth = RemoteWebAuth(this.remoteConfig.password);
+  }
+
+  final RemoteAccessConfig remoteConfig;
+  late final RemoteWebAuth _auth;
+  final Set<String> _allowedHosts = {'localhost', '127.0.0.1', '::1'};
+  final Map<int, Timer> _sessionChecks = {};
+  final Map<int, String?> _clientSessions = {};
 
   /// The WebSocket endpoint the browser connects to.
   static const String _webSocketPath = '/websocket.aspx';
@@ -84,6 +98,7 @@ class WebServer {
 
   HttpServer? _server;
   bool _running = false;
+  int _generation = 0;
   int _nextClientId = 1;
   final String _sessionToken = base64UrlEncode(
     List<int>.generate(32, (_) => Random.secure().nextInt(256)),
@@ -120,8 +135,29 @@ class WebServer {
   /// Starts the web server. Returns `true` on success.
   Future<bool> start() async {
     if (_running) return true;
+    final generation = ++_generation;
     try {
-      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+      if (remoteConfig.validationError != null) {
+        throw StateError(remoteConfig.validationError!);
+      }
+      if (remoteConfig.enabled) {
+        for (final interface in await NetworkInterface.list()) {
+          _allowedHosts.addAll(interface.addresses.map((a) => a.address));
+        }
+        final external = remoteConfig.externalOrigin;
+        if (external != null) _allowedHosts.add(Uri.parse(external).host);
+      }
+      final listener = await HttpServer.bind(
+        remoteConfig.enabled
+            ? InternetAddress.anyIPv4
+            : InternetAddress.loopbackIPv4,
+        port,
+      );
+      if (generation != _generation) {
+        await listener.close(force: true);
+        return false;
+      }
+      _server = listener;
       _running = true;
       _server!.listen(
         _handleRequest,
@@ -139,20 +175,27 @@ class WebServer {
   }
 
   /// Stops the web server and closes all WebSocket clients.
-  void stop() {
+  Future<void> stop() async {
+    _generation++;
     if (!_running && _server == null) return;
     _running = false;
     for (final client in List<WebSocketClient>.from(_clients.values)) {
       client._close();
     }
     _clients.clear();
-    _server?.close(force: true);
+    for (final timer in _sessionChecks.values) {
+      timer.cancel();
+    }
+    _sessionChecks.clear();
+    _clientSessions.clear();
+    final listener = _server;
     _server = null;
+    await listener?.close(force: true);
     _broker.logInfo('[WebServer] Stopped');
   }
 
   void dispose() {
-    stop();
+    unawaited(stop());
     _broker.dispose();
   }
 
@@ -171,17 +214,53 @@ class WebServer {
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
-    // Reject DNS rebinding and cross-origin browser requests even on loopback.
     final host = request.requestedUri.host.toLowerCase();
     final origin = request.headers.value('origin');
-    final parsedOrigin = origin == null ? null : Uri.tryParse(origin);
-    if (!['127.0.0.1', 'localhost', '::1'].contains(host) ||
-        (origin != null &&
-            (parsedOrigin == null ||
-                parsedOrigin.origin != request.requestedUri.origin))) {
+    final expectedOrigin = _effectiveOrigin(request);
+    request.response.headers.set('X-Content-Type-Options', 'nosniff');
+    request.response.headers.set('X-Frame-Options', 'DENY');
+    request.response.headers.set('Referrer-Policy', 'no-referrer');
+    if (!_allowedHosts.contains(host) ||
+        (origin != null && origin != expectedOrigin)) {
       request.response.statusCode = HttpStatus.forbidden;
       await request.response.close();
       return;
+    }
+    if (remoteConfig.enabled) {
+      if (request.uri.path == '/login') {
+        await _handleLogin(request);
+        return;
+      }
+      if (request.uri.path == '/logout' &&
+          request.method == 'POST' &&
+          origin == expectedOrigin) {
+        final session = _cookie(request, 'htc_bridge');
+        _auth.logout(session);
+        // Logout also revokes the open radio/audio connection immediately.
+        for (final entry in _clientSessions.entries.toList()) {
+          if (entry.value == session) {
+            _clients[entry.key]?._close();
+          }
+        }
+        request.response.cookies.add(
+          Cookie('htc_bridge', '')
+            ..maxAge = 0
+            ..path = '/',
+        );
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+        return;
+      }
+      if (!_authorized(request)) {
+        if (WebSocketTransformer.isUpgradeRequest(request)) {
+          request.response.statusCode = HttpStatus.unauthorized;
+        } else {
+          request.response.statusCode = HttpStatus.seeOther;
+          request.response.headers.set('location', '/login');
+        }
+        await request.response.close();
+        return;
+      }
     }
     // WebSocket upgrade requests are bridged to the radio.
     if (WebSocketTransformer.isUpgradeRequest(request)) {
@@ -199,10 +278,7 @@ class WebServer {
       return;
     }
 
-    final authorized = request.cookies.any(
-      (cookie) => cookie.name == 'htc_bridge' && cookie.value == _sessionToken,
-    );
-    if (!authorized || request.headers.value('origin') == null) {
+    if (!_authorized(request) || request.headers.value('origin') == null) {
       request.response.statusCode = HttpStatus.unauthorized;
       await request.response.close();
       return;
@@ -225,9 +301,22 @@ class WebServer {
     _clients[clientId] = client;
     _broker.logInfo('[WebServer] WebSocket client $clientId connected');
     onClientConnected?.call(client);
+    if (remoteConfig.enabled) {
+      final session = _cookie(request, 'htc_bridge');
+      _clientSessions[clientId] = session;
+      _sessionChecks[clientId] = Timer.periodic(const Duration(seconds: 30), (
+        _,
+      ) {
+        if (!_auth.authenticated(session)) client._close();
+      });
+    }
 
     socket.listen(
       (dynamic message) {
+        if (remoteConfig.enabled && !_authorized(request)) {
+          client._close();
+          return;
+        }
         final size = message is String
             ? utf8.encode(message).length
             : (message is List<int> ? message.length : 0);
@@ -252,6 +341,8 @@ class WebServer {
   }
 
   void _removeClient(WebSocketClient client) {
+    _sessionChecks.remove(client.id)?.cancel();
+    _clientSessions.remove(client.id);
     if (_clients.remove(client.id) == null) return;
     _broker.logInfo('[WebServer] WebSocket client ${client.id} disconnected');
     onClientDisconnected?.call(client);
@@ -260,6 +351,14 @@ class WebServer {
   Future<void> _handleHttpRequest(HttpRequest request) async {
     final response = request.response;
     try {
+      if (remoteConfig.enabled &&
+          (request.uri.path == '/' || request.uri.path == '/remote.html')) {
+        response.headers.contentType = ContentType.html;
+        response.headers.set('Cache-Control', 'no-store');
+        response.write(remoteMobilePage);
+        await response.close();
+        return;
+      }
       final dir = _resolveWebAppDir();
       if (dir == null) {
         response.statusCode = HttpStatus.notFound;
@@ -320,7 +419,7 @@ class WebServer {
         return;
       }
 
-      if (relativePath == 'index.html') {
+      if (relativePath == 'index.html' && !remoteConfig.enabled) {
         response.cookies.add(
           Cookie('htc_bridge', _sessionToken)
             ..httpOnly = true
@@ -338,12 +437,105 @@ class WebServer {
       try {
         response.statusCode = HttpStatus.internalServerError;
         response.headers.contentType = ContentType.text;
-        response.write('500 - Internal Server Error\n$ex');
+        response.write('500 - Internal Server Error');
         await response.close();
       } catch (_) {
         // Response already (partly) sent; nothing more to do.
       }
     }
+  }
+
+  String _effectiveOrigin(HttpRequest request) {
+    final external = remoteConfig.externalOrigin;
+    if (external != null &&
+        request.requestedUri.host == Uri.parse(external).host) {
+      return external;
+    }
+    return request.requestedUri.origin;
+  }
+
+  String? _cookie(HttpRequest request, String name) {
+    for (final cookie in request.cookies) {
+      if (cookie.name == name) return cookie.value;
+    }
+    return null;
+  }
+
+  bool _authorized(HttpRequest request) {
+    final token = _cookie(request, 'htc_bridge');
+    return remoteConfig.enabled
+        ? _auth.authenticated(token)
+        : token == _sessionToken;
+  }
+
+  Future<void> _handleLogin(HttpRequest request) async {
+    final response = request.response;
+    response.headers.set('Cache-Control', 'no-store');
+    response.headers.set(
+      'Content-Security-Policy',
+      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+    );
+    final address = request.connectionInfo?.remoteAddress.address ?? 'unknown';
+    if (_auth.rateLimited(address)) {
+      response.statusCode = HttpStatus.tooManyRequests;
+      response.headers.set('Retry-After', '60');
+      response.write('Too many login attempts. Retry in one minute.');
+      await response.close();
+      return;
+    }
+    if (request.method == 'POST') {
+      try {
+        final bytes = <int>[];
+        await for (final chunk in request.timeout(
+          const Duration(seconds: 10),
+        )) {
+          if (bytes.length + chunk.length > 4096) throw const FormatException();
+          bytes.addAll(chunk);
+        }
+        final fields = Uri.splitQueryString(utf8.decode(bytes));
+        if (!_auth.consumeForm(_cookie(request, 'htc_login'), fields['csrf'])) {
+          response.statusCode = HttpStatus.forbidden;
+          await response.close();
+          return;
+        }
+        final token = _auth.login(address, fields['password'] ?? '');
+        if (token != null) {
+          response.cookies.add(
+            Cookie('htc_bridge', token)
+              ..httpOnly = true
+              ..sameSite = SameSite.strict
+              ..path = '/'
+              ..secure = _effectiveOrigin(request).startsWith('https:')
+              ..maxAge = 43200,
+          );
+          response.statusCode = HttpStatus.seeOther;
+          response.headers.set('location', '/remote.html');
+          await response.close();
+          return;
+        }
+        response.statusCode = HttpStatus.unauthorized;
+      } catch (_) {
+        response.statusCode = HttpStatus.badRequest;
+        await response.close();
+        return;
+      }
+    } else if (request.method != 'GET') {
+      response.statusCode = HttpStatus.methodNotAllowed;
+      await response.close();
+      return;
+    }
+    final form = _auth.newForm();
+    response.cookies.add(
+      Cookie('htc_login', form)
+        ..httpOnly = true
+        ..sameSite = SameSite.strict
+        ..path = '/login'
+        ..secure = _effectiveOrigin(request).startsWith('https:')
+        ..maxAge = 300,
+    );
+    response.headers.contentType = ContentType.html;
+    response.write(loginPage(form, failed: response.statusCode == 401));
+    await response.close();
   }
 
   /// Resolves the Flutter web build directory, or `null` if none is found.

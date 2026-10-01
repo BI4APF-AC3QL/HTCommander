@@ -21,6 +21,7 @@ resolves to an inert stub.
 */
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -34,12 +35,18 @@ import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../services/host_bridge.dart';
 import '../services/web/web_server.dart';
+import '../services/web/remote_access_config.dart';
+import '../services/web/remote_radio_controller.dart';
 import '../winlink/winlink_mail.dart';
 
 /// Manages the lifecycle of the [WebServer] and bridges WebSocket clients to the
 /// radio, based on app settings.
 class WebServerHandler {
-  WebServerHandler() : _broker = DataBrokerClient();
+  WebServerHandler() : _broker = DataBrokerClient() {
+    _remote = RemoteRadioController(target: () => _targetRadioDeviceId);
+  }
+  late final RemoteRadioController _remote;
+  Timer? _rebindTimer;
 
   final DataBrokerClient _broker;
 
@@ -88,7 +95,14 @@ class WebServerHandler {
 
     _broker.subscribeMultiple(
       deviceId: 0,
-      names: <String>['webServerEnabled', 'webServerPort'],
+      names: <String>[
+        'webServerEnabled',
+        'webServerPort',
+        'webServerRemoteEnabled',
+        'webServerPassword',
+        'webServerPublicOrigin',
+        'webServerAllowTransmit',
+      ],
       callback: _onSettingChanged,
     );
     _broker.subscribe(
@@ -110,18 +124,10 @@ class WebServerHandler {
     );
     // Airplanes (Dump1090) polled by the host: cache and push to browsers, which
     // cannot reach the LAN Dump1090 server themselves.
-    _broker.subscribe(
-      deviceId: 0,
-      name: 'Airplanes',
-      callback: _onAirplanes,
-    );
+    _broker.subscribe(deviceId: 0, name: 'Airplanes', callback: _onAirplanes);
     // Cache the Winlink mail list (dispatched on demand via `MailGetAll`) and
     // push a fresh snapshot to browsers whenever the host's mail changes.
-    _broker.subscribe(
-      deviceId: 0,
-      name: 'MailList',
-      callback: _onMailList,
-    );
+    _broker.subscribe(deviceId: 0, name: 'MailList', callback: _onMailList);
     _broker.subscribe(
       deviceId: 0,
       name: 'MailsChanged',
@@ -179,25 +185,14 @@ class WebServerHandler {
 
   void _onSettingChanged(int deviceId, String name, Object? data) {
     if (_disposed) return;
-    if (name == 'webServerEnabled') {
-      final enabled = (data is int ? data : 0) == 1;
-      if (enabled == _enabled) return;
-      _enabled = enabled;
-      if (_enabled) {
-        _startServer();
-      } else {
-        _stopServer();
-      }
-    } else if (name == 'webServerPort') {
-      final port = data is int ? data : _port;
-      if (port == _port) return;
-      _port = port;
-      // Rebind on the new port if currently running.
-      if (_enabled) {
-        _stopServer();
-        _startServer();
-      }
-    }
+    if (name == 'webServerEnabled') _enabled = data == 1;
+    if (name == 'webServerPort' && data is int) _port = data;
+    _remote.release();
+    _rebindTimer?.cancel();
+    _rebindTimer = Timer(const Duration(milliseconds: 200), () async {
+      await _stopServer();
+      if (!_disposed && _enabled) _startServer();
+    });
   }
 
   void _onConnectedRadiosChanged(int deviceId, String name, Object? data) {
@@ -228,6 +223,7 @@ class WebServerHandler {
   void _repointBrowsers() {
     final server = _server;
     if (server == null || server.clientCount == 0) return;
+    _remote.release();
     server.broadcastText('disconnected');
     server.broadcastText(_stateMessageFor(_currentRadioState));
   }
@@ -336,7 +332,9 @@ class WebServerHandler {
   void _onAprsPacketList(int deviceId, String name, Object? data) {
     if (_disposed) return;
     if (data is List) {
-      _lastAprsPacketList = data.whereType<AprsPacket>().toList(growable: false);
+      _lastAprsPacketList = data.whereType<AprsPacket>().toList(
+        growable: false,
+      );
     }
   }
 
@@ -600,12 +598,7 @@ class WebServerHandler {
   /// Refreshes the cached mail list (a synchronous `MailGetAll` dispatch updates
   /// [_lastMailList]) and encodes it as a `mail:` snapshot message.
   String _encodeMailSnapshot() {
-    _broker.dispatch(
-      deviceId: 0,
-      name: 'MailGetAll',
-      data: null,
-      store: false,
-    );
+    _broker.dispatch(deviceId: 0, name: 'MailGetAll', data: null, store: false);
     final mails = _lastMailList ?? const <WinLinkMail>[];
     final list = mails.map((m) => m.toJson()).toList(growable: false);
     return 'mail:${jsonEncode(list)}';
@@ -645,6 +638,29 @@ class WebServerHandler {
 
   void _onTextMessage(WebSocketClient client, String message) {
     if (_disposed) return;
+    if (message.startsWith('remote:')) {
+      try {
+        final command = jsonDecode(message.substring(7));
+        if (command is! Map) return;
+        final error = _remote.command(client.id, command);
+        client.sendText(
+          'remote:${jsonEncode({'clientId': client.id, 'state': _remote.snapshot(), 'error': error})}',
+        );
+      } catch (_) {
+        client.sendText('remote:{"error":"Invalid remote control message."}');
+      }
+      return;
+    }
+    if (RemoteAccessConfig.current.enabled &&
+        (message.startsWith('setsetting:') ||
+            message.startsWith('mailop:') ||
+            message.startsWith('winlinksync:') ||
+            message == 'disconnect')) {
+      client.sendText(
+        'log:Use the mobile remote page for radio controls; host settings stay on Windows.',
+      );
+      return;
+    }
     if (message.startsWith('setsetting:')) {
       _applyClientSetting(message.substring('setsetting:'.length));
       return;
@@ -658,6 +674,7 @@ class WebServerHandler {
       return;
     }
     if (message == 'audiooff') {
+      _remote.disconnected(client.id);
       _audioClients.remove(client.id);
       return;
     }
@@ -702,6 +719,18 @@ class WebServerHandler {
 
   void _onBinaryMessage(WebSocketClient client, Uint8List data) {
     if (_disposed) return;
+    if (data.isNotEmpty &&
+        data[0] == RemoteRadioController.microphoneFrameMagic) {
+      _remote.microphone(client.id, data);
+      return;
+    }
+    if (RemoteAccessConfig.current.enabled &&
+        !RemoteRadioController.safeRawCommand(data)) {
+      client.sendText(
+        'log:Raw write/TX commands are disabled; use the mobile remote page.',
+      );
+      return;
+    }
     final target = _targetRadioDeviceId;
     if (target < 0 || data.length < 4) return;
     // The browser sends raw GATT command frames; hand them to the radio.
@@ -719,29 +748,49 @@ class WebServerHandler {
 
   void _startServer() {
     if (_server != null) return;
-    final server = WebServer(_port);
+    final server = WebServer(_port, remoteConfig: RemoteAccessConfig.current);
     server.onClientConnected = _onClientConnected;
     server.onClientDisconnected = _onClientDisconnected;
     server.onTextMessage = _onTextMessage;
     server.onBinaryMessage = _onBinaryMessage;
     _server = server;
-    server.start();
+    server.start().then((ok) {
+      if (_disposed || _server != server) {
+        server.dispose();
+        return;
+      }
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'webServerStatus',
+        data: ok
+            ? 'Listening on port $_port'
+            : 'Failed to start; check password/port and Debug log',
+        store: false,
+      );
+      if (!ok) {
+        _server = null;
+        server.dispose();
+      }
+    });
     // Mirror all host PCM playback (radio, transmit, EchoLink, AllStarLink) to
     // opted-in browsers. Desktop only; the web build never plays local audio.
     if (!kIsWeb) PcmPlayer.playbackTap = _onHostPcm;
   }
 
-  void _stopServer() {
+  Future<void> _stopServer() async {
     final server = _server;
     if (server == null) return;
     if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
+    _remote.release();
     _audioClients.clear();
     _server = null;
+    await server.stop();
     server.dispose();
   }
 
   void _onClientDisconnected(WebSocketClient client) {
     if (_disposed) return;
+    _remote.disconnected(client.id);
     _audioClients.remove(client.id);
   }
 
@@ -768,6 +817,7 @@ class WebServerHandler {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _rebindTimer?.cancel();
     _stopServer();
     _broker.dispose();
   }
