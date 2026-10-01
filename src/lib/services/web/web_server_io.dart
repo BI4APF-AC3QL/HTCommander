@@ -219,7 +219,10 @@ class WebServer {
     final expectedOrigin = _effectiveOrigin(request);
     request.response.headers.set('X-Content-Type-Options', 'nosniff');
     request.response.headers.set('X-Frame-Options', 'DENY');
-    request.response.headers.set('Referrer-Policy', 'no-referrer');
+    // Chromium form POSTs may use Origin: null under no-referrer, which
+    // conflicts with the same-origin check below. Keep same-site origins
+    // available without disclosing referrers to other sites.
+    request.response.headers.set('Referrer-Policy', 'same-origin');
     if (!_allowedHosts.contains(host) ||
         (origin != null && origin != expectedOrigin)) {
       request.response.statusCode = HttpStatus.forbidden;

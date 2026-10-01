@@ -100,9 +100,15 @@ void main() {
       expect(denied.headers.value('location'), '/login');
       await denied.drain<void>();
       final login = await get('/login');
+      expect(login.headers.value('referrer-policy'), 'same-origin');
       final csrf = login.cookies.singleWhere((c) => c.name == 'htc_login');
       expect(csrf.httpOnly, true);
       await login.drain<void>();
+      final opaque = await http.postUrl(Uri.parse('$base/login'));
+      opaque.headers.set('origin', 'null');
+      final opaqueResponse = await opaque.close();
+      expect(opaqueResponse.statusCode, HttpStatus.forbidden);
+      await opaqueResponse.drain<void>();
       final post = await http.postUrl(Uri.parse('$base/login'));
       post.followRedirects = false;
       post.cookies.add(csrf);
