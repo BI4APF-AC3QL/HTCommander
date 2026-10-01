@@ -27,7 +27,16 @@ import 'package:archive/archive.dart';
 /// (*) Integers use bsdiff's sign-magnitude "offtin" encoding, where the high
 /// bit of the last byte is the sign flag rather than two's-complement.
 class BsPatch {
-  static const List<int> _magic = [0x42, 0x53, 0x44, 0x49, 0x46, 0x46, 0x34, 0x30]; // "BSDIFF40"
+  static const List<int> _magic = [
+    0x42,
+    0x53,
+    0x44,
+    0x49,
+    0x46,
+    0x46,
+    0x34,
+    0x30,
+  ]; // "BSDIFF40"
 
   /// Returns `true` if [patch] begins with the `BSDIFF40` magic.
   static bool isBsdiff40(Uint8List patch) {
@@ -46,12 +55,17 @@ class BsPatch {
       throw const FormatException('Not a BSDIFF40 patch (bad magic)');
     }
     if (patch.length < 32) {
-      throw const FormatException('BSDIFF40 patch too short (truncated header)');
+      throw const FormatException(
+        'BSDIFF40 patch too short (truncated header)',
+      );
     }
 
     final ctrlLen = _offtin(patch, 8);
     final diffLen = _offtin(patch, 16);
     final newSize = _offtin(patch, 24);
+    if (newSize > 64 * 1024 * 1024) {
+      throw const FormatException('Patched image exceeds 64 MiB');
+    }
 
     if (ctrlLen < 0 || diffLen < 0 || newSize < 0) {
       throw const FormatException('BSDIFF40 patch has negative block sizes');
@@ -65,15 +79,9 @@ class BsPatch {
     }
 
     final decoder = BZip2Decoder();
-    final control = decoder.decodeBytes(
-      patch.sublist(ctrlStart, diffStart),
-    );
-    final diff = decoder.decodeBytes(
-      patch.sublist(diffStart, extraStart),
-    );
-    final extra = decoder.decodeBytes(
-      patch.sublist(extraStart, patch.length),
-    );
+    final control = decoder.decodeBytes(patch.sublist(ctrlStart, diffStart));
+    final diff = decoder.decodeBytes(patch.sublist(diffStart, extraStart));
+    final extra = decoder.decodeBytes(patch.sublist(extraStart, patch.length));
 
     final out = Uint8List(newSize);
 

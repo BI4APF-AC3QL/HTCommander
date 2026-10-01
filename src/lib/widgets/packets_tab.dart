@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File, Platform;
 
@@ -64,6 +65,8 @@ class _PacketsTabState extends State<PacketsTab>
 
   final List<CapturedPacket> _packets = [];
   final DataBrokerClient _broker = DataBrokerClient();
+  Timer? _packetRefreshTimer;
+  final List<CapturedPacket> _pendingPackets = [];
 
   /// Maps an upper-cased radio MAC address to its friendly name, so the packet
   /// list can label each packet with the radio it was sent or received on.
@@ -142,6 +145,8 @@ class _PacketsTabState extends State<PacketsTab>
 
   @override
   void dispose() {
+    _packetRefreshTimer?.cancel();
+    _pendingPackets.clear();
     _broker.dispose();
     _listFocusNode.dispose();
     _listScrollController.dispose();
@@ -210,7 +215,9 @@ class _PacketsTabState extends State<PacketsTab>
     final mac = packet.radioMac;
     if (mac.isEmpty) return '';
     final name = _radioNames[mac.toUpperCase()];
-    if (name != null && name.isNotEmpty && name.toUpperCase() != mac.toUpperCase()) {
+    if (name != null &&
+        name.isNotEmpty &&
+        name.toUpperCase() != mac.toUpperCase()) {
       return '$name ($mac)';
     }
     return mac;
@@ -222,6 +229,9 @@ class _PacketsTabState extends State<PacketsTab>
 
     // In detached windows the list arrives as `List<dynamic>` whose elements
     // were rebuilt from JSON, so filter by type rather than casting the list.
+    _packetRefreshTimer?.cancel();
+    _packetRefreshTimer = null;
+    _pendingPackets.clear();
     final fragments = data.whereType<TncDataFragment>().toList();
 
     setState(() {
@@ -238,11 +248,26 @@ class _PacketsTabState extends State<PacketsTab>
     if (data is! TncDataFragment) return;
     if (!mounted) return;
 
+    _pendingPackets.add(CapturedPacket(data));
+    if (_pendingPackets.length > _maxPackets) _pendingPackets.removeAt(0);
+    _packetRefreshTimer ??= Timer(
+      Duration(milliseconds: isTabVisible ? 100 : 1000),
+      _flushPackets,
+    );
+  }
+
+  void _flushPackets() {
+    _packetRefreshTimer?.cancel();
+    _packetRefreshTimer = null;
+    if (!mounted || _pendingPackets.isEmpty) return;
     setState(() {
       final selected = _selectedPacket;
-      _packets.add(CapturedPacket(data));
+      _packets.addAll(_pendingPackets);
+      _pendingPackets.clear();
+      // Sorting changes list order. Evict by reception time, not sorted index.
       if (_packets.length > _maxPackets) {
-        _packets.removeAt(0);
+        _packets.sort((a, b) => a.fragment.time.compareTo(b.fragment.time));
+        _packets.removeRange(0, _packets.length - _maxPackets);
       }
       _applySort(selected);
     });
@@ -332,7 +357,8 @@ class _PacketsTabState extends State<PacketsTab>
       return KeyEventResult.ignored;
     }
     final bool extend = HardwareKeyboard.instance.isShiftPressed;
-    final bool control = HardwareKeyboard.instance.isControlPressed ||
+    final bool control =
+        HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
     if (control && event.logicalKey == LogicalKeyboardKey.keyC) {
       _copySelectedPackets();
@@ -450,7 +476,9 @@ class _PacketsTabState extends State<PacketsTab>
     Clipboard.setData(ClipboardData(text: buffer.toString().trimRight()));
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AppLocalizations.of(context).packetsCopied(count))),
+        SnackBar(
+          content: Text(AppLocalizations.of(context).packetsCopied(count)),
+        ),
       );
     }
   }
@@ -472,6 +500,7 @@ class _PacketsTabState extends State<PacketsTab>
   }
 
   Future<void> _onSaveToFile() async {
+    _flushPackets();
     if (_packets.isEmpty) return;
 
     // Serialize every packet using the same line format the PacketStore uses
@@ -598,7 +627,9 @@ class _PacketsTabState extends State<PacketsTab>
           value: 'clear',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(children: [const SizedBox(width: 20), Text(l10n.tabClear)]),
+          child: Row(
+            children: [const SizedBox(width: 20), Text(l10n.tabClear)],
+          ),
         ),
         if (windowService.canDetach) ...[
           const PopupMenuDivider(height: 8),
@@ -801,108 +832,115 @@ class _PacketsTabState extends State<PacketsTab>
                       itemExtent: _rowHeight,
                       itemCount: _packets.length,
                       itemBuilder: (context, index) {
-                      final packet = _packets[index];
-                      final isSelected = _isIndexSelected(index);
-                      return InkWell(
-                        onTap: () => _onPacketSelected(
-                          index,
-                          extend: HardwareKeyboard.instance.isShiftPressed,
-                        ),
-                        onSecondaryTapDown: (details) => _showPacketContextMenu(
-                          context,
-                          index,
-                          details.globalPosition,
-                        ),
-                        child: Container(
-                          clipBehavior: Clip.hardEdge,
-                          decoration: BoxDecoration(
-                            color: isSelected ? scheme.primaryContainer : null,
-                            border: Border(
-                              bottom: BorderSide(color: scheme.outlineVariant),
+                        final packet = _packets[index];
+                        final isSelected = _isIndexSelected(index);
+                        return InkWell(
+                          onTap: () => _onPacketSelected(
+                            index,
+                            extend: HardwareKeyboard.instance.isShiftPressed,
+                          ),
+                          onSecondaryTapDown: (details) =>
+                              _showPacketContextMenu(
+                                context,
+                                index,
+                                details.globalPosition,
+                              ),
+                          child: Container(
+                            clipBehavior: Clip.hardEdge,
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? scheme.primaryContainer
+                                  : null,
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: scheme.outlineVariant,
+                                ),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                // Direction icon
+                                SizedBox(
+                                  width: 32,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 6,
+                                    ),
+                                    child: Icon(
+                                      packet.isSoftwareModem
+                                          ? (packet.direction ==
+                                                    PacketDirection.incoming
+                                                ? Icons
+                                                      .keyboard_double_arrow_down
+                                                : Icons
+                                                      .keyboard_double_arrow_up)
+                                          : (packet.direction ==
+                                                    PacketDirection.incoming
+                                                ? Icons.arrow_downward
+                                                : Icons.arrow_upward),
+                                      size: 16,
+                                      color:
+                                          packet.direction ==
+                                              PacketDirection.incoming
+                                          ? Colors.green
+                                          : Colors.blue,
+                                    ),
+                                  ),
+                                ),
+                                // Time
+                                SizedBox(
+                                  width: 80,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 6,
+                                    ),
+                                    child: Text(
+                                      _formatTime(packet.time),
+                                      style: const TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                // Channel
+                                SizedBox(
+                                  width: 80,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 6,
+                                    ),
+                                    child: Text(
+                                      packet.channel,
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                ),
+                                // Data summary
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 6,
+                                    ),
+                                    child: Text(
+                                      packet.summary,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          child: Row(
-                            children: [
-                              // Direction icon
-                              SizedBox(
-                                width: 32,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 6,
-                                  ),
-                                  child: Icon(
-                                    packet.isSoftwareModem
-                                        ? (packet.direction ==
-                                                  PacketDirection.incoming
-                                              ? Icons.keyboard_double_arrow_down
-                                              : Icons.keyboard_double_arrow_up)
-                                        : (packet.direction ==
-                                                  PacketDirection.incoming
-                                              ? Icons.arrow_downward
-                                              : Icons.arrow_upward),
-                                    size: 16,
-                                    color:
-                                        packet.direction ==
-                                            PacketDirection.incoming
-                                        ? Colors.green
-                                        : Colors.blue,
-                                  ),
-                                ),
-                              ),
-                              // Time
-                              SizedBox(
-                                width: 80,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 6,
-                                  ),
-                                  child: Text(
-                                    _formatTime(packet.time),
-                                    style: const TextStyle(
-                                      fontFamily: 'monospace',
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // Channel
-                              SizedBox(
-                                width: 80,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 6,
-                                  ),
-                                  child: Text(
-                                    packet.channel,
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                ),
-                              ),
-                              // Data summary
-                              Expanded(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 4,
-                                    vertical: 6,
-                                  ),
-                                  child: Text(
-                                    packet.summary,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontFamily: 'monospace',
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                        );
+                      },
                     ),
                   ),
           ),
@@ -922,9 +960,21 @@ class _PacketsTabState extends State<PacketsTab>
       child: Row(
         children: [
           const SizedBox(width: 32), // Icon column
-          _buildColumnHeader(AppLocalizations.of(context).packetsColTime, 0, width: 80),
-          _buildColumnHeader(AppLocalizations.of(context).packetsColChannel, 1, width: 80),
-          _buildColumnHeader(AppLocalizations.of(context).packetsColData, 2, flex: 1),
+          _buildColumnHeader(
+            AppLocalizations.of(context).packetsColTime,
+            0,
+            width: 80,
+          ),
+          _buildColumnHeader(
+            AppLocalizations.of(context).packetsColChannel,
+            1,
+            width: 80,
+          ),
+          _buildColumnHeader(
+            AppLocalizations.of(context).packetsColData,
+            2,
+            flex: 1,
+          ),
         ],
       ),
     );

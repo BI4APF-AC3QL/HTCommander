@@ -65,6 +65,9 @@ class TncDataFragment {
 
   /// Decode a TNC data fragment from raw bytes received from radio
   static TncDataFragment fromBytes(Uint8List msg) {
+    if (msg.length < 6 || ((msg[5] & 0x40) != 0 && msg.length < 7)) {
+      throw const FormatException('Truncated TNC fragment');
+    }
     final finalFragment = (msg[5] & 0x80) != 0;
     final withChannelId = (msg[5] & 0x40) != 0;
     final fragmentId = msg[5] & 0x3F;

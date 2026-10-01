@@ -14,6 +14,7 @@ import '../radio/repeaterbook_client.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../utils/channel_colors.dart';
+import '../utils/map_source.dart';
 import 'channel_context_menu.dart';
 import 'channel_details_dialog.dart';
 import 'dialog_utils.dart';
@@ -124,8 +125,12 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
 
     // Restore the last-used search so reopening the dialog is pre-filled.
     _country =
-        DataBroker.getValue<String>(0, 'RepeaterBookCountry', 'United States') ??
-            'United States';
+        DataBroker.getValue<String>(
+          0,
+          'RepeaterBookCountry',
+          'United States',
+        ) ??
+        'United States';
     _state = DataBroker.getValue<String>(0, 'RepeaterBookState', '') ?? '';
     _city = DataBroker.getValue<String>(0, 'RepeaterBookCity', '') ?? '';
     _showMap =
@@ -173,7 +178,11 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
     );
 
     // Remember the inputs so the dialog is pre-filled next time.
-    DataBroker.dispatch(deviceId: 0, name: 'RepeaterBookCountry', data: country);
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'RepeaterBookCountry',
+      data: country,
+    );
     DataBroker.dispatch(deviceId: 0, name: 'RepeaterBookState', data: state);
     DataBroker.dispatch(deviceId: 0, name: 'RepeaterBookCity', data: city);
 
@@ -208,8 +217,11 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
       }
 
       if (_hasLocation) {
-        mapped.sort((a, b) => (a.distanceKm ?? double.infinity)
-            .compareTo(b.distanceKm ?? double.infinity));
+        mapped.sort(
+          (a, b) => (a.distanceKm ?? double.infinity).compareTo(
+            b.distanceKm ?? double.infinity,
+          ),
+        );
       }
 
       setState(() {
@@ -286,7 +298,9 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
 
   String? _resultSubtitle(_ResultChannel rc) {
     final parts = <String>[];
-    if (rc.distanceKm != null) parts.add('${rc.distanceKm!.toStringAsFixed(0)} km');
+    if (rc.distanceKm != null) {
+      parts.add('${rc.distanceKm!.toStringAsFixed(0)} km');
+    }
     if (rc.source.pl.isNotEmpty) parts.add('PL ${rc.source.pl}');
     if (rc.source.nearestCity.isNotEmpty && parts.length < 2) {
       parts.add(rc.source.nearestCity);
@@ -322,9 +336,7 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
           ? null
           : Row(
               children: [
-                Expanded(
-                  child: Text(title, overflow: TextOverflow.ellipsis),
-                ),
+                Expanded(child: Text(title, overflow: TextOverflow.ellipsis)),
                 _buildToggleButton(),
               ],
             ),
@@ -347,7 +359,9 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
                   _status,
                   style: TextStyle(
                     fontSize: 12,
-                    color: _statusIsError ? scheme.error : scheme.onSurfaceVariant,
+                    color: _statusIsError
+                        ? scheme.error
+                        : scheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -450,7 +464,8 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
             'Connect a radio to program channels.',
             textAlign: TextAlign.center,
             style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       );
@@ -522,19 +537,21 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
       if (_state.trim().isNotEmpty) _state.trim(),
       if (_city.trim().isNotEmpty) _city.trim(),
     ];
-    return parts.isEmpty ? 'Tap Search to choose an area.' : parts.join('  •  ');
+    return parts.isEmpty
+        ? 'Tap Search to choose an area.'
+        : parts.join('  •  ');
   }
 
   Future<void> _openSearchParams() async {
     final result =
         await showDialog<({String country, String state, String city})>(
-      context: context,
-      builder: (context) => _SearchParamsDialog(
-        country: _country,
-        state: _state,
-        city: _city,
-      ),
-    );
+          context: context,
+          builder: (context) => _SearchParamsDialog(
+            country: _country,
+            state: _state,
+            city: _city,
+          ),
+        );
     if (result == null || !mounted) return;
     setState(() {
       _country = result.country;
@@ -551,7 +568,10 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
     // Remember the view so it is restored the next time the dialog (or app)
     // opens, even if the dialog is cancelled.
     DataBroker.dispatch(
-        deviceId: 0, name: 'RepeaterBookMapView', data: _showMap);
+      deviceId: 0,
+      name: 'RepeaterBookMapView',
+      data: _showMap,
+    );
     // The map is (re)built with an initial camera fit, but refit once it has a
     // size in case results changed while it was hidden.
     if (_showMap) {
@@ -676,8 +696,8 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
     final initialCenter = _resultPoints.isNotEmpty
         ? _resultPoints.first
         : (_hasLocation
-            ? LatLng(widget.currentLat!, widget.currentLon!)
-            : const LatLng(20, 0));
+              ? LatLng(widget.currentLat!, widget.currentLon!)
+              : const LatLng(20, 0));
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(4),
@@ -704,11 +724,11 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
               Builder(
                 builder: (context) {
                   final Widget tiles = TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    urlTemplate: MapSource.current.urlTemplate,
                     userAgentPackageName: 'com.meshcentral.htcommander',
                   );
-                  if (Theme.of(context).brightness == Brightness.dark) {
+                  if (Theme.of(context).brightness == Brightness.dark &&
+                      MapSource.current.id != 'esri-satellite') {
                     return ColorFiltered(
                       colorFilter: _darkMapTileFilter,
                       child: tiles,
@@ -735,8 +755,10 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
           if (markers.isEmpty)
             Center(
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: scheme.surface.withValues(alpha: 0.9),
                   borderRadius: BorderRadius.circular(4),
@@ -831,12 +853,12 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
     final palette = ChannelPalette.of(context);
     final label = channel.name.isNotEmpty ? channel.name : 'RPT';
     Widget tile({bool dragging = false}) => _channelTile(
-          label: label,
-          freqHz: channel.rxFreq,
-          background: dragging ? palette.selected : palette.base,
-          highlight: dragging,
-          width: _tileWidth,
-        );
+      label: label,
+      freqHz: channel.rxFreq,
+      background: dragging ? palette.selected : palette.base,
+      highlight: dragging,
+      width: _tileWidth,
+    );
     return Draggable<RadioChannelInfo>(
       data: channel,
       dragAnchorStrategy: pointerDragAnchorStrategy,
@@ -857,7 +879,8 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
               child: Text(
                 _searching ? '' : 'Search to list repeaters.',
                 style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             )
           : SingleChildScrollView(
@@ -887,7 +910,8 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
                   'Connect a radio to program channels.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             )
@@ -918,10 +942,14 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(3)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(3),
+              ),
             ),
-            child: Text(header,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
+            child: Text(
+              header,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
           ),
           Expanded(
             // Give the tiles a Material to paint their ink on.
@@ -1064,20 +1092,23 @@ class _RepeaterBookDialogState extends State<RepeaterBookDialog> {
           onTap: () => setState(() => _selectedSlotId = slot.channelId),
           onInfo: () => showChannelDetailsDialog(
             context,
-            channel:
-                isStaged ? channel.copyWith(channelId: slot.channelId) : slot,
+            channel: isStaged
+                ? channel.copyWith(channelId: slot.channelId)
+                : slot,
             title: isStaged ? 'Pending: ${_slotLabel(slot)}' : null,
           ),
           onClear: isStaged ? () => _clearStaged(slot.channelId) : null,
           onContextMenu: (pos) => showChannelContextMenu(
             context: context,
             globalPosition: pos,
-            channel:
-                isStaged ? channel.copyWith(channelId: slot.channelId) : slot,
+            channel: isStaged
+                ? channel.copyWith(channelId: slot.channelId)
+                : slot,
             onDetails: () => showChannelDetailsDialog(
               context,
-              channel:
-                  isStaged ? channel.copyWith(channelId: slot.channelId) : slot,
+              channel: isStaged
+                  ? channel.copyWith(channelId: slot.channelId)
+                  : slot,
               title: isStaged ? 'Pending: ${_slotLabel(slot)}' : null,
             ),
             onPaste: (pasted) => _assign(pasted, slot.channelId),
@@ -1253,11 +1284,11 @@ class _SearchParamsDialogState extends State<_SearchParamsDialog> {
 
   void _onOk() {
     final isOther = _country == 'Other';
-    final country =
-        isOther ? _otherCountryController.text.trim() : _country;
+    final country = isOther ? _otherCountryController.text.trim() : _country;
     final state = isOther ? '' : _stateController.text.trim();
     final city = _cityController.text.trim();
-    final isNa = country == 'United States' ||
+    final isNa =
+        country == 'United States' ||
         country == 'Canada' ||
         country == 'Mexico';
 
@@ -1288,8 +1319,10 @@ class _SearchParamsDialogState extends State<_SearchParamsDialog> {
             DropdownButtonFormField<String>(
               initialValue: _country,
               isExpanded: true,
-              decoration:
-                  DialogStyles.inputDecoration(context, labelText: 'Country'),
+              decoration: DialogStyles.inputDecoration(
+                context,
+                labelText: 'Country',
+              ),
               items: [
                 for (final c in _countries)
                   DropdownMenuItem(value: c, child: Text(c)),

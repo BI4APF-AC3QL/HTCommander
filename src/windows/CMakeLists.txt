@@ -1,5 +1,8 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
+# Firebase 12.x still declares pre-3.5 policies. CMake 4 (VS 2026) otherwise
+# rejects that dependency before compiling any application code.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 project(htcommander LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
@@ -31,6 +34,8 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
+# Dependencies and generated sources are UTF-8 on Chinese Windows as well.
+add_compile_options(/utf-8)
 
 # Compilation settings that should be applied to most targets.
 #

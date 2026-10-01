@@ -65,7 +65,18 @@ class DataBroker {
   /// SharedPreferences, mirroring the C# `ISecretStore` approach. Loaded into
   /// memory at startup by [loadSecrets] (which also migrates any legacy
   /// plaintext copy written before encryption existed).
-  static const Set<String> _secretKeys = {'RepeaterBookToken'};
+  static const Set<String> _secretKeys = {
+    'RepeaterBookToken',
+    'WinlinkPassword',
+    'EchoLinkPassword',
+    'EchoLinkProxyPassword',
+    'homeAssistantPassword',
+    'AprsFiApiKey',
+    'AllStarPassword',
+    'AllStarWtToken',
+    'AllStarNodePassword',
+  };
+  final Map<String, Future<void>> _secretWrites = {};
 
   /// Singleton instance
   static final DataBroker _instance = DataBroker._internal();
@@ -78,6 +89,7 @@ class DataBroker {
 
   /// List of active subscriptions
   final List<_Subscription> _subscriptions = [];
+  final Map<(int, String), List<_Subscription>> _subscriptionCache = {};
 
   /// Registered data handlers
   final Map<String, Object> _dataHandlers = {};
@@ -271,9 +283,7 @@ class DataBroker {
     if (kIsWeb) return;
     try {
       final dir = await getApplicationSupportDirectory();
-      final file = File(
-        '${dir.path}${Platform.pathSeparator}$_prefsFileName',
-      );
+      final file = File('${dir.path}${Platform.pathSeparator}$_prefsFileName');
       if (!await file.exists()) return;
       final backupPath = '${file.path}.corrupt';
       final backup = File(backupPath);
@@ -396,8 +406,13 @@ class DataBroker {
   ///
   /// This is the process-local part of a dispatch, shared by every role. It
   /// never crosses a window boundary.
-  void _applyLocal(int deviceId, String name, Object? data, bool store,
-      {bool allowEmpty = false}) {
+  void _applyLocal(
+    int deviceId,
+    String name,
+    Object? data,
+    bool store, {
+    bool allowEmpty = false,
+  }) {
     if (store) {
       final key = _DataKey(deviceId, name);
       _dataStore[key] = data;
@@ -420,14 +435,19 @@ class DataBroker {
     }
 
     // Find and invoke matching subscriptions
-    final matchingSubscriptions = <_Subscription>[];
-    for (final sub in _subscriptions) {
-      final deviceMatches =
-          (sub.deviceId == allDevices) || (sub.deviceId == deviceId);
-      final nameMatches = (sub.name == allNames) || (sub.name == name);
-      if (deviceMatches && nameMatches) {
-        matchingSubscriptions.add(sub);
-      }
+    final key = (deviceId, name);
+    var matchingSubscriptions = _subscriptionCache[key];
+    if (matchingSubscriptions == null) {
+      matchingSubscriptions = _subscriptions
+          .where(
+            (sub) =>
+                (sub.deviceId == allDevices || sub.deviceId == deviceId) &&
+                (sub.name == allNames || sub.name == name),
+          )
+          .toList(growable: false);
+      // Event names can come from external clients: bound cache cardinality.
+      if (_subscriptionCache.length >= 512) _subscriptionCache.clear();
+      _subscriptionCache[key] = matchingSubscriptions;
     }
 
     // Invoke callbacks
@@ -445,8 +465,22 @@ class DataBroker {
   /// legacy plaintext copy so the value only ever lives encrypted at rest.
   void _persistSecret(String name, Object? data) {
     final value = data is String ? data : (data?.toString() ?? '');
-    unawaited(SecretStore.instance.write(name, value));
-    _prefs?.remove('databroker_$name');
+    // Serialize per key so rapid Save/clear operations cannot finish backwards.
+    final previous = _secretWrites[name] ?? Future<void>.value();
+    _secretWrites[name] = previous.then((_) async {
+      try {
+        await SecretStore.instance.write(name, value);
+        await _prefs?.remove('databroker_$name');
+      } catch (e) {
+        debugPrint('DataBroker: secure save failed for $name: $e');
+        _applyLocal(
+          1,
+          'LogError',
+          'Secure storage save failed for $name; retry saving credentials.',
+          false,
+        );
+      }
+    });
   }
 
   /// Persists a value to SharedPreferences.
@@ -739,6 +773,7 @@ class DataBroker {
   static void reset() {
     _instance._dataStore.clear();
     _instance._subscriptions.clear();
+    _instance._subscriptionCache.clear();
   }
 
   /// Internal method to subscribe. Called by DataBrokerClient.
@@ -748,6 +783,7 @@ class DataBroker {
     String name,
     DataCallback callback,
   ) {
+    _instance._subscriptionCache.clear();
     _instance._subscriptions.add(
       _Subscription(
         client: client,
@@ -760,6 +796,7 @@ class DataBroker {
 
   /// Internal method to unsubscribe all subscriptions for a client.
   static void unsubscribe(DataBrokerClient client) {
+    _instance._subscriptionCache.clear();
     _instance._subscriptions.removeWhere((s) => s.client == client);
   }
 
@@ -769,6 +806,7 @@ class DataBroker {
     int deviceId,
     String name,
   ) {
+    _instance._subscriptionCache.clear();
     _instance._subscriptions.removeWhere(
       (s) => s.client == client && s.deviceId == deviceId && s.name == name,
     );
@@ -1084,11 +1122,7 @@ class DataBroker {
     _dataStore.forEach((key, value) {
       final payload = _encode(value);
       if (payload == null && value != null) return; // unencodable, skip
-      out.add({
-        'deviceId': key.deviceId,
-        'name': key.name,
-        'payload': payload,
-      });
+      out.add({'deviceId': key.deviceId, 'name': key.name, 'payload': payload});
     });
     return out;
   }
@@ -1126,19 +1160,20 @@ class DataBroker {
     if (channel == null) return;
     final payload = _encode(data);
     if (payload == null && data != null) return; // unencodable, skip
-    channel.invokeMethod('dispatch', {
-      'deviceId': deviceId,
-      'name': name,
-      'payload': payload,
-      'store': store,
-      'from': _selfWindowId,
-    }).catchError((Object e) {
-      debugPrint('DataBroker: failed to forward dispatch to host: $e');
-      return null;
-    });
+    channel
+        .invokeMethod('dispatch', {
+          'deviceId': deviceId,
+          'name': name,
+          'payload': payload,
+          'store': store,
+          'from': _selfWindowId,
+        })
+        .catchError((Object e) {
+          debugPrint('DataBroker: failed to forward dispatch to host: $e');
+          return null;
+        });
   }
 }
-
 
 /// Internal structure for storing data keys.
 class _DataKey {

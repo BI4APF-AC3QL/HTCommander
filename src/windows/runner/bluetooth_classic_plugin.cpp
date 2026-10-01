@@ -30,6 +30,9 @@
 // Standard library.
 #include <atomic>
 #include <map>
+#include <deque>
+#include <condition_variable>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -128,7 +131,71 @@ struct RfcommConn {
   std::string         address;
   std::atomic<bool>   running{false};
   std::thread         read_thread;
-  std::mutex          write_mutex;
+  using Result = flutter::MethodResult<flutter::EncodableValue>;
+  struct WriteRequest {
+    std::vector<uint8_t> bytes;
+    std::shared_ptr<Result> result;
+  };
+  std::mutex write_mutex;
+  std::condition_variable write_ready;
+  std::deque<WriteRequest> writes;
+  std::thread write_thread;
+
+  void Stop() {
+    running.store(false);
+    write_ready.notify_all();
+    try { if (socket) socket.Close(); } catch (...) {}
+  }
+
+  void QueueWrite(std::vector<uint8_t> data, std::unique_ptr<Result> result) {
+    {
+      std::lock_guard<std::mutex> lock(write_mutex);
+      if (!running.load() || writes.size() >= 256) {
+        result->Success(flutter::EncodableValue(false));
+        return;
+      }
+      writes.push_back({std::move(data), std::shared_ptr<Result>(std::move(result))});
+    }
+    write_ready.notify_one();
+  }
+
+  static void StartWriter(const std::shared_ptr<RfcommConn>& conn) {
+    // One persistent FIFO worker per channel replaces a thread per write.
+    // Control and audio remain independent, so audio cannot starve commands.
+    conn->write_thread = std::thread([conn]() {
+      winrt::init_apartment(winrt::apartment_type::multi_threaded);
+      while (true) {
+        WriteRequest request;
+        {
+          std::unique_lock<std::mutex> lock(conn->write_mutex);
+          conn->write_ready.wait(lock, [&] {
+            return !conn->running.load() || !conn->writes.empty();
+          });
+          if (conn->writes.empty()) break;
+          request = std::move(conn->writes.front());
+          conn->writes.pop_front();
+        }
+        bool ok = false;
+        if (conn->running.load()) {
+          try {
+            conn->writer.WriteBytes(request.bytes);
+            auto operation = conn->writer.StoreAsync();
+            if (operation.wait_for(std::chrono::seconds(5)) ==
+                winrt::Windows::Foundation::AsyncStatus::Completed) {
+              ok = operation.GetResults() == request.bytes.size();
+            } else {
+              operation.Cancel();
+            }
+          } catch (...) {}
+          // A stalled/partial write leaves stream framing uncertain. Close it
+          // instead of replaying potentially non-idempotent transmit commands.
+          if (!ok) { try { conn->socket.Close(); } catch (...) {} }
+        }
+        request.result->Success(flutter::EncodableValue(ok));
+      }
+      winrt::uninit_apartment();
+    });
+  }
 
   RfcommConn() = default;
   ~RfcommConn() {
@@ -136,7 +203,9 @@ struct RfcommConn {
     try {
       if (socket) socket.Close();
     } catch (...) {}
+    write_ready.notify_all();
     if (read_thread.joinable()) read_thread.detach();
+    if (write_thread.joinable()) write_thread.detach();
   }
   RfcommConn(const RfcommConn&) = delete;
   RfcommConn& operator=(const RfcommConn&) = delete;
@@ -160,23 +229,30 @@ class BtStreamHandler
   ~BtStreamHandler() override { DestroyMessageWindow(); }
 
   void Send(const flutter::EncodableValue& value) {
-    HWND hwnd = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      pending_events_.push_back(value);
-      if (!sink_) return;
-      hwnd = message_hwnd_;
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Adjacent chunks from the same stream may be concatenated: RFCOMM is a
+    // byte stream, not a packet transport. Keep connection events in order.
+    bool merged = false;
+    if (!pending_events_.empty()) {
+      auto* previous = std::get_if<flutter::EncodableMap>(&pending_events_.back());
+      const auto* incoming = std::get_if<flutter::EncodableMap>(&value);
+      if (previous && incoming) {
+        using EV = flutter::EncodableValue;
+        auto old_data = previous->find(EV("data"));
+        auto new_data = incoming->find(EV("data"));
+        if (old_data != previous->end() && new_data != incoming->end() &&
+            previous->at(EV("address")) == incoming->at(EV("address"))) {
+          auto* old_bytes = std::get_if<std::vector<uint8_t>>(&old_data->second);
+          const auto* new_bytes = std::get_if<std::vector<uint8_t>>(&new_data->second);
+          if (old_bytes && new_bytes && old_bytes->size() + new_bytes->size() <= 32768) {
+            old_bytes->insert(old_bytes->end(), new_bytes->begin(), new_bytes->end());
+            merged = true;
+          }
+        }
+      }
     }
-
-    if (hwnd) {
-      // Marshal the drain onto the platform thread via its message loop.
-      ::PostMessageW(hwnd, kDrainMessage, 0, 0);
-    } else {
-      // No marshaling window yet; deliver inline (we are on the platform
-      // thread during OnListen, which is the only time this happens).
-      std::lock_guard<std::mutex> lock(mutex_);
-      DrainQueue();
-    }
+    if (!merged) pending_events_.push_back(value);
+    ScheduleDrainLocked();
   }
 
  protected:
@@ -193,7 +269,7 @@ class BtStreamHandler
     EnsureMessageWindow();
 
     // Drain any events that accumulated before the listener was attached.
-    DrainQueue();
+    ScheduleDrainLocked();
     return nullptr;
   }
 
@@ -202,6 +278,7 @@ class BtStreamHandler
     std::lock_guard<std::mutex> lock(mutex_);
     sink_ = nullptr;
     pending_events_.clear();
+    drain_posted_ = false;
     return nullptr;
   }
 
@@ -210,19 +287,32 @@ class BtStreamHandler
 
   std::mutex mutex_;
   std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> sink_;
-  std::vector<flutter::EncodableValue> pending_events_;
+  std::deque<flutter::EncodableValue> pending_events_;
+  bool drain_posted_ = false;
   HWND message_hwnd_ = nullptr;
 
+  void ScheduleDrainLocked() {
+    if (!sink_ || !message_hwnd_ || drain_posted_ || pending_events_.empty()) return;
+    drain_posted_ = ::PostMessageW(message_hwnd_, kDrainMessage, 0, 0) != 0;
+  }
+
   void DrainQueue() {
-    // Must be called under mutex_ lock and on the platform thread.
-    if (!sink_ || pending_events_.empty()) return;
-    auto events = std::move(pending_events_);
-    for (const auto& ev : events) {
-      try {
-        sink_->Success(ev);
-      } catch (...) {
-        // Ignore errors; sink might be invalidated.
+    // Platform-thread only. Release the reader mutex before encoding/delivering.
+    std::vector<flutter::EncodableValue> events;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      drain_posted_ = false;
+      if (!sink_) return;
+      constexpr size_t kMaxEventsPerTurn = 32;
+      while (!pending_events_.empty() && events.size() < kMaxEventsPerTurn) {
+        events.push_back(std::move(pending_events_.front()));
+        pending_events_.pop_front();
       }
+      ScheduleDrainLocked();
+    }
+    for (const auto& ev : events) {
+      if (!sink_) break;
+      try { sink_->Success(ev); } catch (...) {}
     }
   }
 
@@ -264,7 +354,6 @@ class BtStreamHandler
       auto* self = reinterpret_cast<BtStreamHandler*>(
           ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
       if (self) {
-        std::lock_guard<std::mutex> lock(self->mutex_);
         self->DrainQueue();
       }
       return 0;
@@ -401,12 +490,10 @@ BluetoothClassicPlugin::Impl::~Impl() {
   {
     std::lock_guard<std::mutex> lock(conn_mutex);
     for (auto& [addr, conn] : connections) {
-      conn->running.store(false);
-      try { conn->socket.Close(); } catch (...) {}
+      conn->Stop();
     }
     for (auto& [addr, conn] : audio_connections) {
-      conn->running.store(false);
-      try { conn->socket.Close(); } catch (...) {}
+      conn->Stop();
     }
     connections.clear();
     audio_connections.clear();
@@ -632,6 +719,7 @@ void BluetoothClassicPlugin::Impl::ReadLoop(
   // If we exited unexpectedly (i.e., not because the caller set running=false),
   // send a disconnected event and remove from the map.
   bool was_running = conn->running.exchange(false);
+  conn->write_ready.notify_all();
   if (was_running) {
     SendEvent(is_audio, "disconnected", conn->address);
     std::lock_guard<std::mutex> lock(conn_mutex);
@@ -748,6 +836,7 @@ void BluetoothClassicPlugin::Impl::DoConnect(
       conn->reader.InputStreamOptions(strs::InputStreamOptions::Partial);
       conn->writer    = strs::DataWriter(sock.OutputStream());
       conn->running.store(true);
+      RfcommConn::StartWriter(conn);
 
       {
         std::lock_guard<std::mutex> lock(self->conn_mutex);
@@ -781,8 +870,7 @@ void BluetoothClassicPlugin::Impl::DoDisconnect(
     }
   }
   if (conn) {
-    conn->running.store(false);
-    try { conn->socket.Close(); } catch (...) {}
+    conn->Stop();
     if (conn->read_thread.joinable()) conn->read_thread.detach();
     SendEvent(false, "disconnected", address);
   }
@@ -804,21 +892,7 @@ void BluetoothClassicPlugin::Impl::DoSend(
     return;
   }
 
-  auto res = std::shared_ptr<
-      flutter::MethodResult<flutter::EncodableValue>>(std::move(result));
-
-  std::thread([conn, data = std::move(data), res]() {
-    winrt::init_apartment(winrt::apartment_type::multi_threaded);
-    try {
-      std::lock_guard<std::mutex> write_lock(conn->write_mutex);
-      conn->writer.WriteBytes(data);
-      conn->writer.StoreAsync().get();
-      res->Success(flutter::EncodableValue(true));
-    } catch (...) {
-      res->Success(flutter::EncodableValue(false));
-    }
-    winrt::uninit_apartment();
-  }).detach();
+  conn->QueueWrite(std::move(data), std::move(result));
 }
 
 void BluetoothClassicPlugin::Impl::DoConnectAudio(
@@ -851,6 +925,7 @@ void BluetoothClassicPlugin::Impl::DoConnectAudio(
       conn->reader.InputStreamOptions(strs::InputStreamOptions::Partial);
       conn->writer    = strs::DataWriter(sock.OutputStream());
       conn->running.store(true);
+      RfcommConn::StartWriter(conn);
 
       {
         std::lock_guard<std::mutex> lock(self->conn_mutex);
@@ -883,8 +958,7 @@ void BluetoothClassicPlugin::Impl::DoDisconnectAudio(
     }
   }
   if (conn) {
-    conn->running.store(false);
-    try { conn->socket.Close(); } catch (...) {}
+    conn->Stop();
     if (conn->read_thread.joinable()) conn->read_thread.detach();
     SendEvent(true, "disconnected", address);
   }
@@ -906,21 +980,7 @@ void BluetoothClassicPlugin::Impl::DoSendAudio(
     return;
   }
 
-  auto res = std::shared_ptr<
-      flutter::MethodResult<flutter::EncodableValue>>(std::move(result));
-
-  std::thread([conn, data = std::move(data), res]() {
-    winrt::init_apartment(winrt::apartment_type::multi_threaded);
-    try {
-      std::lock_guard<std::mutex> write_lock(conn->write_mutex);
-      conn->writer.WriteBytes(data);
-      conn->writer.StoreAsync().get();
-      res->Success(flutter::EncodableValue(true));
-    } catch (...) {
-      res->Success(flutter::EncodableValue(false));
-    }
-    winrt::uninit_apartment();
-  }).detach();
+  conn->QueueWrite(std::move(data), std::move(result));
 }
 
 // ---------------------------------------------------------------------------

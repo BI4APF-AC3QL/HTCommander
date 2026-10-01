@@ -42,10 +42,10 @@ behavior the adaptive design is meant to provide.
 
 | File | Purpose |
 | --- | --- |
-| [dart_modem_test.dart](../src/test/dart_modem_test.dart) | CLI tool: `encode`, `decode`, `loopback`, and unit tests `ldpc`, `fft`, `constellation`, `papr`, `stream` |
-| [dart_debug_test.dart](../src/test/dart_debug_test.dart) | Stage-by-stage pipeline diagnostics (OFDM round-trip, preamble detect, channel estimate, header/payload) |
+| [dart_modem_cli.dart](../src/test/dart_modem_cli.dart) | CLI tool: `encode`, `decode`, `loopback`, and unit tests `ldpc`, `fft`, `constellation`, `papr`, `stream` |
+| [dart_debug_cli.dart](../src/test/dart_debug_cli.dart) | Stage-by-stage pipeline diagnostics (OFDM round-trip, preamble detect, channel estimate, header/payload) |
 | [dart_sbc_probe.dart](../src/test/dart_sbc_probe.dart) | Measures SBC codec delay and preamble-correlation degradation |
-| [dart_link_test.dart](../src/test/dart_link_test.dart) | Link-layer tests: connectionless datagram, ARQ ACK round-trip, sliding-window selective repeat, rate adaptation |
+| [dart_link_cli.dart](../src/test/dart_link_cli.dart) | Link-layer tests: connectionless datagram, ARQ ACK round-trip, sliding-window selective repeat, rate adaptation |
 
 ---
 
@@ -130,7 +130,7 @@ audio path — a genuinely hostile radio — the 16QAM modes fail every frame wh
 Mode F delivers every frame:
 
 ```
-dart run test/dart_modem_test.dart loopback --modes 4,5,6 --clip 0.08 --sbc --noise 14
+dart run test/dart_modem_cli.dart loopback --modes 4,5,6 --clip 0.08 --sbc --noise 14
   Mode 4 (16QAM R3/4): 0/5   Mode 5 (16QAM R5/6): 0/5   Mode F (4-FSK): 5/5
 ```
 
@@ -254,10 +254,10 @@ guard interval absorbs the delay.
 Run from `src/`:
 
 ```
-dart run test/dart_modem_test.dart loopback                 # clean channel
-dart run test/dart_modem_test.dart loopback --noise 25      # + AWGN
-dart run test/dart_modem_test.dart loopback --sbc           # + SBC codec
-dart run test/dart_modem_test.dart loopback --sbc --noise 30
+dart run test/dart_modem_cli.dart loopback                 # clean channel
+dart run test/dart_modem_cli.dart loopback --noise 25      # + AWGN
+dart run test/dart_modem_cli.dart loopback --sbc           # + SBC codec
+dart run test/dart_modem_cli.dart loopback --sbc --noise 30
 ```
 
 Each run tests 6 modes × 5 payload sizes (2–100 bytes) = 30 cases.
@@ -286,7 +286,7 @@ adaptive mode table and the rationale for rate adaptation.
 
 ### PAPR: plain OFDM vs DFT-spread (SC-FDMA)
 
-`dart run test/dart_modem_test.dart papr` (2000 symbols per constellation,
+`dart run test/dart_modem_cli.dart papr` (2000 symbols per constellation,
 99th-percentile per-symbol PAPR):
 
 | Constellation | Plain OFDM | SC-FDMA | Reduction |

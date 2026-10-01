@@ -13,6 +13,8 @@ import '../gps/gps_data.dart';
 import 'radio_models.dart';
 import 'radio_transport.dart';
 import 'tnc_data_fragment.dart';
+import 'tnc_fragment_assembler.dart';
+import 'read_timing.dart';
 import 'ax25_packet.dart';
 import 'bss_packet.dart';
 import 'gaia_protocol.dart';
@@ -136,6 +138,8 @@ class Radio implements FirmwareRadio {
   final DataBrokerClient _broker;
   RadioTransport? _transport;
   TncDataFragment? _frameAccumulator;
+  final TncFragmentAssembler _fragmentAssembler = TncFragmentAssembler();
+  DateTime? _lastFragmentWarning;
   RadioState _state = RadioState.disconnected;
   bool _gpsEnabled = false;
 
@@ -194,7 +198,8 @@ class Radio implements FirmwareRadio {
   _PendingRead? _readInFlight;
   Timer? _readTimeoutTimer;
   int _readRetryCount = 0;
-  static const Duration _readResponseTimeout = Duration(milliseconds: 700);
+  final ReadTiming _readTiming = ReadTiming();
+  DateTime? _readSentAt;
   static const int _maxReadRetries = 2;
 
   // Trusted (Bluetooth paired) device enumeration. The radio returns the list
@@ -890,10 +895,7 @@ class Radio implements FirmwareRadio {
     if (kSatelliteLockUsages.contains(unlockData.usage)) {
       stopFreqMode();
       _lockState = null;
-      _dispatch(
-        'LockState',
-        RadioLockState(isLocked: false).toJson(),
-      );
+      _dispatch('LockState', RadioLockState(isLocked: false).toJson());
       return;
     }
 
@@ -945,15 +947,11 @@ class Radio implements FirmwareRadio {
       // Tell the UI the configured channel is missing in the switched-to region
       // so it can offer to fix the contact. The lock stays on the current
       // channel until the caller unlocks.
-      _dispatch(
-        'LockChannelResolveFailed',
-        {
-          'usage': lock.usage,
-          'channel': chName,
-          'region': htStatus?.currRegion,
-        },
-        store: false,
-      );
+      _dispatch('LockChannelResolveFailed', {
+        'usage': lock.usage,
+        'channel': chName,
+        'region': htStatus?.currRegion,
+      }, store: false);
       return;
     }
 
@@ -1056,7 +1054,7 @@ class Radio implements FirmwareRadio {
       _debugGpsReason(
         'sharingDisabled',
         'Serial GPS: dropping fix - sharing disabled '
-        '(ShareSerialGpsLocation is off)',
+            '(ShareSerialGpsLocation is off)',
       );
       return;
     }
@@ -1073,7 +1071,7 @@ class Radio implements FirmwareRadio {
       _debugGpsReason(
         'badType',
         'Serial GPS: dropping event - unrecognized data type '
-        '(${data.runtimeType})',
+            '(${data.runtimeType})',
       );
       return;
     }
@@ -1114,8 +1112,8 @@ class Radio implements FirmwareRadio {
       _debugGpsReason(
         'throttled',
         'Serial GPS: holding fix - SmartBeaconing throttle '
-        '(${speedKnots.toStringAsFixed(1)} kn, '
-        '${heading.toStringAsFixed(0)}\u00b0, waiting for next beacon)',
+            '(${speedKnots.toStringAsFixed(1)} kn, '
+            '${heading.toStringAsFixed(0)}\u00b0, waiting for next beacon)',
       );
       return;
     }
@@ -1438,6 +1436,7 @@ class Radio implements FirmwareRadio {
     position = null;
     aprsPath = null;
     _frameAccumulator = null;
+    _fragmentAssembler.reset();
     _tncFragmentQueue.clear();
     _tncFragmentInFlight = false;
     _lockState = null;
@@ -1613,8 +1612,10 @@ class Radio implements FirmwareRadio {
       Uint8List.fromList([_trustedDeviceIndex & 0xFF]),
     );
     _trustedDeviceTimer?.cancel();
-    _trustedDeviceTimer =
-        Timer(_trustedDeviceTimeout, _finishTrustedDeviceQuery);
+    _trustedDeviceTimer = Timer(
+      _trustedDeviceTimeout,
+      _finishTrustedDeviceQuery,
+    );
   }
 
   /// Ends the trusted-device enumeration and publishes the final list.
@@ -1749,11 +1750,7 @@ class Radio implements FirmwareRadio {
         0,
         _regionNameLength,
       );
-      _dispatch(
-        'RegionNames',
-        List<String?>.from(regionNames),
-        store: true,
-      );
+      _dispatch('RegionNames', List<String?>.from(regionNames), store: true);
     }
   }
 
@@ -1946,16 +1943,25 @@ class Radio implements FirmwareRadio {
   }
 
   /// Sends the in-flight read and (re)arms the response-timeout watchdog.
-  void _sendQueuedRead() {
+  Future<void> _sendQueuedRead() async {
     final r = _readInFlight;
     if (r == null) return;
-    _sendCommand(
+    _readTimeoutTimer?.cancel();
+    _readSentAt = DateTime.now();
+    final sent = await _sendCommand(
       RadioCommandGroup.basic,
       r.cmd,
       Uint8List.fromList([r.index]),
     );
-    _readTimeoutTimer?.cancel();
-    _readTimeoutTimer = Timer(_readResponseTimeout, _onReadResponseTimeout);
+    if (_readInFlight != r || _state != RadioState.connected) return;
+    // Start the reply watchdog AFTER the bytes have left the native queue.
+    // Waiting for a congested writer is not a missing radio reply.
+    _readTimeoutTimer = Timer(
+      sent
+          ? _readTiming.budget(_readRetryCount)
+          : const Duration(milliseconds: 500),
+      _onReadResponseTimeout,
+    );
   }
 
   /// Fires when a queued read gets no reply in time. Retries the same request a
@@ -1990,6 +1996,10 @@ class Radio implements FirmwareRadio {
     final r = _readInFlight;
     if (r == null) return;
     if (r.cmd != cmd || r.index != index) return;
+    if (_readRetryCount == 0 && _readSentAt != null) {
+      _readTiming.observe(DateTime.now().difference(_readSentAt!));
+    }
+    _readSentAt = null;
     _readTimeoutTimer?.cancel();
     _readTimeoutTimer = null;
     _readInFlight = null;
@@ -2252,11 +2262,13 @@ class Radio implements FirmwareRadio {
     if (!audioOn) return '';
 
     final int aprsId = _aprsChannelId();
-    final bool isAprs = fragment.channelName == 'APRS' ||
+    final bool isAprs =
+        fragment.channelName == 'APRS' ||
         (aprsId >= 0 && fragment.channelId == aprsId);
     if (isAprs) {
       final String aprsMode =
-          _broker.getValue<String>(0, 'AprsSoftwareModemMode', 'None') ?? 'None';
+          _broker.getValue<String>(0, 'AprsSoftwareModemMode', 'None') ??
+          'None';
       if (aprsMode.isEmpty || aprsMode.toLowerCase() == 'none') return '';
       // Only use the software AFSK 1200 modem when VFO A is the APRS channel,
       // otherwise the audio would be transmitted on the wrong frequency. Fall
@@ -2485,12 +2497,12 @@ class Radio implements FirmwareRadio {
   bool get _useGattFraming =>
       kIsWeb || _transport?.connectedDevice?.type == BluetoothType.ble;
 
-  void _sendCommand(
+  Future<bool> _sendCommand(
     RadioCommandGroup group,
     RadioBasicCommand cmd,
     Uint8List? data,
   ) {
-    if (_transport == null) return;
+    if (_transport == null) return Future<bool>.value(false);
 
     Uint8List gaiaFrame;
     if (_useGattFraming &&
@@ -2601,7 +2613,7 @@ class Radio implements FirmwareRadio {
       _debug('TX: ${RadioUtils.bytesToHex(gaiaFrame)}');
     }
 
-    _transport!.send(gaiaFrame);
+    return _transport!.send(gaiaFrame);
   }
 
   /// Sends a GAIA extended command (command group [RadioCommandGroup.extended]).
@@ -3170,11 +3182,7 @@ class Radio implements FirmwareRadio {
     if (region < 0 || region >= regionNames.length) return;
     final name = RadioUtils.decodeGbkTrimmed(data, 6, data.length - 6);
     regionNames[region] = name;
-    _dispatch(
-      'RegionNames',
-      List<String?>.from(regionNames),
-      store: true,
-    );
+    _dispatch('RegionNames', List<String?>.from(regionNames), store: true);
   }
 
   void _handleBssSettings(Uint8List data) {
@@ -3383,15 +3391,18 @@ class Radio implements FirmwareRadio {
   }
 
   void _accumulateFragment(TncDataFragment fragment) {
-    if (_frameAccumulator == null) {
-      if (fragment.fragmentId == 0) {
-        _frameAccumulator = fragment;
+    final rejected = _fragmentAssembler.rejectedPackets;
+    _frameAccumulator = _fragmentAssembler.add(fragment);
+    if (_fragmentAssembler.rejectedPackets > rejected) {
+      final now = DateTime.now();
+      if (_lastFragmentWarning == null ||
+          now.difference(_lastFragmentWarning!) > const Duration(seconds: 5)) {
+        _lastFragmentWarning = now;
+        _broker.logError(
+          '[Radio $deviceId] Incomplete TNC packet rejected; '
+          'fragment gaps/expiry: ${_fragmentAssembler.rejectedPackets}. Check Bluetooth link quality.',
+        );
       }
-    } else {
-      // `append` merges this fragment's data into the passed-in fragment and
-      // returns it (it does NOT mutate the accumulator in place), so the result
-      // must be reassigned. Mirrors the C# `frameAccumulator.Append(fragment)`.
-      _frameAccumulator = _frameAccumulator!.append(fragment);
     }
 
     if (_frameAccumulator != null && _frameAccumulator!.isLast) {
@@ -3442,14 +3453,7 @@ class Radio implements FirmwareRadio {
     fragment.time = DateTime.now();
     fragment.channelName = _getChannelNameById(fragment.channelId);
 
-    if (fragment.fragmentId == 0) {
-      _frameAccumulator = fragment;
-    } else if (_frameAccumulator != null) {
-      // `append` merges this fragment's data into the passed-in fragment and
-      // returns it (it does NOT mutate the accumulator in place), so the result
-      // must be reassigned. Mirrors the C# `frameAccumulator.Append(fragment)`.
-      _frameAccumulator = _frameAccumulator!.append(fragment);
-    }
+    _frameAccumulator = _fragmentAssembler.add(fragment);
 
     if (_frameAccumulator != null && _frameAccumulator!.isLast) {
       _frameAccumulator!.encoding = FragmentEncodingType.hardwareAfsk1200;

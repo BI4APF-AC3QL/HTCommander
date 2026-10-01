@@ -7,5 +7,4 @@
 //
 // The AGWPE feature is only wired up on desktop (Windows / Linux / macOS); the
 // stub keeps the web build compiling.
-export 'agwpe_server_stub.dart'
-    if (dart.library.io) 'agwpe_server_io.dart';
+export 'agwpe_server_stub.dart' if (dart.library.io) 'agwpe_server_io.dart';

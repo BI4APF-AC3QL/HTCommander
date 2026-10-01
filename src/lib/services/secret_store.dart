@@ -50,6 +50,7 @@ class SecretStore {
       }
     } catch (e) {
       debugPrint('SecretStore.write($name) failed: $e');
+      rethrow;
     }
   }
 }

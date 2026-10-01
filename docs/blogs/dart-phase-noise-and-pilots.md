@@ -142,14 +142,14 @@ The phase-noise lab is in the DART test tool:
 
 ```
 # Add tunable phase noise (magnitude and speed) to the channel:
-dart run test/dart_modem_test.dart pipeline -m 4 --sbc --noise 20 \
+dart run test/dart_modem_cli.dart pipeline -m 4 --sbc --noise 20 \
     --phasenoise 40 --phaserate 0.9999 -o out.wav "message"
 
 # A/B pilots vs no pilots on the same channel:
-dart run test/dart_modem_test.dart pipeline -m 4 --phasenoise 40 --phaserate 0.9999 --nopilots ...
+dart run test/dart_modem_cli.dart pipeline -m 4 --phasenoise 40 --phaserate 0.9999 --nopilots ...
 
 # Measure the phase-drift rate on any capture:
-dart run test/dart_modem_test.dart decode capture.wav
+dart run test/dart_modem_cli.dart decode capture.wav
 #   → "Phase drift: 1.4°/symbol — slow / decision-limited (pilots help)"
 ```
 

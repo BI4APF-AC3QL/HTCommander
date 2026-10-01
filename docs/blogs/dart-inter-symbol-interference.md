@@ -103,13 +103,13 @@ The multipath channel and CP override are in the test tool:
 
 ```
 # Delay-spread sweep — watch the knee at the CP (4 samples):
-dart run test/dart_modem_test.dart pipeline -m 4 --echo 8 --echoamp 0.5 -o out.wav "message"
+dart run test/dart_modem_cli.dart pipeline -m 4 --echo 8 --echoamp 0.5 -o out.wav "message"
 
 # Grow the CP to cure a fixed echo:
-dart run test/dart_modem_test.dart pipeline -m 4 --echo 8 --cp 8 -o out.wav "message"
+dart run test/dart_modem_cli.dart pipeline -m 4 --echo 8 --cp 8 -o out.wav "message"
 
 # Check the real SBC path for hidden dispersion:
-dart run test/dart_modem_test.dart pipeline -m 4 --bitpool 40 --cp 16 -o out.wav "message"
+dart run test/dart_modem_cli.dart pipeline -m 4 --bitpool 40 --cp 16 -o out.wav "message"
 ```
 
 ---

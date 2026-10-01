@@ -222,20 +222,20 @@ tests with the DART test tool in HTCommander:
 export its constellation:
 
 ```
-dart run test/dart_modem_test.dart decode DART-3.wav --constellation --png DART-3.png
+dart run test/dart_modem_cli.dart decode DART-3.wav --constellation --png DART-3.png
 ```
 
 **Inspect the audio itself** (levels, band energy, preamble health):
 
 ```
-dart run test/dart_modem_test.dart analyze DART-3.wav
+dart run test/dart_modem_cli.dart analyze DART-3.wav
 ```
 
 **Run the full software channel simulation** (encode → SBC → noise → decode →
 PNG) to compare against your over-the-air captures:
 
 ```
-dart run test/dart_modem_test.dart pipeline -m 5 --sbc --noise 25 -o sim.wav --png sim.png "The quick brown fox jumps over the lazy dog"
+dart run test/dart_modem_cli.dart pipeline -m 5 --sbc --noise 25 -o sim.wav --png sim.png "The quick brown fox jumps over the lazy dog"
 ```
 
 Things we would especially love to see from the community:

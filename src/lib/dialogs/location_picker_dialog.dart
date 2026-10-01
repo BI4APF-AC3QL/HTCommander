@@ -13,6 +13,7 @@ import '../l10n/app_localizations.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../utils/map_tile_provider.dart';
+import '../utils/map_source.dart';
 
 /// Opens a dialog letting the user pick a location on the map. Returns the
 /// chosen [LatLng] when the user confirms, or null when cancelled.
@@ -23,10 +24,8 @@ Future<LatLng?> showLocationPickerDialog(
 }) {
   return showDialog<LatLng>(
     context: context,
-    builder: (context) => LocationPickerDialog(
-      latitude: latitude,
-      longitude: longitude,
-    ),
+    builder: (context) =>
+        LocationPickerDialog(latitude: latitude, longitude: longitude),
   );
 }
 
@@ -155,8 +154,7 @@ class _LocationPickerDialogState extends State<LocationPickerDialog> {
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        urlTemplate: MapSource.current.urlTemplate,
                         userAgentPackageName:
                             'HTCommander/1.0 (amateur-radio-app; github.com/Ylianst/HTCommander)',
                         tileProvider: _tileProvider,
@@ -169,14 +167,16 @@ class _LocationPickerDialogState extends State<LocationPickerDialog> {
                           child: MouseRegion(
                             cursor: SystemMouseCursors.click,
                             child: GestureDetector(
-                              onTap: () => launchUrl(
-                                Uri.parse(
-                                  'https://www.openstreetmap.org/copyright',
-                                ),
-                                mode: LaunchMode.externalApplication,
-                              ),
-                              child: const Text(
-                                '© OpenStreetMap contributors',
+                              onTap: MapSource.current.attributionUrl.isEmpty
+                                  ? null
+                                  : () => launchUrl(
+                                      Uri.parse(
+                                        MapSource.current.attributionUrl,
+                                      ),
+                                      mode: LaunchMode.externalApplication,
+                                    ),
+                              child: Text(
+                                MapSource.current.attribution,
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: Colors.black87,
@@ -259,9 +259,7 @@ class _LocationPickerDialogState extends State<LocationPickerDialog> {
       height: 32,
       child: ElevatedButton(
         onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          padding: EdgeInsets.zero,
-        ),
+        style: ElevatedButton.styleFrom(padding: EdgeInsets.zero),
         child: Text(label, style: const TextStyle(fontSize: 18)),
       ),
     );
