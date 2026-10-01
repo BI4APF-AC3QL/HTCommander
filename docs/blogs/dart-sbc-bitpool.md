@@ -143,12 +143,12 @@ on any mode:
 
 ```
 # Clean link, sweep quality:
-dart run test/dart_modem_test.dart pipeline -m 5 --bitpool 18  -o out.wav --png bp18.png  "your message"
-dart run test/dart_modem_test.dart pipeline -m 5 --bitpool 124 -o out.wav --png bp124.png "your message"
+dart run test/dart_modem_cli.dart pipeline -m 5 --bitpool 18  -o out.wav --png bp18.png  "your message"
+dart run test/dart_modem_cli.dart pipeline -m 5 --bitpool 124 -o out.wav --png bp124.png "your message"
 
 # Add channel noise to see the bitpool advantage disappear:
-dart run test/dart_modem_test.dart pipeline -m 5 --noise 10 --bitpool 18  -o out.wav "your message"
-dart run test/dart_modem_test.dart pipeline -m 5 --noise 10 --bitpool 124 -o out.wav "your message"
+dart run test/dart_modem_cli.dart pipeline -m 5 --noise 10 --bitpool 18  -o out.wav "your message"
+dart run test/dart_modem_cli.dart pipeline -m 5 --noise 10 --bitpool 124 -o out.wav "your message"
 ```
 
 `--bitpool` accepts 2–124 (the radio uses 18) and implies `--sbc`. We'd love to

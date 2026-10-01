@@ -5,11 +5,12 @@ http://www.apache.org/licenses/LICENSE-2.0
 */
 
 import 'dart:convert';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show visibleForTesting, compute;
 import 'package:grpc/grpc.dart';
 import 'package:http/http.dart' as http;
 
@@ -169,7 +170,25 @@ class FirmwareService {
     final baseZipBytes = await _fetch(info.baseUrl, 'base', progress);
 
     // Extract the .bin from the base zip.
+    final firmware = await compute(_assembleDownloadedFirmware, (
+      baseZipBytes,
+      patchBytes,
+    ));
+
+    // Verify before any flashing operation can begin.
+    _verifyMd5(firmware, info.firmwareMd5, 'assembled firmware image');
+    return FirmwareBundle(firmware, updateInfo: info);
+  }
+
+  static Uint8List _assembleDownloadedFirmware((Uint8List, Uint8List) files) {
+    final (baseZipBytes, patchBytes) = files;
     final archive = ZipDecoder().decodeBytes(baseZipBytes);
+    if (archive.files.fold<int>(0, (sum, f) => sum + f.size) >
+        128 * 1024 * 1024) {
+      throw const FormatException(
+        'Firmware archive expanded size exceeds 128 MiB',
+      );
+    }
     ArchiveFile? binFile;
     for (final file in archive.files) {
       if (file.isFile && file.name.toLowerCase().endsWith('.bin')) {
@@ -180,30 +199,26 @@ class FirmwareService {
     if (binFile == null) {
       throw const FormatException('No .bin file found inside base zip');
     }
+    if (binFile.size > 64 * 1024 * 1024) {
+      throw const FormatException('Firmware base image exceeds 64 MiB');
+    }
     final baseBytes = Uint8List.fromList(binFile.content as List<int>);
 
     if (!BsPatch.isBsdiff40(patchBytes)) {
-      throw const FormatException('Unexpected patch format (expected BSDIFF40)');
+      throw const FormatException(
+        'Unexpected patch format (expected BSDIFF40)',
+      );
     }
 
-    // Assembly is a single synchronous step; report it as indeterminate rather
-    // than a meaningless 1-byte progress count.
-    progress?.call('assemble', 0, 0);
-    final firmware = BsPatch.apply(baseBytes, patchBytes);
-
-    // Verify the assembled image against the server-provided MD5. This is the
-    // authoritative end-to-end check: it confirms the patch + base downloaded
-    // and reassembled into exactly the vendor's firmware image (and it is the
-    // same digest whose last 4 bytes the radio validates while flashing).
-    _verifyMd5(firmware, info.firmwareMd5, 'assembled firmware image');
-
-    return FirmwareBundle(firmware, updateInfo: info);
+    return BsPatch.apply(baseBytes, patchBytes);
   }
 
   /// Assemble firmware from already-downloaded local files (offline/testing).
   static Uint8List assembleFromBytes(Uint8List baseBin, Uint8List patchBin) {
     if (!BsPatch.isBsdiff40(patchBin)) {
-      throw const FormatException('Unexpected patch format (expected BSDIFF40)');
+      throw const FormatException(
+        'Unexpected patch format (expected BSDIFF40)',
+      );
     }
     return BsPatch.apply(baseBin, patchBin);
   }
@@ -246,18 +261,29 @@ class FirmwareService {
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url));
-      final response = await client.send(request);
+      final response = await client
+          .send(request)
+          .timeout(const Duration(seconds: 20));
       if (response.statusCode != 200) {
         throw http.ClientException(
           'Download failed (${response.statusCode}) for $url',
         );
       }
       final total = response.contentLength ?? 0;
+      const maxBytes = 64 * 1024 * 1024;
+      if (total > maxBytes) {
+        throw const FormatException('Firmware download exceeds 64 MiB');
+      }
       final builder = BytesBuilder(copy: false);
       int received = 0;
-      await for (final chunk in response.stream) {
-        builder.add(chunk);
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 20),
+      )) {
         received += chunk.length;
+        if (received > maxBytes) {
+          throw const FormatException('Firmware download exceeds 64 MiB');
+        }
+        builder.add(chunk);
         progress?.call(stage, received, total);
       }
       return builder.toBytes();
@@ -341,15 +367,27 @@ class FirmwareService {
       } else if (wireType == 2) {
         final length = readVarint();
         if (pos + length > n) break;
-        out.add((fieldNum, wireType, Uint8List.sublistView(data, pos, pos + length)));
+        out.add((
+          fieldNum,
+          wireType,
+          Uint8List.sublistView(data, pos, pos + length),
+        ));
         pos += length;
       } else if (wireType == 5) {
         if (pos + 4 > n) break;
-        out.add((fieldNum, wireType, Uint8List.sublistView(data, pos, pos + 4)));
+        out.add((
+          fieldNum,
+          wireType,
+          Uint8List.sublistView(data, pos, pos + 4),
+        ));
         pos += 4;
       } else if (wireType == 1) {
         if (pos + 8 > n) break;
-        out.add((fieldNum, wireType, Uint8List.sublistView(data, pos, pos + 8)));
+        out.add((
+          fieldNum,
+          wireType,
+          Uint8List.sublistView(data, pos, pos + 8),
+        ));
         pos += 8;
       } else {
         break; // unknown wire type — stop gracefully

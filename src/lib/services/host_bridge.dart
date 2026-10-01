@@ -60,8 +60,21 @@ class HostBridge {
   /// Transient per-instance UI selection state (`Selected*`: current tab, radio,
   /// satellite, APRS route) and local-only settings (see [isLocalOnlySetting])
   /// are excluded so they do not bleed across the bridge.
-  static bool isSyncedSetting(String name) =>
-      !name.startsWith('Selected') && !isLocalOnlySetting(name);
+  static bool isSyncedSetting(String name) {
+    final key = name.toLowerCase();
+    return !name.startsWith('Selected') &&
+        !isLocalOnlySetting(name) &&
+        ![
+          'password',
+          'token',
+          'apikey',
+          'secret',
+          'passcode',
+        ].any(key.contains) &&
+        !key.startsWith('webserver') &&
+        !key.startsWith('agwpeserver') &&
+        key != 'mapcustomurl'; // custom tile URLs may contain provider API keys
+  }
 
   /// First byte of a host->browser audio frame over the bridge, distinguishing
   /// it from radio command frames (which always start with 0x00). The frame is

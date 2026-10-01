@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 //
-// dart_debug_test.dart - Stage-by-stage debug harness for the DART modem.
+// dart_debug_cli.dart - Stage-by-stage debug harness for the DART modem.
 // Traces each pipeline stage to isolate where the data path breaks.
 //
 

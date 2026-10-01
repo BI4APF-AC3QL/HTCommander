@@ -21,6 +21,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Install dependencies
         working-directory: src
@@ -242,6 +243,7 @@ jobs:
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Set up Flutter (arm64)
         if: matrix.arch == 'arm64'
@@ -354,6 +356,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Install dependencies
         working-directory: src
@@ -615,6 +618,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Install dependencies
         working-directory: src
@@ -643,6 +647,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Install dependencies
         working-directory: src
@@ -666,6 +671,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: '3.47.5'
 
       - name: Install dependencies
         working-directory: src

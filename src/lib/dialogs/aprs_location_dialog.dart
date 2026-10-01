@@ -14,6 +14,7 @@ import '../l10n/app_localizations.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../utils/map_tile_provider.dart';
+import '../utils/map_source.dart';
 
 /// Shows a dialog with a map permanently centered on [latitude]/[longitude]
 /// with a red marker at that location. Mirrors the C# APRS "Show Location..."
@@ -192,7 +193,8 @@ class _AprsLocationDialogState extends State<AprsLocationDialog> {
                 children: [
                   Expanded(
                     child: Text(
-                      widget.title ?? AppLocalizations.of(context).locationTitle,
+                      widget.title ??
+                          AppLocalizations.of(context).locationTitle,
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
@@ -229,9 +231,9 @@ class _AprsLocationDialogState extends State<AprsLocationDialog> {
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'HTCommander/1.0 (amateur-radio-app; github.com/Ylianst/HTCommander)',
+                        urlTemplate: MapSource.current.urlTemplate,
+                        userAgentPackageName:
+                            'HTCommander/1.0 (amateur-radio-app; github.com/Ylianst/HTCommander)',
                         tileProvider: _tileProvider,
                       ),
                       MarkerLayer(
@@ -245,7 +247,8 @@ class _AprsLocationDialogState extends State<AprsLocationDialog> {
                                 ? widget.centerMarkerHeight
                                 : 30,
                             alignment: Alignment.topCenter,
-                            child: widget.centerMarker ??
+                            child:
+                                widget.centerMarker ??
                                 const Icon(
                                   Icons.location_pin,
                                   color: Colors.red,
@@ -263,22 +266,21 @@ class _AprsLocationDialogState extends State<AprsLocationDialog> {
                           child: MouseRegion(
                             cursor: SystemMouseCursors.click,
                             child: GestureDetector(
-                              onTap: () => launchUrl(
-                                Uri.parse(
-                                  'https://www.openstreetmap.org/copyright',
-                                ),
-                                mode: LaunchMode.externalApplication,
-                              ),
-                              child: const Text(
-                                '© OpenStreetMap contributors',
+                              onTap: MapSource.current.attributionUrl.isEmpty
+                                  ? null
+                                  : () => launchUrl(
+                                      Uri.parse(
+                                        MapSource.current.attributionUrl,
+                                      ),
+                                      mode: LaunchMode.externalApplication,
+                                    ),
+                              child: Text(
+                                MapSource.current.attribution,
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: Colors.black87,
                                   shadows: [
-                                    Shadow(
-                                      blurRadius: 2,
-                                      color: Colors.white,
-                                    ),
+                                    Shadow(blurRadius: 2, color: Colors.white),
                                   ],
                                 ),
                               ),

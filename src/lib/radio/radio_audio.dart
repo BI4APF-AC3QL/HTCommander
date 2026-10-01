@@ -492,10 +492,25 @@ class RadioAudio {
       // engine before we start pumping bytes into it.
       await _initPcmSound();
       await _ensureEngine();
+      if (!_connecting) return;
 
       // Listen for audio-channel connection events so we can react to drops.
       _audioConnSub = BluetoothClassicMacOS.instance.audioConnectionEvents
           .listen(_onAudioConnectionEvent);
+
+      // Reset the engine's decoder / accumulator for a fresh audio session and
+      // push the current radio state.
+      _sendToEngine(<String, Object?>{'cmd': 'reset'});
+      _pushRadioState();
+
+      _audioDataSub = BluetoothClassicMacOS.instance
+          .getAudioDataStream(macAddress)
+          .listen(
+            _onAudioData,
+            onError: (Object e) {
+              _debug('Audio data stream error: $e');
+            },
+          );
 
       // Opening the audio RFCOMM channel can transiently fail right after the
       // control channel connects, so retry a few times before giving up.
@@ -503,6 +518,16 @@ class RadioAudio {
       bool ok = false;
       for (var attempt = 1; attempt <= maxAudioAttempts; attempt++) {
         ok = await BluetoothClassicMacOS.instance.connectAudio(macAddress);
+        if (!_connecting) {
+          if (ok) {
+            await BluetoothClassicMacOS.instance.disconnectAudio(macAddress);
+          }
+          await _audioDataSub?.cancel();
+          _audioDataSub = null;
+          await _audioConnSub?.cancel();
+          _audioConnSub = null;
+          return;
+        }
         if (ok) break;
 
         // Audio was disabled (stop() called) while we were connecting; abort
@@ -529,6 +554,8 @@ class RadioAudio {
       }
 
       if (!ok) {
+        await _audioDataSub?.cancel();
+        _audioDataSub = null;
         _connecting = false;
         await _audioConnSub?.cancel();
         _audioConnSub = null;
@@ -540,6 +567,7 @@ class RadioAudio {
         // has powered back on, so the user can turn it on from the radio
         // panel's power button.
         if (radio.htStatus?.isPowerOn == false) {
+          await _releasePcmSound();
           _audioPendingPowerOn = true;
           _debug(
             'Radio is powered off; audio channel unavailable. Staying '
@@ -548,37 +576,24 @@ class RadioAudio {
           return;
         }
 
-        // The control channel is up but audio is unusable, leaving the radio in
-        // a half-connected state. Do a proper, full disconnect so it does not
-        // linger unusable; the BluetoothService transport watcher then tears
-        // down all connection state (maps, radio and audio) cleanly.
         _debug(
-          'Audio RFCOMM channel failed after $maxAudioAttempts attempts; '
-          'disconnecting radio to avoid a half-connected state.',
+          'Audio unavailable after $maxAudioAttempts attempts; '
+          'control and packet reception remain connected. Retry Audio when the link improves.',
         );
-        radio.disconnect('Audio RFCOMM channel failed to open');
+        await _releasePcmSound();
         return;
       }
-
-      // Reset the engine's decoder / accumulator for a fresh audio session and
-      // push the current radio state.
-      _sendToEngine(<String, Object?>{'cmd': 'reset'});
-      _pushRadioState();
-
-      _audioDataSub = BluetoothClassicMacOS.instance
-          .getAudioDataStream(macAddress)
-          .listen(
-            _onAudioData,
-            onError: (Object e) {
-              _debug('Audio data stream error: $e');
-            },
-          );
 
       _running = true;
       _connecting = false;
       _audioPendingPowerOn = false;
       _dispatchAudioStateChanged(true);
     } catch (e) {
+      await _audioDataSub?.cancel();
+      _audioDataSub = null;
+      await _audioConnSub?.cancel();
+      _audioConnSub = null;
+      await _releasePcmSound();
       _debug('Audio start error: $e');
       _running = false;
       _connecting = false;
@@ -642,7 +657,7 @@ class RadioAudio {
   // ---------------------------------------------------------------------------
 
   void _onAudioData(Uint8List data) {
-    if (!_running) return;
+    if (!_running && !_connecting) return;
     _sendToEngine(<String, Object?>{
       'cmd': 'rx',
       'bytes': TransferableTypedData.fromList(<Uint8List>[data]),

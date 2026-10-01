@@ -134,8 +134,8 @@ requires decoders to support both modes.
 The allocation method is now a switch in the DART test tool:
 
 ```
-dart run test/dart_modem_test.dart pipeline -m 5 --bitpool 18 --sbcalloc loudness -o out.wav --png loud.png "message"
-dart run test/dart_modem_test.dart pipeline -m 5 --bitpool 18 --sbcalloc snr      -o out.wav --png snr.png  "message"
+dart run test/dart_modem_cli.dart pipeline -m 5 --bitpool 18 --sbcalloc loudness -o out.wav --png loud.png "message"
+dart run test/dart_modem_cli.dart pipeline -m 5 --bitpool 18 --sbcalloc snr      -o out.wav --png snr.png  "message"
 ```
 
 Try it with channel noise (`--noise 10`) to watch the advantage fade as the link

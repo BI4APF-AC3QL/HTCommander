@@ -136,7 +136,7 @@ The behavior is in the standard decode path — short frames simply decode at lo
 SNR now. To see the padding clump that started it all:
 
 ```
-dart run test/dart_modem_test.dart pipeline -m 4 --sbc --noise 20 \
+dart run test/dart_modem_cli.dart pipeline -m 4 --sbc --noise 20 \
     --png clump.png "Hi"
 ```
 

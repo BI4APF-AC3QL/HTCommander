@@ -55,7 +55,7 @@ class AgwpeServer {
   Future<bool> start() async {
     if (_running) return true;
     try {
-      _listener = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+      _listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
       _running = true;
       _listener!.listen(
         _onConnection,
@@ -73,6 +73,10 @@ class AgwpeServer {
   }
 
   void _onConnection(Socket socket) {
+    if (_clients.length >= 16) {
+      socket.destroy();
+      return;
+    }
     if (!_running) {
       socket.destroy();
       return;
@@ -151,6 +155,7 @@ class _AgwpeClient {
   StreamSubscription<Uint8List>? _sub;
   Uint8List _rx = Uint8List(0);
   bool _closed = false;
+  Timer? _partialFrameTimer;
 
   /// Whether monitoring frames should be forwarded to this client.
   bool sendMonitoringFrames = false;
@@ -166,6 +171,10 @@ class _AgwpeClient {
 
   void _onData(Uint8List chunk) {
     if (_closed) return;
+    if (_rx.length + chunk.length > 1024 * 1024) {
+      close();
+      return;
+    }
     // Append the new chunk to any buffered bytes.
     if (_rx.isEmpty) {
       _rx = Uint8List.fromList(chunk);
@@ -178,12 +187,24 @@ class _AgwpeClient {
 
     // Parse as many complete frames as are available.
     while (true) {
-      final result = AgwpeFrame.tryParse(_rx);
+      ({AgwpeFrame frame, int consumed})? result;
+      try {
+        result = AgwpeFrame.tryParse(_rx);
+      } on FormatException {
+        close();
+        return;
+      }
       if (result == null) break;
-      _rx = Uint8List.fromList(
-        Uint8List.sublistView(_rx, result.consumed),
-      );
+      _rx = Uint8List.fromList(Uint8List.sublistView(_rx, result.consumed));
       _server._onFrame(id, result.frame);
+      _partialFrameTimer?.cancel();
+      _partialFrameTimer = null;
+    }
+    if (_rx.isEmpty) {
+      _partialFrameTimer?.cancel();
+      _partialFrameTimer = null;
+    } else {
+      _partialFrameTimer ??= Timer(const Duration(seconds: 10), close);
     }
   }
 
@@ -199,6 +220,8 @@ class _AgwpeClient {
   void close() {
     if (_closed) return;
     _closed = true;
+    _partialFrameTimer?.cancel();
+    _rx = Uint8List(0);
     _sub?.cancel();
     try {
       _socket.destroy();

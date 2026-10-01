@@ -15,10 +15,15 @@ import 'radio_transport.dart';
 /// Uses BluetoothClassicMacOS for native macOS Bluetooth connections
 class BluetoothClassicTransport implements RadioTransport {
   final _stateController = StreamController<TransportState>.broadcast();
-  final _dataController = StreamController<Uint8List>.broadcast();
+  late final StreamController<Uint8List> _dataController;
+  final List<Uint8List> _startupData = [];
+  int _startupBytes = 0;
   final _scanController = StreamController<DiscoveredDevice>.broadcast();
   final DataBrokerClient _broker = DataBrokerClient();
 
+  Future<void> _sendTail = Future<void>.value();
+  int _connectionGeneration = 0;
+  int _queuedWrites = 0;
   TransportState _state = TransportState.disconnected;
   DiscoveredDevice? _connectedDevice;
   StreamSubscription<Uint8List>? _dataSubscription;
@@ -48,6 +53,15 @@ class BluetoothClassicTransport implements RadioTransport {
   }
 
   BluetoothClassicTransport() {
+    _dataController = StreamController<Uint8List>.broadcast(
+      onListen: () {
+        for (final data in _startupData) {
+          _dataController.add(data);
+        }
+        _startupData.clear();
+        _startupBytes = 0;
+      },
+    );
     // Listen for connection events from native layer
     _connectionSubscription = BluetoothClassicMacOS.instance.connectionEvents
         .listen((event) {
@@ -61,6 +75,7 @@ class BluetoothClassicTransport implements RadioTransport {
               _logInfo(
                 'Native disconnect matched active transport $eventAddress',
               );
+              ++_connectionGeneration;
               _updateState(TransportState.disconnected);
               _connectedDevice = null;
               _dataSubscription?.cancel();
@@ -110,31 +125,47 @@ class BluetoothClassicTransport implements RadioTransport {
     _updateState(TransportState.connecting);
 
     try {
+      _connectedDevice = device;
+      final generation = ++_connectionGeneration;
+      await _dataSubscription?.cancel();
+      _dataSubscription = BluetoothClassicMacOS.instance
+          .getDataStream(device.id)
+          .listen((data) {
+            if (generation == _connectionGeneration &&
+                !_dataController.isClosed) {
+              if (_dataController.hasListener) {
+                _dataController.add(data);
+              } else if (_startupBytes + data.length <= 65536) {
+                _startupData.add(data);
+                _startupBytes += data.length;
+              } else {
+                _logError(
+                  'Startup receive buffer overflow; reconnect required',
+                );
+                unawaited(disconnect());
+              }
+            }
+          }, onError: (Object error) => _logError('RX stream error: $error'));
       final success = await BluetoothClassicMacOS.instance.connect(device.id);
 
-      if (success) {
+      if (success &&
+          generation == _connectionGeneration &&
+          _state == TransportState.connecting) {
         _connectedDevice = device;
         _updateState(TransportState.connected);
 
-        // Start listening for data
-        _dataSubscription = BluetoothClassicMacOS.instance
-            .getDataStream(device.id)
-            .listen(
-              (data) {
-                _dataController.add(data);
-              },
-              onError: (error) {
-                _logError('RX stream error for ${device.id}: $error');
-              },
-            );
-
         return true;
       } else {
+        await _dataSubscription?.cancel();
+        _dataSubscription = null;
+        _connectedDevice = null;
         _logError('Native Classic connect failed for ${device.id}');
         _updateState(TransportState.disconnected);
         return false;
       }
     } catch (e) {
+      await _dataSubscription?.cancel();
+      _dataSubscription = null;
       _logError('Classic connect threw for ${device.id}: $e');
       _updateState(TransportState.disconnected);
       return false;
@@ -143,6 +174,9 @@ class BluetoothClassicTransport implements RadioTransport {
 
   @override
   Future<void> disconnect() async {
+    ++_connectionGeneration;
+    _startupData.clear();
+    _startupBytes = 0;
     if (_connectedDevice == null) return;
 
     _logInfo('Disconnecting ${_connectedDevice!.id}');
@@ -162,25 +196,40 @@ class BluetoothClassicTransport implements RadioTransport {
   }
 
   @override
-  Future<bool> send(Uint8List data) async {
-    if (_state != TransportState.connected || _connectedDevice == null) {
+  Future<bool> send(Uint8List data) {
+    final address = _connectedDevice?.id;
+    final generation = _connectionGeneration;
+    if (_state != TransportState.connected || address == null) {
+      return Future<bool>.value(false);
+    }
+    // Never silently overwrite protocol commands when the link is congested.
+    if (_queuedWrites >= 256) {
       _logError(
-        'Send rejected: state=${_state.name}, device=${_connectedDevice?.id ?? 'none'}, '
-        'len=${data.length}',
+        'Control write queue full; command rejected (${data.length} bytes)',
       );
-      return false;
+      return Future<bool>.value(false);
     }
-
-    try {
-      final result = await BluetoothClassicMacOS.instance.send(
-        _connectedDevice!.id,
-        data,
-      );
-      return result;
-    } catch (e) {
-      _logError('Send threw for ${_connectedDevice!.id}: $e');
-      return false;
-    }
+    final bytes = Uint8List.fromList(data);
+    final result = Completer<bool>();
+    _queuedWrites++;
+    _sendTail = _sendTail.then((_) async {
+      try {
+        if (generation != _connectionGeneration ||
+            _state != TransportState.connected) {
+          result.complete(false);
+          return;
+        }
+        result.complete(
+          await BluetoothClassicMacOS.instance.send(address, bytes),
+        );
+      } catch (e) {
+        _logError('Control write failed for $address: $e');
+        result.complete(false);
+      } finally {
+        _queuedWrites--;
+      }
+    });
+    return result.future;
   }
 
   @override

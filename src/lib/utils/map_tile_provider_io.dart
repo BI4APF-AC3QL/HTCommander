@@ -16,6 +16,7 @@ import 'package:http/io_client.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/data_broker.dart';
+import 'map_source.dart';
 import '../services/tls_ca_bundle.dart';
 
 /// Native (desktop/mobile) tile provider that caches OpenStreetMap tiles to
@@ -39,7 +40,9 @@ const String kOsmTileUserAgent =
 
 /// See [createMapTileProvider].
 class CachedMapTileProvider extends TileProvider {
-  CachedMapTileProvider({required this.offline});
+  CachedMapTileProvider({required this.offline}) : source = MapSource.current;
+
+  final MapSource source;
 
   /// When true, no network requests are made; only cached tiles are returned.
   final bool offline;
@@ -48,6 +51,10 @@ class CachedMapTileProvider extends TileProvider {
   // corporate/antivirus proxy roots). Created lazily so offline providers,
   // which never touch the network, don't allocate one.
   http.Client? _client;
+  final Map<String, Future<Uint8List?>> _inFlight = {};
+  int _activeDownloads = 0;
+  final List<Completer<void>> _downloadWaiters = [];
+  bool _disposed = false;
 
   // Fallback client bound to the bundled Mozilla CA roots, created only after
   // the primary client hits a TLS handshake failure (i.e. an outdated or broken
@@ -63,7 +70,16 @@ class CachedMapTileProvider extends TileProvider {
   // instance regardless of online/offline state.
   static Future<Directory>? _cacheDirFuture;
 
-  static Future<Directory> cacheDir() {
+  static Future<Directory> cacheDir([MapSource? source]) async {
+    final base = await _baseCacheDir();
+    final selected = source ?? MapSource.current;
+    if (selected.id == 'osm') return base;
+    final dir = Directory('${base.path}/${selected.cacheNamespace}');
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  static Future<Directory> _baseCacheDir() {
     return _cacheDirFuture ??= () async {
       final base = await getApplicationSupportDirectory();
       final dir = Directory('${base.path}/map_tile_cache');
@@ -92,7 +108,36 @@ class CachedMapTileProvider extends TileProvider {
   /// the OpenStreetMap certificate chain). Returns the PNG bytes, or null when
   /// the tile could not be fetched. Every outcome is reported to the Debug tab
   /// (deduplicated) so tile-loading problems can be diagnosed from user reports.
-  Future<Uint8List?> fetchTile(String url, Map<String, String> headers) async {
+  Future<Uint8List?> fetchTile(String url, Map<String, String> headers) {
+    if (_disposed) return Future<Uint8List?>.value(null);
+    return _inFlight.putIfAbsent(url, () => _fetchLimited(url, headers));
+  }
+
+  Future<Uint8List?> _fetchLimited(
+    String url,
+    Map<String, String> headers,
+  ) async {
+    if (_activeDownloads >= 6) {
+      final waiter = Completer<void>();
+      _downloadWaiters.add(waiter);
+      await waiter.future;
+    } else {
+      _activeDownloads++;
+    }
+    try {
+      if (_disposed) return null;
+      return await _fetchTile(url, headers);
+    } finally {
+      _inFlight.remove(url);
+      if (_downloadWaiters.isNotEmpty) {
+        _downloadWaiters.removeAt(0).complete();
+      } else {
+        _activeDownloads--;
+      }
+    }
+  }
+
+  Future<Uint8List?> _fetchTile(String url, Map<String, String> headers) async {
     final client = _client ??= http.Client();
     try {
       final bytes = await _download(client, url, headers);
@@ -110,7 +155,7 @@ class CachedMapTileProvider extends TileProvider {
     } on HandshakeException catch (e) {
       return _fetchViaFallback(url, headers, e);
     } catch (e) {
-      _logger.onNetworkError(e);
+      _logger.onNetworkError(e.runtimeType);
       return null;
     }
   }
@@ -151,7 +196,9 @@ class CachedMapTileProvider extends TileProvider {
     String url,
     Map<String, String> headers,
   ) async {
-    final response = await client.get(Uri.parse(url), headers: headers);
+    final response = await client
+        .get(Uri.parse(url), headers: headers)
+        .timeout(const Duration(seconds: 10));
     if (response.statusCode != 200) {
       throw _TileHttpException(response.statusCode);
     }
@@ -160,6 +207,7 @@ class CachedMapTileProvider extends TileProvider {
 
   @override
   void dispose() {
+    _disposed = true;
     _client?.close();
     _fallbackClient?.close();
     super.dispose();
@@ -204,7 +252,7 @@ class _CachedTileImage extends ImageProvider<_CachedTileImage> {
   }
 
   Future<Uint8List> _resolveBytes() async {
-    final dir = await CachedMapTileProvider.cacheDir();
+    final dir = await CachedMapTileProvider.cacheDir(provider.source);
     final file = File(
       '${dir.path}/${coordinates.z}_${coordinates.x}_${coordinates.y}.png',
     );
@@ -381,7 +429,7 @@ class _TileLoadLogger {
     _fail(
       'http:$statusCode',
       'Map: OpenStreetMap returned HTTP $statusCode for a tile request; '
-      'tiles cannot be shown.',
+          'tiles cannot be shown.',
     );
   }
 
@@ -389,7 +437,7 @@ class _TileLoadLogger {
     _fail(
       'net:$error',
       'Map: unable to download OpenStreetMap tiles ($error). Check the '
-      'internet connection or firewall.',
+          'internet connection or firewall.',
     );
   }
 
@@ -398,10 +446,10 @@ class _TileLoadLogger {
       'tls:$bundledRootsAvailable',
       bundledRootsAvailable
           ? 'Map: TLS verification of the OpenStreetMap certificate failed '
-              'even with the bundled CA roots ($cause); tiles cannot be shown.'
+                'even with the bundled CA roots ($cause); tiles cannot be shown.'
           : 'Map: TLS verification of the OpenStreetMap certificate failed and '
-              'no bundled CA roots are available ($cause); tiles cannot be '
-              'shown.',
+                'no bundled CA roots are available ($cause); tiles cannot be '
+                'shown.',
     );
   }
 

@@ -31,7 +31,7 @@ class ImapServer {
   /// Starts the IMAP server. Returns true on success.
   Future<bool> start() async {
     try {
-      _listener = await ServerSocket.bind(InternetAddress.anyIPv4, port);
+      _listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
       _running = true;
       _listener!.listen(
         _onConnection,

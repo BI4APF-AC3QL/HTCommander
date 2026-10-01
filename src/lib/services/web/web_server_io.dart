@@ -17,6 +17,8 @@ framing). The bridge logic that connects WebSocket clients to the radio lives in
 */
 
 import 'dart:io';
+import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
@@ -83,6 +85,9 @@ class WebServer {
   HttpServer? _server;
   bool _running = false;
   int _nextClientId = 1;
+  final String _sessionToken = base64UrlEncode(
+    List<int>.generate(32, (_) => Random.secure().nextInt(256)),
+  );
   final Map<int, WebSocketClient> _clients = <int, WebSocketClient>{};
 
   /// Cached, resolved Flutter web build directory. Null until first resolved;
@@ -116,7 +121,7 @@ class WebServer {
   Future<bool> start() async {
     if (_running) return true;
     try {
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
       _running = true;
       _server!.listen(
         _handleRequest,
@@ -166,6 +171,18 @@ class WebServer {
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
+    // Reject DNS rebinding and cross-origin browser requests even on loopback.
+    final host = request.requestedUri.host.toLowerCase();
+    final origin = request.headers.value('origin');
+    final parsedOrigin = origin == null ? null : Uri.tryParse(origin);
+    if (!['127.0.0.1', 'localhost', '::1'].contains(host) ||
+        (origin != null &&
+            (parsedOrigin == null ||
+                parsedOrigin.origin != request.requestedUri.origin))) {
+      request.response.statusCode = HttpStatus.forbidden;
+      await request.response.close();
+      return;
+    }
     // WebSocket upgrade requests are bridged to the radio.
     if (WebSocketTransformer.isUpgradeRequest(request)) {
       await _handleWebSocket(request);
@@ -182,6 +199,19 @@ class WebServer {
       return;
     }
 
+    final authorized = request.cookies.any(
+      (cookie) => cookie.name == 'htc_bridge' && cookie.value == _sessionToken,
+    );
+    if (!authorized || request.headers.value('origin') == null) {
+      request.response.statusCode = HttpStatus.unauthorized;
+      await request.response.close();
+      return;
+    }
+    if (_clients.length >= 8) {
+      request.response.statusCode = HttpStatus.serviceUnavailable;
+      await request.response.close();
+      return;
+    }
     WebSocket socket;
     try {
       socket = await WebSocketTransformer.upgrade(request);
@@ -191,12 +221,20 @@ class WebServer {
 
     final clientId = _nextClientId++;
     final client = WebSocketClient(clientId, socket);
+    socket.pingInterval = const Duration(seconds: 20);
     _clients[clientId] = client;
     _broker.logInfo('[WebServer] WebSocket client $clientId connected');
     onClientConnected?.call(client);
 
     socket.listen(
       (dynamic message) {
+        final size = message is String
+            ? utf8.encode(message).length
+            : (message is List<int> ? message.length : 0);
+        if (size > 65536) {
+          socket.close(WebSocketStatus.messageTooBig, 'Message exceeds 64 KiB');
+          return;
+        }
         if (message is String) {
           onTextMessage?.call(client, message);
         } else if (message is List<int>) {
@@ -270,8 +308,10 @@ class WebServer {
         }
       }
 
-      final file = File('${dir.path}${Platform.pathSeparator}'
-          '${relativePath.replaceAll('/', Platform.pathSeparator)}');
+      final file = File(
+        '${dir.path}${Platform.pathSeparator}'
+        '${relativePath.replaceAll('/', Platform.pathSeparator)}',
+      );
       if (!file.existsSync()) {
         response.statusCode = HttpStatus.notFound;
         response.headers.contentType = ContentType.text;
@@ -280,6 +320,14 @@ class WebServer {
         return;
       }
 
+      if (relativePath == 'index.html') {
+        response.cookies.add(
+          Cookie('htc_bridge', _sessionToken)
+            ..httpOnly = true
+            ..sameSite = SameSite.strict
+            ..path = '/',
+        );
+      }
       final bytes = await file.readAsBytes();
       response.statusCode = HttpStatus.ok;
       response.headers.contentType = _contentTypeFor(relativePath);
@@ -306,9 +354,11 @@ class WebServer {
   /// directory only qualifies if it contains `index.html`.
   Directory? _resolveWebAppDir() {
     final cached = _webAppDir;
-    if (cached != null && File('${cached.path}${Platform.pathSeparator}'
-            'index.html')
-        .existsSync()) {
+    if (cached != null &&
+        File(
+          '${cached.path}${Platform.pathSeparator}'
+          'index.html',
+        ).existsSync()) {
       return cached;
     }
 
@@ -330,8 +380,7 @@ class WebServer {
     for (final path in candidates) {
       final dir = Directory(path);
       if (dir.existsSync() &&
-          File('${dir.path}${Platform.pathSeparator}index.html')
-              .existsSync()) {
+          File('${dir.path}${Platform.pathSeparator}index.html').existsSync()) {
         _webAppDir = dir;
         return dir;
       }

@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import 'map_tile_provider_io.dart';
+import 'map_source.dart';
 
 /// Calculates the number of tiles needed to cover a bounding box at the given
 /// zoom levels (from [minZoom] to [maxZoom] inclusive).
@@ -43,9 +44,11 @@ Future<int> downloadTilesInBounds({
   required void Function(int downloaded, int total) onProgress,
   required ValueNotifier<bool> cancel,
 }) async {
-  final dir = await CachedMapTileProvider.cacheDir();
+  final source = MapSource.current;
+  final dir = await CachedMapTileProvider.cacheDir(source);
   final client = http.Client();
   var downloaded = 0;
+  var processed = 0;
   var total = countTilesInBounds(sw, ne, minZoom, maxZoom);
 
   try {
@@ -65,27 +68,26 @@ Future<int> downloadTilesInBounds({
           if (await file.exists()) {
             // Already cached, skip.
             downloaded++;
-            onProgress(downloaded, total);
+            processed++;
+            onProgress(processed, total);
             continue;
           }
 
-          final url = 'https://tile.openstreetmap.org/$z/$x/$y.png';
+          final url = source.tileUrl(z, x, y);
           try {
-            final response = await client.get(
-              Uri.parse(url),
-              headers: {
-                'User-Agent': kOsmTileUserAgent,
-              },
-            );
+            final response = await client
+                .get(Uri.parse(url), headers: {'User-Agent': kOsmTileUserAgent})
+                .timeout(const Duration(seconds: 10));
             if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
               await file.writeAsBytes(response.bodyBytes);
+              downloaded++;
             }
           } catch (_) {
             // Skip failed tiles; user can retry later.
           }
 
-          downloaded++;
-          onProgress(downloaded, total);
+          processed++;
+          onProgress(processed, total);
 
           // Small delay to be nice to the tile server.
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -103,8 +105,11 @@ Future<int> downloadTilesInBounds({
   final n = 1 << zoom;
   final x = ((lng + 180.0) / 360.0 * n).floor().clamp(0, n - 1);
   final latRad = lat * math.pi / 180.0;
-  final y = ((1.0 - math.log(math.tan(latRad) + 1.0 / math.cos(latRad)) / math.pi) / 2.0 * n)
-      .floor()
-      .clamp(0, n - 1);
+  final y =
+      ((1.0 - math.log(math.tan(latRad) + 1.0 / math.cos(latRad)) / math.pi) /
+              2.0 *
+              n)
+          .floor()
+          .clamp(0, n - 1);
   return (x, y);
 }

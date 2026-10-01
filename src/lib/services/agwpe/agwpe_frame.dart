@@ -60,6 +60,7 @@ class AgwpeFrame {
 
   /// Total size of the fixed AGWPE header in bytes.
   static const int headerLength = 36;
+  static const int maxPayloadLength = 65536;
 
   int port;
   int dataKind;
@@ -70,8 +71,9 @@ class AgwpeFrame {
   Uint8List data;
 
   /// The `dataKind` value as its ASCII character (for logging / debugging).
-  String get dataKindChar =>
-      (dataKind >= 0x20 && dataKind < 0x7F) ? String.fromCharCode(dataKind) : '?';
+  String get dataKindChar => (dataKind >= 0x20 && dataKind < 0x7F)
+      ? String.fromCharCode(dataKind)
+      : '?';
 
   /// Serializes this frame (header + payload) into a byte buffer ready to be
   /// written to a socket.
@@ -108,6 +110,9 @@ class AgwpeFrame {
 
     final bd = ByteData.sublistView(buffer);
     final dataLen = bd.getUint32(28, Endian.little);
+    if (dataLen > maxPayloadLength) {
+      throw const FormatException('AGWPE payload exceeds 64 KiB');
+    }
     final total = headerLength + dataLen;
     if (buffer.length < total) return null;
 
