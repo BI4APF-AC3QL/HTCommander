@@ -2,9 +2,12 @@ name: Windows test release
 
 on:
   push:
-    branches: [main, 'improve/**']
+    branches: [main, 'improve/**', 'feature/portable-phone-remote-suite']
     paths:
       - 'src/**'
+      - 'tools/https-gateway/**'
+      - '简单配置方法.md'
+      - 'docs/phone-remote-control.md'
       - '.github/workflows/windows-test-release.yaml'
   workflow_dispatch:
 
@@ -64,7 +67,11 @@ jobs:
           BUILD_SHA: ${{ github.sha }}
           BUILD_BRANCH: ${{ github.ref_name }}
         run: |
+          & ./tools/https-gateway/build.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'htcommander-gateway')
           $buildDir = 'src/build/windows/x64/runner/Release'
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'htcommander-gateway/HTCommander-HTTPS-Gateway.exe') $buildDir
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'htcommander-gateway/CADDY-LICENSE.txt') $buildDir
+          Copy-Item 简单配置方法.md $buildDir
           $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
           $vsPath = & $vswhere -latest -property installationPath
           if (-not $vsPath) { throw 'Visual Studio installation not found' }
@@ -87,6 +94,7 @@ jobs:
           N7500 hardware packet loss and long-duration audio still need verification.
           Phone remote control: Settings > Servers > Phone remote control settings.
           Remote access and PTT are off by default; see PHONE-REMOTE-CONTROL.md.
+          HTTPS entry: HTCommander-HTTPS-Gateway.exe; configure your own domain and HTTP port.
           AGWPE/IMAP remain loopback-only.
           "@ | Set-Content "$buildDir/TEST-BUILD.txt" -Encoding utf8
           $shortSha = $env:BUILD_SHA.Substring(0, 8)
@@ -127,6 +135,7 @@ jobs:
           手机远程操控：设置 → 服务端 → 手机远程操控设置，开启服务、配置密码后连接电脑地址。
           支持局域网/VPN与HTTPS反向代理；手机麦克风需要HTTPS。远程访问/PTT默认关闭。
           详细步骤见包内 PHONE-REMOTE-CONTROL.md；尚未进行N7500实机远程语音验收。
+          包含可配置域名及后端端口的 HTCommander-HTTPS-Gateway.exe；入门见包内 简单配置方法.md。
           "@ | Set-Content release-notes.md -Encoding utf8
           gh release create $env:BUILD_TAG $env:BUILD_FILE SHA256SUMS.txt --target $env:BUILD_SHA --title "Windows 测试版 $($env:BUILD_SHA.Substring(0, 8))" --notes-file release-notes.md --prerelease --latest=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
