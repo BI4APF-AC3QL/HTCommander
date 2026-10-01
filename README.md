@@ -72,3 +72,6 @@ Map data provided by [openstreetmap.org](https://openstreetmap.org), the project
 APRS message backfill uses the [aprs.fi](https://aprs.fi) API, courtesy of Heikki Hannikainen, OH7LZB, to retrieve messages received while HTCommander was offline.
 
 Repeater directory search is powered by [RepeaterBook](https://www.repeaterbook.com). Data courtesy of RepeaterBook.com. RepeaterBook access requires each user to generate their own personal API token for HTCommander.
+# Windows phone remote control / 手机远程操控
+
+This fork includes authenticated phone browser control and audio, optional guarded PTT, and a configurable portable HTTPS gateway. Start with [简单配置方法](简单配置方法.md), then see [the complete guide](docs/phone-remote-control.md). Windows test releases bundle both applications; remote access and transmit are disabled by default.

@@ -1,0 +1,141 @@
+name: Windows test release
+
+on:
+  push:
+    branches: [main, 'improve/**', 'feature/portable-phone-remote-suite']
+    paths:
+      - 'src/**'
+      - 'tools/https-gateway/**'
+      - '简单配置方法.md'
+      - 'docs/phone-remote-control.md'
+      - '.github/workflows/windows-test-release.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-test-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'BI4APF-AC3QL/HTCommander'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Install and validate
+        working-directory: src
+        run: |
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter analyze --no-pub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter test --no-pub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node test/remote_mobile_page_test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows and hosted web UI
+        working-directory: src
+        run: |
+          flutter build windows --release --no-pub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter build web --base-href / --dart-define=HTC_HOSTED=true --no-wasm-dry-run --no-pub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dest = 'build/windows/x64/runner/Release/web_app'
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Copy-Item -Recurse build/web/* $dest
+
+      - name: Bundle runtime and portable package
+        id: package
+        env:
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_BRANCH: ${{ github.ref_name }}
+        run: |
+          & ./tools/https-gateway/build.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'htcommander-gateway')
+          $buildDir = 'src/build/windows/x64/runner/Release'
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'htcommander-gateway/HTCommander-HTTPS-Gateway.exe') $buildDir
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'htcommander-gateway/CADDY-LICENSE.txt') $buildDir
+          Copy-Item 简单配置方法.md $buildDir
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          if (-not $vsPath) { throw 'Visual Studio installation not found' }
+          $verDir = Get-ChildItem (Join-Path $vsPath 'VC/Redist/MSVC') -Directory |
+            Where-Object { $_.Name -match '^\d+\.\d+' } |
+            Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $verDir) { throw 'MSVC redistributable version not found' }
+          $crtDir = Get-ChildItem (Join-Path $verDir.FullName 'x64') -Directory -Filter 'Microsoft.VC*.CRT' | Select-Object -First 1
+          if (-not $crtDir) { throw 'Visual C++ runtime not found' }
+          Copy-Item (Join-Path $crtDir.FullName '*.dll') $buildDir
+          Copy-Item LICENSE $buildDir
+          Copy-Item docs/phone-remote-control.md "$buildDir/PHONE-REMOTE-CONTROL.md"
+          @"
+          HTCommander Windows x64 test build
+          Branch: $env:BUILD_BRANCH
+          Commit: $env:BUILD_SHA
+          Extract the entire ZIP and run htcommander.exe. Keep all DLLs and data.
+          This unsigned prerelease shares the application's existing user settings.
+          Map menu > Map source: Esri Street/Imagery, CARTO or custom XYZ.
+          N7500 hardware packet loss and long-duration audio still need verification.
+          Phone remote control: Settings > Servers > Phone remote control settings.
+          Remote access and PTT are off by default; see PHONE-REMOTE-CONTROL.md.
+          HTTPS entry: HTCommander-HTTPS-Gateway.exe; configure your own domain and HTTP port.
+          AGWPE/IMAP remain loopback-only.
+          "@ | Set-Content "$buildDir/TEST-BUILD.txt" -Encoding utf8
+          $shortSha = $env:BUILD_SHA.Substring(0, 8)
+          $file = "HTCommander-Windows-x64-test-$shortSha.zip"
+          Compress-Archive -Path "$buildDir/*" -DestinationPath $file
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $file" | Set-Content SHA256SUMS.txt -Encoding ascii
+          "file=$file" >> $env:GITHUB_OUTPUT
+          "tag=test-windows-${{ github.run_id }}-${{ github.run_attempt }}" >> $env:GITHUB_OUTPUT
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-x64-test
+          path: |
+            ${{ steps.package.outputs.file }}
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_BRANCH: ${{ github.ref_name }}
+          BUILD_FILE: ${{ steps.package.outputs.file }}
+          BUILD_TAG: ${{ steps.package.outputs.tag }}
+        run: |
+          @"
+          自动生成的 Windows x64 测试版，来自分支 $env:BUILD_BRANCH。
+          提交：$env:BUILD_SHA
+
+          下载 ZIP 后完整解压，运行 htcommander.exe。包含 Visual C++ 运行库和本地 Web UI。
+          此包未经代码签名，沿用现有用户设置；请备份设置，不要同时让两个实例连接同一电台。
+          已通过静态检查及 Flutter 测试；实际 N7500 蓝牙丢包和长时间音频仍需实机验收。
+          地图菜单 → 地图源，可切换 Esri、CARTO 或自定义 XYZ。
+          手机远程操控：设置 → 服务端 → 手机远程操控设置，开启服务、配置密码后连接电脑地址。
+          支持局域网/VPN与HTTPS反向代理；手机麦克风需要HTTPS。远程访问/PTT默认关闭。
+          详细步骤见包内 PHONE-REMOTE-CONTROL.md；尚未进行N7500实机远程语音验收。
+          包含可配置域名及后端端口的 HTCommander-HTTPS-Gateway.exe；入门见包内 简单配置方法.md。
+          "@ | Set-Content release-notes.md -Encoding utf8
+          gh release create $env:BUILD_TAG $env:BUILD_FILE SHA256SUMS.txt --target $env:BUILD_SHA --title "Windows 测试版 $($env:BUILD_SHA.Substring(0, 8))" --notes-file release-notes.md --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

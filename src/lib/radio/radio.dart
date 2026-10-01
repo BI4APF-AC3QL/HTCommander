@@ -637,7 +637,12 @@ class Radio implements FirmwareRadio {
     _cancelPendingChannelReads();
     switch (name) {
       case 'ChannelChangeVfoA':
-        writeSettings(settings!.toByteArrayWith(channelA: channelId));
+        writeSettings(
+          settings!.toByteArrayWith(
+            channelA: channelId,
+            doubleChannel: settings!.doubleChannel != 0 ? 1 : null,
+          ),
+        );
         break;
       case 'ChannelChangeVfoB':
         // The radio only commits the channel of the currently selected VFO, so
