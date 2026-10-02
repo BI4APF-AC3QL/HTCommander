@@ -2,6 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/aprs/message_delivery.dart';
 
 void main() {
+  test('zero SSID representations acknowledge the same station', () {
+    final tracker = MessageDeliveryTracker(clock: () => DateTime(2026));
+    tracker.start('zero', 'AC3QL', 'BI4APF', '1');
+    expect(tracker.acknowledge('BI4APF-0', 'AC3QL-0', '1'), true);
+  });
   test('ACK requires matching sender, recipient and sequence', () {
     final tracker = MessageDeliveryTracker(clock: () => DateTime(2026));
     final entry = tracker.start('1', 'BI4APF-1', 'TEST-2', '42');

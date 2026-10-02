@@ -53,6 +53,17 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
 
 (async () => {
   socket.onopen(); update();
+  state.aprsMessages=[{id:1,peer:'BI4APF',source:'BI4APF',destination:'AC3QL',incoming:true,text:'<script>hello</script>',sequence:'1',time:'2026-10-02T12:00:00'}];
+  update();
+  assert.equal(element('aprsUnread').textContent,'（1 条未读）');
+  assert.equal(element('aprsMessages').children[1].textContent,'<script>hello</script>');
+  element('aprsMessages').children[0].onclick();
+  assert.equal(element('aprsDestination').value,'BI4APF');
+  element('aprsSearch').value='absent';element('aprsSearch').oninput();
+  assert.equal(element('aprsMessages').children.length,0);
+  element('aprsSearch').value='';element('aprsSearch').oninput();
+  element('aprsRead').onclick();
+  assert.equal(element('aprsUnread').textContent,'');
   assert.equal(element('ptt').disabled, false);
   // Releasing while the permission dialog is still pending cannot start TX.
   const cancelled = press(); await wait();

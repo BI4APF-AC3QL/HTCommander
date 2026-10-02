@@ -25,6 +25,7 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
 <section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
+<section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
@@ -32,6 +33,19 @@ const $=id=>document.getElementById(id);
 let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0;
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
+let aprsReadThrough=0,aprsMessageSignature='';
+function renderMessages(){
+ const messages=state.aprsMessages||[];const query=$('aprsSearch').value.trim().toUpperCase();
+ const unread=messages.filter(e=>e.incoming&&e.id>aprsReadThrough).length;
+ $('aprsUnread').textContent=unread?'（'+unread+' 条未读）':'';
+ const signature=JSON.stringify([messages,query,aprsReadThrough,state.aprsDeliveries]);if(signature===aprsMessageSignature)return;aprsMessageSignature=signature;
+ const rows=[];for(const e of messages.slice().reverse()){
+  if(query&&!(e.peer+' '+e.text).toUpperCase().includes(query))continue;
+  const peer=document.createElement('button');peer.textContent=(e.incoming&&e.id>aprsReadThrough?'● ':'')+e.peer+' · '+(e.incoming?'收到':'提交');peer.onclick=()=>{$('aprsDestination').value=e.peer;notice('已填写回复目标，请编辑消息后发送。');};
+  const text=document.createElement('p');text.textContent=e.text;
+  const stamp=document.createElement('small');const delivery=(state.aprsDeliveries||[]).find(d=>d.source===e.source&&d.destination===e.destination&&d.sequence===e.sequence);stamp.textContent=e.time+(e.viaInternet?' · APRS-IS':' · RF')+(delivery?' · '+delivery.status:'');rows.push(peer,text,stamp);
+ }$('aprsMessages').replaceChildren(...rows);
+}
 function notice(text){$('notice').textContent=text||'';}
 function send(op){if(socket&&socket.readyState===WebSocket.OPEN){socket.send(typeof op==='string'?op:'remote:'+JSON.stringify(op));return true;}return false;}
 function stopPtt(){pressed=false;transmitting=false;micGeneration++;send({op:'pttStop'});if(micStream)micStream.getTracks().forEach(t=>t.stop());if(micNode)micNode.disconnect();if(micSource)micSource.disconnect();if(micMute)micMute.disconnect();micStream=micNode=micSource=micMute=null;$('ptt').classList.remove('active');$('ptt').textContent='按住讲话';}
@@ -44,6 +58,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onerror=()=>socket.close();
 }
 function render(){
+ renderMessages();
  const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
  $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
  $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null;
@@ -76,6 +91,8 @@ $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});
 $('playback').oninput=()=>{if(gain)gain.gain.value=Number($('playback').value);};
 $('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio)gain.gain.value=0;else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
+$('aprsSearch').oninput=renderMessages;
+$('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.aprsMessages||[]).map(e=>e.id));renderMessages();};
 $('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;send({op:'aprsMessage',destination:$('aprsDestination').value.trim().toUpperCase(),text:$('aprsText').value});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');});
 setInterval(()=>{if(!document.hidden)send({op:'state'});},2000);open();
 </script></body></html>''';

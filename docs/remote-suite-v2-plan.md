@@ -9,7 +9,7 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 | 3 | APRS gateway reconnect, backoff, dedup, queue limits and expiry | Fake-network disconnect/overload/expiry tests and gateway metrics | Pending |
 | 4 | RF/IS transfer controls, forbidden paths and loop/rate safeguards | Forwarding matrix tests and host configuration | Pending |
 | 5 | Link diagnostics, latency/audio backlog/counters and failure causes | Real data sources, browser panel and tests | Pending |
-| 6 | APRS conversations, replies, unread, ACK and search | Host/mobile synchronization and browser verification | Pending |
+| 6 | APRS conversations, replies, unread, ACK and search | Host/mobile synchronization and browser verification | Partial: bounded live history, search/reply/page-local unread; Dart and simulated DOM tests. Real-browser verification and persisted history remain. |
 | 7 | Radio/consented-phone position packets with freshness/accuracy | Validation, independent permission and browser consent path | Pending |
 | 8 | Lightweight remote map, stations/tracks/source/search/message action | Browser interaction and map-state tests | Pending |
 | 9 | Map clustering, viewport limits, throttling/cache limits/staleness | Load/update/cap tests and browser verification | Pending |

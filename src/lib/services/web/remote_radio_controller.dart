@@ -40,6 +40,7 @@ class RemoteRadioController {
           RemoteAccessConfig.current.allowPosition &&
           DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1,
       'txOwner': _owner,
+      'aprsMessages': DataBroker.getValueDynamic(1, 'RemoteAprsMessages', []),
       'aprsDeliveries': DataBroker.getValueDynamic(
         1,
         'RemoteAprsDeliveries',

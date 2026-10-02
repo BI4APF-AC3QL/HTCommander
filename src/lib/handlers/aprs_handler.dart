@@ -9,6 +9,7 @@ Ported from the C# `HTCommander.AprsHandler` class.
 import 'dart:async';
 import 'dart:convert';
 import '../aprs/message_delivery.dart';
+import '../aprs/conversation_history.dart';
 import '../services/web/remote_access_config.dart';
 import '../aprs/aprs_auth.dart';
 import '../aprs/aprs_events.dart';
@@ -42,6 +43,7 @@ class AprsHandler {
   final DataBrokerClient _broker = DataBrokerClient();
   final AprsAuth _auth = AprsAuth();
   final _delivery = MessageDeliveryTracker(clock: DateTime.now);
+  final _conversations = ConversationHistory();
   final Map<String, (int, AX25Packet)> _retryFrames = {};
   Timer? _deliveryTimer;
   String? _lastDeliverySnapshot;
@@ -106,9 +108,18 @@ class AprsHandler {
   }
 
   void _onDeliveryFrame(int deviceId, String name, Object? data) {
-    if (_disposed || data is! AprsFrameEventArgs || !data.ax25Packet.incoming) {
+    if (_disposed || data is! AprsFrameEventArgs) {
       return;
     }
+    if (_conversations.add(data, _localCallsignWithId ?? '')) {
+      _broker.dispatch(
+        deviceId: _aprsDeviceId,
+        name: 'RemoteAprsMessages',
+        data: _conversations.messages,
+        store: true,
+      );
+    }
+    if (!data.ax25Packet.incoming) return;
     final packet = data.aprsPacket;
     final message = packet.messageData;
     if (message.msgType != MessageType.mtAck &&

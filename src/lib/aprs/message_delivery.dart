@@ -100,10 +100,12 @@ class MessageDeliveryTracker {
     String sequence, {
     bool rejected = false,
   }) {
+    String normalize(String value) =>
+        value.trim().toUpperCase().replaceFirst(RegExp(r'-0$'), '');
     for (final entry in _entries) {
       if (entry.pending &&
-          entry.destination == sender.toUpperCase() &&
-          entry.source == addressee.toUpperCase() &&
+          normalize(entry.destination) == normalize(sender) &&
+          normalize(entry.source) == normalize(addressee) &&
           entry.sequence == sequence) {
         entry.status = rejected
             ? DeliveryStatus.rejected
