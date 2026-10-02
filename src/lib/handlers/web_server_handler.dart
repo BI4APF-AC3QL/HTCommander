@@ -86,6 +86,7 @@ class WebServerHandler {
   /// Initializes the handler: loads settings, subscribes to changes, and starts
   /// the server if enabled.
   void init() {
+    _publishClients();
     _enabled = (_broker.getValue<int>(0, 'webServerEnabled', 0) ?? 0) == 1;
     _port = _broker.getValue<int>(0, 'webServerPort', 8080) ?? 8080;
 
@@ -104,8 +105,42 @@ class WebServerHandler {
         'webServerAllowTransmit',
         'webServerAllowAprs',
         'webServerAllowPosition',
+        'webServerDefaultReadOnly',
       ],
       callback: _onSettingChanged,
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'webServerEmergencyStopped',
+      callback: (_, _, value) {
+        if (value == 1) {
+          _remote.release();
+          _broker.dispatch(
+            deviceId: 0,
+            name: 'CancelRemoteAprs',
+            data: null,
+            store: false,
+          );
+        }
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteClientRevoke',
+      callback: (_, _, value) {
+        if (value is int) _server?.revokeClient(value);
+        _publishClients();
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteClientRole',
+      callback: (_, _, value) {
+        if (value is Map && value['id'] is int && value['readOnly'] is bool) {
+          _server?.setClientReadOnly(value['id'], value['readOnly']);
+        }
+        _publishClients();
+      },
     );
     _broker.subscribe(
       deviceId: 1,
@@ -314,6 +349,7 @@ class WebServerHandler {
   // ---------------------------------------------------------------------------
 
   void _onClientConnected(WebSocketClient client) {
+    _publishClients();
     if (_disposed) return;
     // Report the current radio status to the freshly connected browser.
     client.sendText(_stateMessageFor(_currentRadioState));
@@ -646,7 +682,11 @@ class WebServerHandler {
         if (command is! Map) return;
         final error = _remote.command(client.id, command);
         client.sendText(
-          'remote:${jsonEncode({'clientId': client.id, 'state': _remote.snapshot(client.id), 'error': error})}',
+          'remote:${jsonEncode({
+            'clientId': client.id,
+            'state': {..._remote.snapshot(client.id), 'readOnly': client.readOnly},
+            'error': error,
+          })}',
         );
       } catch (_) {
         client.sendText('remote:{"error":"Invalid remote control message."}');
@@ -753,6 +793,18 @@ class WebServerHandler {
     final server = WebServer(_port, remoteConfig: RemoteAccessConfig.current);
     server.onClientConnected = _onClientConnected;
     server.onClientDisconnected = _onClientDisconnected;
+    server.onClientRoleChanged = (client) {
+      if (client.readOnly) {
+        _remote.disconnected(client.id);
+        _broker.dispatch(
+          deviceId: 0,
+          name: 'CancelRemoteAprs',
+          data: client.id,
+          store: false,
+        );
+      }
+      _publishClients();
+    };
     server.onTextMessage = _onTextMessage;
     server.onBinaryMessage = _onBinaryMessage;
     _server = server;
@@ -785,6 +837,12 @@ class WebServerHandler {
     if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
     _remote.release();
     _audioClients.clear();
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: null,
+      store: false,
+    );
     _server = null;
     await server.stop();
     server.dispose();
@@ -794,7 +852,21 @@ class WebServerHandler {
     if (_disposed) return;
     _remote.disconnected(client.id);
     _audioClients.remove(client.id);
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: client.id,
+      store: false,
+    );
+    _publishClients();
   }
+
+  void _publishClients() => _broker.dispatch(
+    deviceId: 0,
+    name: 'RemoteClients',
+    data: _server?.clientSummaries ?? [],
+    store: true,
+  );
 
   /// Mirrors a buffer of host playback audio to every opted-in browser as a
   /// tagged binary frame (`[magic, channels, rateLo, rateHi]` + PCM).

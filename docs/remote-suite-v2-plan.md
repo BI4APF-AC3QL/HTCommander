@@ -5,7 +5,7 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 | # | Requirement | Completion evidence required | Status |
 |---|---|---|---|
 | 1 | Remote APRS messaging, ACK, bounded retry and timeout | Browser send path plus simulated ACK/reject/timeout/retry tests | Pending |
-| 2 | Separate voice/message/position permissions and emergency stop | Host UI, server checks, unauthorized-command and revocation tests | Pending |
+| 2 | Separate voice/message/position permissions and emergency stop | Host UI, server checks, unauthorized-command and revocation tests | Partial: independent switches, host stop/resume latch, server write denial, voice release and tagged pending-frame cancellation. Tests passed; position path and browser verification remain. |
 | 3 | APRS gateway reconnect, backoff, dedup, queue limits and expiry | Fake-network disconnect/overload/expiry tests and gateway metrics | Partial: jittered backoff, bounded/expiring paced up-queue and phone counters. Queue/predicate tests passed; manager fake-network integration remains. |
 | 4 | RF/IS transfer controls, forbidden paths and loop/rate safeguards | Forwarding matrix tests and host configuration | Pending |
 | 5 | Link diagnostics, latency/audio backlog/counters and failure causes | Real data sources, browser panel and tests | Pending |
@@ -15,7 +15,7 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 | 9 | Map clustering, viewport limits, throttling/cache limits/staleness | Load/update/cap tests and browser verification | Partial: viewport isolation/dateline filtering, 512 stations/16 points, 256 response cap, clustering, 2 Hz map and 64 tile/8 request limits. Tests passed; real-browser load verification remains. |
 | 10 | Audio spectrum/waterfall with bounded remote traffic | Known-tone DSP test and live simulated PCM browser visualization | Partial: client FFT, bounded 10 Hz plot, waterfall/range/gain/pause reuse PCM stream. Known-tone/silence tests passed; real-browser canvas verification remains. |
 | 11 | Audio buffers/recovery/input meters/clipping/mic test | DSP/buffer tests and browser verification | Partial: bounded playback sources, backlog recovery, configurable buffer, RX peak/clipping. Simulated burst/stop tests passed; microphone test and browser verification remain. |
-| 12 | Client list, targeted revocation and read-only/control roles | Authentication/authorization/revocation isolation tests | Pending |
+| 12 | Client list, targeted revocation and read-only/control roles | Authentication/authorization/revocation isolation tests | Partial: host list, per-connection role assignment/default, session-wide targeted revocation. Real HTTP/WebSocket isolation tests passed; browser/host UI acceptance remains. |
 | 13 | Remote radio/gateway/activity dashboard | Verified server telemetry and phone layout | Pending |
 | 14 | Host-configured beacon tasks, pause and explicit resume authorization | Scheduler/time/permission/cancellation tests and UI | Pending |
 | 15 | Address QR and DNS/certificate/backend diagnostics | QR decoding and diagnostic failure tests | Pending |
@@ -25,3 +25,5 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 | 19 | GitHub PR, build/release and simple usage docs | Actual PR state, passing CI and verified release contents | Pending |
 
 Spectrum means received **audio** spectrum. RF-wide spectrum needs hardware/SDR data not supplied by N7500 and is not claimed. No development test performs real RF transmission. These boundaries preserve the original feature list.
+
+Emergency stop prevents further remote control and retries and cancels queued tagged frames. A frame already handed to the radio may finish; software cannot undo an on-air packet. Restoring remote control is explicit and never replays cancelled messages. Read-only roles are assigned by the Windows host; reconnecting receives the configured default role. Revoking a client revokes all sockets sharing that login session.

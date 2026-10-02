@@ -7,8 +7,9 @@ class StationIndex {
     this.capacity = 512,
     this.trackLimit = 16,
   }) {
-    if (capacity < 1 || trackLimit < 1)
+    if (capacity < 1 || trackLimit < 1) {
       throw ArgumentError('Invalid map limits');
+    }
   }
   final DateTime Function() clock;
   final int capacity, trackLimit;

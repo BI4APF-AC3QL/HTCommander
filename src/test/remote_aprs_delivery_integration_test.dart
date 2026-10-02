@@ -68,6 +68,42 @@ void main() {
         expect(state.single['sequence'], sequence);
         await tester.pump(const Duration(seconds: 1));
         expect(frames, hasLength(1));
+        set(
+          1,
+          'SendAprsMessage',
+          const AprsSendMessageData(
+            destination: 'BI4APF-7',
+            message: 'Cancel test',
+            radioDeviceId: 2,
+            remoteRequestId: 'cancel-test',
+            remoteClientId: 2,
+          ),
+        );
+        expect(frames, hasLength(2));
+        set(0, 'CancelRemoteAprs', 1);
+        expect(
+          (remote.snapshot()['aprsDeliveries'] as List).last['status'],
+          'waiting',
+        );
+        set(0, 'CancelRemoteAprs', 2);
+        expect(
+          (remote.snapshot()['aprsDeliveries'] as List).last['status'],
+          'cancelled',
+        );
+        set(0, 'webServerEmergencyStopped', 1);
+        expect(
+          remote.command(3, {
+            'op': 'aprsMessage',
+            'destination': 'BI4APF-7',
+            'text': 'Blocked',
+          }),
+          isNotNull,
+        );
+        set(0, 'webServerEmergencyStopped', 0);
+        expect(
+          (remote.snapshot()['aprsDeliveries'] as List).last['status'],
+          'cancelled',
+        );
       } finally {
         handler.dispose();
         observer.dispose();

@@ -120,6 +120,7 @@ class MessageDeliveryTracker {
   /// original frame/sequence, never allocate a fresh APRS message ID.
   List<MessageDelivery> tick({
     required bool Function(MessageDelivery) allowed,
+    bool Function(MessageDelivery)? ready,
   }) {
     final now = clock();
     final retries = <MessageDelivery>[];
@@ -127,7 +128,9 @@ class MessageDeliveryTracker {
       if (!entry.pending) continue;
       if (!allowed(entry)) {
         entry.status = DeliveryStatus.cancelled;
-      } else if (!now.isBefore(entry.due)) {
+      } else if (now.difference(entry.created) >= retryInterval * maxAttempts) {
+        entry.status = DeliveryStatus.timedOut;
+      } else if (!now.isBefore(entry.due) && (ready?.call(entry) ?? true)) {
         if (entry.attempts >= maxAttempts) {
           entry.status = DeliveryStatus.timedOut;
         } else {
@@ -141,8 +144,14 @@ class MessageDeliveryTracker {
   }
 
   void cancelAll() {
+    cancelWhere((_) => true);
+  }
+
+  void cancelWhere(bool Function(MessageDelivery) predicate) {
     for (final entry in _entries) {
-      if (entry.pending) entry.status = DeliveryStatus.cancelled;
+      if (entry.pending && predicate(entry)) {
+        entry.status = DeliveryStatus.cancelled;
+      }
     }
   }
 }

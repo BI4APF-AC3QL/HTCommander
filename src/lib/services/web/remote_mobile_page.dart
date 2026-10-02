@@ -121,17 +121,17 @@ function render(){
  renderMessages();
  const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
  $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
- $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null;
+ $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null||state.readOnly||state.emergencyStopped;
  const connected=state.connected===true;const s=state.settings||{};channels=state.channels||[];
  const sig=JSON.stringify(channels);if(sig!==listSignature){listSignature=sig;$('channel').replaceChildren(...channels.map(c=>{const o=document.createElement('option');o.value=c.channelId;o.textContent=(c.channelId+1)+' · '+(c.name||'未命名')+' · '+((c.rxFreq||0)/1e6).toFixed(5);return o;}));}
- selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null;
+ selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null||state.readOnly||state.emergencyStopped;
  const c=channels.find(c=>c.channelId===selected);$('frequency').textContent=c?((c.rxFreq||0)/1e6).toFixed(5)+' MHz':'— MHz';
  $('status').textContent=!connected?'请先在 Windows 连接电台':(state.audio?'音频通道已连接':'电脑尚未启用电台音频')+(s.scan?' · 扫描中':'');
- $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null;
- $('volume').disabled=!connected||state.txOwner!=null;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
- const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext;
+ $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null||state.readOnly||state.emergencyStopped;
+ $('volume').disabled=!connected||state.txOwner!=null||state.readOnly||state.emergencyStopped;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
+ const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext&&!state.readOnly&&!state.emergencyStopped;
  $('ptt').disabled=!ready||(state.txOwner!=null&&!own);
- $('txHint').textContent=!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
+ $('txHint').textContent=state.emergencyStopped?'Windows 已紧急停止远程控制。':state.readOnly?'此客户端为只读；由 Windows 主机授予控制权。':!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
  if(pressed&&own){transmitting=true;$('ptt').classList.add('active');$('ptt').textContent='正在发射 · 松手停止';}else if(transmitting&&!own){stopPtt();notice('发射已停止。');}
 }
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}

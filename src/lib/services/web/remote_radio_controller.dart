@@ -25,6 +25,7 @@ class RemoteRadioController {
   static const int microphoneFrameMagic = 0xf2;
 
   bool get _txAllowed =>
+      DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) != 1 &&
       RemoteAccessConfig.current.allowTransmit &&
       DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1;
 
@@ -46,6 +47,8 @@ class RemoteRadioController {
             .take(256)
             .toList();
     return {
+      'emergencyStopped':
+          DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1,
       'mapStations': stations,
       'mapSources':
           {
@@ -124,9 +127,12 @@ class RemoteRadioController {
       if (_owner == clientId) release(cancel: false);
       return null;
     }
+    if (DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
+      return 'Remote control is stopped on the Windows host.';
+    }
     final id = target();
     if (id <= 0) return 'Connect the radio on the Windows host first.';
-    if (op == 'aprsMessage') return _sendAprs(id, message);
+    if (op == 'aprsMessage') return _sendAprs(id, message, clientId);
     if (op == 'pttStart') {
       if (!_txAllowed) {
         return 'Enable remote TX and Allow transmit on the host.';
@@ -156,6 +162,7 @@ class RemoteRadioController {
         return 'Selected channel does not allow transmission.';
       }
       _owner = clientId;
+      DataBroker.dispatch(deviceId: 1, name: 'RemotePttOwner', data: clientId);
       _txRadio = id;
       _txChannel = settings['channelA'];
       _rateWindow = _clock();
@@ -194,7 +201,7 @@ class RemoteRadioController {
     }
   }
 
-  String? _sendAprs(int id, Map message) {
+  String? _sendAprs(int id, Map message, int clientId) {
     if (!RemoteAccessConfig.current.allowAprs ||
         DataBroker.getValue<int>(0, 'AllowTransmit', 0) != 1) {
       return 'Enable remote APRS messages and Allow transmit on Windows.';
@@ -246,6 +253,7 @@ class RemoteRadioController {
         destination: destination,
         message: text,
         radioDeviceId: id,
+        remoteClientId: clientId,
         remoteRequestId:
             '${now.microsecondsSinceEpoch}-${++_aprsRequestCounter}',
       ),
@@ -307,6 +315,7 @@ class RemoteRadioController {
   void release({bool cancel = true}) {
     final id = _txRadio;
     _owner = null;
+    DataBroker.dispatch(deviceId: 1, name: 'RemotePttOwner', data: -1);
     _txRadio = -1;
     _idleTimer?.cancel();
     _maximumTimer?.cancel();

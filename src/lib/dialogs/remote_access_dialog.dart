@@ -24,6 +24,9 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
   late bool _tx;
   late bool _aprs;
   late bool _position;
+  late bool _readOnly;
+  bool _stopped = false;
+  List<Map> _clients = [];
   bool _showPassword = false;
   bool _saving = false;
   String? _error;
@@ -41,6 +44,26 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
     _tx = config.allowTransmit;
     _aprs = config.allowAprs;
     _position = config.allowPosition;
+    _readOnly = config.defaultReadOnly;
+    _stopped = DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1;
+    _clients = (DataBroker.getValueDynamic(0, 'RemoteClients', []) as List)
+        .whereType<Map>()
+        .toList();
+    _broker.subscribeMultiple(
+      deviceId: 0,
+      names: const ['RemoteClients', 'webServerEmergencyStopped'],
+      callback: (_, _, _) {
+        if (!mounted) return;
+        setState(() {
+          _clients =
+              (DataBroker.getValueDynamic(0, 'RemoteClients', []) as List)
+                  .whereType<Map>()
+                  .toList();
+          _stopped =
+              DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1;
+        });
+      },
+    );
     _password = TextEditingController(text: config.password);
     _origin = TextEditingController(text: config.publicOrigin);
     _port = TextEditingController(
@@ -108,6 +131,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
         'webServerAllowTransmit': _tx ? 1 : 0,
         'webServerAllowAprs': _aprs ? 1 : 0,
         'webServerAllowPosition': _position ? 1 : 0,
+        'webServerDefaultReadOnly': _readOnly ? 1 : 0,
         'webServerRemoteEnabled': _remote ? 1 : 0,
         'webServerPort': port,
         'webServerEnabled': _enabled ? 1 : 0,
@@ -249,6 +273,81 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               title: Text(_text('允许远程位置发送', 'Allow remote position packets')),
               value: _position,
               onChanged: _saving ? null : (v) => setState(() => _position = v),
+            ),
+            const Divider(),
+            FilledButton.icon(
+              icon: Icon(_stopped ? Icons.play_arrow : Icons.stop_circle),
+              onPressed: () => DataBroker.dispatch(
+                deviceId: 0,
+                name: 'webServerEmergencyStopped',
+                data: _stopped ? 0 : 1,
+              ),
+              label: Text(
+                _stopped
+                    ? _text('明确恢复远程控制', 'Resume remote control')
+                    : _text('紧急停止远程控制与发送', 'Emergency stop remote control/TX'),
+              ),
+            ),
+            Text(
+              _text(
+                '停止后不自动恢复；会取消待确认消息。恢复后仍须满足各项发射权限。',
+                'Stopped control stays stopped until explicitly resumed; pending messages are cancelled. TX permissions still apply.',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_text('新客户端默认只读', 'New clients start read-only')),
+              subtitle: Text(
+                _text(
+                  '只读客户端可收听与查看；在此授予控制权。重新连接使用默认权限。',
+                  'Read-only clients may listen and inspect. Grant control below; reconnect uses the default role.',
+                ),
+              ),
+              value: _readOnly,
+              onChanged: _saving ? null : (v) => setState(() => _readOnly = v),
+            ),
+            Text(_text('在线客户端', 'Connected clients')),
+            ..._clients.map(
+              (client) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('#${client['id']} · ${client['address']}'),
+                subtitle: Text(
+                  client['readOnly'] == true
+                      ? _text('只读', 'Read-only')
+                      : _text('可控制', 'Control'),
+                ),
+                trailing: Wrap(
+                  children: [
+                    IconButton(
+                      tooltip: _text('切换只读 / 控制', 'Toggle read-only / control'),
+                      icon: Icon(
+                        client['readOnly'] == true
+                            ? Icons.lock
+                            : Icons.lock_open,
+                      ),
+                      onPressed: () => DataBroker.dispatch(
+                        deviceId: 0,
+                        name: 'RemoteClientRole',
+                        data: {
+                          'id': client['id'],
+                          'readOnly': client['readOnly'] != true,
+                        },
+                        store: false,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: _text('撤销登录并断开', 'Revoke login and disconnect'),
+                      icon: const Icon(Icons.person_remove),
+                      onPressed: () => DataBroker.dispatch(
+                        deviceId: 0,
+                        name: 'RemoteClientRevoke',
+                        data: client['id'],
+                        store: false,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const Divider(),
             Text(

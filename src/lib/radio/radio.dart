@@ -354,6 +354,15 @@ class Radio implements FirmwareRadio {
       name: 'TransmitDataFrame',
       callback: _onTransmitDataFrameEvent,
     );
+    _broker.subscribe(
+      deviceId: deviceId,
+      name: 'CancelRemoteAprsFrame',
+      callback: (_, _, tag) {
+        if (tag is String && tag.startsWith('remote-aprs:')) {
+          deleteTransmitByTag(tag);
+        }
+      },
+    );
 
     // Track the live general software-modem mode. This fires even for session
     // overrides that are broadcast without being persisted (store: false), so

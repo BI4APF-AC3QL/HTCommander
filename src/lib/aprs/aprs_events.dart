@@ -44,6 +44,7 @@ class AprsSendMessageData {
 
   /// Correlates explicitly authorized remote deliveries; desktop sends omit it.
   final String? remoteRequestId;
+  final int? remoteClientId;
 
   /// APRS route. Format: [RouteName, Dest, Path1, Path2, ...]
   final List<String>? route;
@@ -53,6 +54,7 @@ class AprsSendMessageData {
     required this.message,
     required this.radioDeviceId,
     this.remoteRequestId,
+    this.remoteClientId,
     this.route,
   });
 }

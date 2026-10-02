@@ -23,7 +23,7 @@ void main() {
     final tracker = MessageDeliveryTracker(clock: () => now);
     final entry = tracker.start('1', 'A', 'B', '7');
     expect(tracker.tick(allowed: (_) => true), isEmpty);
-    now = now.add(const Duration(hours: 1));
+    now = now.add(const Duration(seconds: 31));
     expect(tracker.tick(allowed: (_) => true), [entry]);
     expect(entry.sequence, '7');
     expect(tracker.tick(allowed: (_) => true), isEmpty);
@@ -57,5 +57,17 @@ void main() {
     expect(() => tracker.start('2', 'A', 'B', '7'), throwsStateError);
     expect(tracker.acknowledge('B', 'A', '7', rejected: true), true);
     expect(entry.status, DeliveryStatus.rejected);
+  });
+  test('busy radio defers attempts but delivery still expires', () {
+    var now = DateTime(2026);
+    final tracker = MessageDeliveryTracker(clock: () => now);
+    final entry = tracker.start('busy', 'A', 'B', '1');
+    now = now.add(const Duration(seconds: 30));
+    expect(tracker.tick(allowed: (_) => true, ready: (_) => false), isEmpty);
+    expect(entry.attempts, 1);
+    expect(entry.status, DeliveryStatus.waiting);
+    now = now.add(const Duration(minutes: 5));
+    expect(tracker.tick(allowed: (_) => true, ready: (_) => true), isEmpty);
+    expect(entry.status, DeliveryStatus.timedOut);
   });
 }

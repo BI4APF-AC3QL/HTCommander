@@ -25,6 +25,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../data_broker_client.dart';
+import '../data_broker.dart';
 import 'remote_access_config.dart';
 import 'remote_web_auth.dart';
 import 'remote_mobile_page.dart';
@@ -42,7 +43,15 @@ typedef WebSocketBinaryCallback =
 
 /// A single connected WebSocket client.
 class WebSocketClient {
-  WebSocketClient(this.id, this._socket);
+  WebSocketClient(
+    this.id,
+    this._socket, {
+    this.readOnly = false,
+    this.address = '',
+  });
+  bool readOnly;
+  final String address;
+  final DateTime connectedAt = DateTime.now();
 
   /// Monotonically increasing client identifier.
   final int id;
@@ -115,6 +124,51 @@ class WebServer {
 
   /// Raised when a WebSocket client disconnects.
   WebSocketClientCallback? onClientDisconnected;
+  WebSocketClientCallback? onClientRoleChanged;
+  List<Map<String, Object>> get clientSummaries => _clients.values
+      .map(
+        (c) => {
+          'id': c.id,
+          'address': c.address,
+          'readOnly': c.readOnly,
+          'connectedAt': c.connectedAt.toIso8601String(),
+        },
+      )
+      .toList();
+
+  void setClientReadOnly(int id, bool readOnly) {
+    final client = _clients[id];
+    if (client == null) return;
+    client.readOnly = readOnly;
+    onClientRoleChanged?.call(client);
+  }
+
+  void revokeClient(int id) {
+    final session = _clientSessions[id];
+    _auth.logout(session);
+    final victims = _clients.values
+        .where(
+          (c) =>
+              c.id == id ||
+              (session != null && _clientSessions[c.id] == session),
+        )
+        .toList();
+    for (final client in victims) {
+      client._close();
+      _removeClient(client);
+    }
+  }
+
+  static bool readOnlyMessageAllowed(String message) {
+    if (const ['audioon', 'audiooff', 'connect'].contains(message)) return true;
+    if (!message.startsWith('remote:')) return false;
+    try {
+      final value = jsonDecode(message.substring(7));
+      return value is Map && const ['state', 'pttStop'].contains(value['op']);
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// Raised when a text message is received from a WebSocket client.
   WebSocketTextCallback? onTextMessage;
@@ -181,6 +235,7 @@ class WebServer {
     _running = false;
     for (final client in List<WebSocketClient>.from(_clients.values)) {
       client._close();
+      _removeClient(client);
     }
     _clients.clear();
     for (final timer in _sessionChecks.values) {
@@ -299,11 +354,15 @@ class WebServer {
     }
 
     final clientId = _nextClientId++;
-    final client = WebSocketClient(clientId, socket);
+    final client = WebSocketClient(
+      clientId,
+      socket,
+      readOnly: remoteConfig.defaultReadOnly,
+      address: request.connectionInfo?.remoteAddress.address ?? '',
+    );
     socket.pingInterval = const Duration(seconds: 20);
     _clients[clientId] = client;
     _broker.logInfo('[WebServer] WebSocket client $clientId connected');
-    onClientConnected?.call(client);
     if (remoteConfig.enabled) {
       final session = _cookie(request, 'htc_bridge');
       _clientSessions[clientId] = session;
@@ -313,6 +372,7 @@ class WebServer {
         if (!_auth.authenticated(session)) client._close();
       });
     }
+    onClientConnected?.call(client);
 
     socket.listen(
       (dynamic message) {
@@ -325,6 +385,18 @@ class WebServer {
             : (message is List<int> ? message.length : 0);
         if (size > 65536) {
           socket.close(WebSocketStatus.messageTooBig, 'Message exceeds 64 KiB');
+          return;
+        }
+        if ((client.readOnly ||
+                (remoteConfig.enabled &&
+                    DataBroker.getValue<int>(
+                          0,
+                          'webServerEmergencyStopped',
+                          0,
+                        ) ==
+                        1)) &&
+            (message is! String || !readOnlyMessageAllowed(message))) {
+          client.sendText('remote:{"error":"This client is read-only."}');
           return;
         }
         if (message is String) {

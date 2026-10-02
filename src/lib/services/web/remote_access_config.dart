@@ -8,6 +8,7 @@ class RemoteAccessConfig {
     this.allowTransmit = false,
     this.allowAprs = false,
     this.allowPosition = false,
+    this.defaultReadOnly = false,
   });
 
   final bool enabled;
@@ -16,8 +17,11 @@ class RemoteAccessConfig {
   final bool allowTransmit;
   final bool allowAprs;
   final bool allowPosition;
+  final bool defaultReadOnly;
 
   static RemoteAccessConfig get current => RemoteAccessConfig(
+    defaultReadOnly:
+        DataBroker.getValue<int>(0, 'webServerDefaultReadOnly', 0) == 1,
     enabled: DataBroker.getValue<int>(0, 'webServerRemoteEnabled', 0) == 1,
     password: DataBroker.getValue<String>(0, 'webServerPassword', '') ?? '',
     publicOrigin:

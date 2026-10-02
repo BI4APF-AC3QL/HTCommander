@@ -47,6 +47,7 @@ class AprsHandler {
   final _conversations = ConversationHistory();
   final _stationIndex = StationIndex(clock: DateTime.now);
   final Map<String, (int, AX25Packet)> _retryFrames = {};
+  final Map<String, int> _deliveryClients = {};
   Timer? _deliveryTimer;
   String? _lastDeliverySnapshot;
 
@@ -66,6 +67,7 @@ class AprsHandler {
   bool _retryAllowed(MessageDelivery entry) {
     final frame = _retryFrames[entry.id];
     if (frame == null ||
+        _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1 ||
         !RemoteAccessConfig.current.allowAprs ||
         _broker.getValue<int>(0, 'AllowTransmit', 0) != 1 ||
         _broker.getValue<String>(frame.$1, 'State', '') != 'Connected' ||
@@ -77,7 +79,6 @@ class AprsHandler {
     final channels = _broker.getValueDynamic(frame.$1, 'Channels', null);
     return status is Map &&
         status['isPowerOn'] == true &&
-        status['isInTx'] != true &&
         !(lock is Map && lock['isLocked'] == true) &&
         channels is List &&
         channels.whereType<Map>().any(
@@ -90,8 +91,21 @@ class AprsHandler {
 
   void _tickDelivery() {
     if (_disposed) return;
-    for (final entry in _delivery.tick(allowed: _retryAllowed)) {
+    for (final entry in _delivery.tick(
+      allowed: _retryAllowed,
+      ready: (e) {
+        final status = _broker.getValueDynamic(
+          _retryFrames[e.id]!.$1,
+          'HtStatus',
+          null,
+        );
+        return status is Map &&
+            status['isInTx'] != true &&
+            _broker.getValue<int>(1, 'RemotePttOwner', -1) == -1;
+      },
+    )) {
       final frame = _retryFrames[entry.id]!;
+      frame.$2.deadline = DateTime.now().add(const Duration(seconds: 15));
       _broker.dispatch(
         deviceId: frame.$1,
         name: 'TransmitDataFrame',
@@ -103,9 +117,21 @@ class AprsHandler {
         store: false,
       );
     }
+    for (final entry in _delivery.entries.where((e) => !e.pending)) {
+      final frame = _retryFrames[entry.id];
+      if (frame != null) {
+        _broker.dispatch(
+          deviceId: frame.$1,
+          name: 'CancelRemoteAprsFrame',
+          data: frame.$2.tag,
+          store: false,
+        );
+      }
+    }
     _retryFrames.removeWhere(
       (id, _) => !_delivery.entries.any((e) => e.id == id && e.pending),
     );
+    _deliveryClients.removeWhere((id, _) => !_retryFrames.containsKey(id));
     _publishDelivery();
   }
 
@@ -165,6 +191,16 @@ class AprsHandler {
   /// Initializes the handler: subscribes to broker events and loads persisted
   /// state. Safe to call once at startup.
   void init() {
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      callback: (_, _, client) {
+        _delivery.cancelWhere(
+          (e) => client == null || _deliveryClients[e.id] == client,
+        );
+        _tickDelivery();
+      },
+    );
     _broker.subscribeMultiple(
       deviceId: DataBroker.allDevices,
       names: const [
@@ -175,6 +211,7 @@ class AprsHandler {
         'StationId',
         'Channels',
         'LockState',
+        'webServerEmergencyStopped',
       ],
       callback: (_, _, _) => _tickDelivery(),
     );
@@ -449,6 +486,11 @@ class AprsHandler {
           msgId.toString(),
         );
         _retryFrames[entry.id] = (messageData.radioDeviceId, ax25Packet);
+        ax25Packet.tag = 'remote-aprs:${entry.id}';
+        ax25Packet.deadline = now.add(const Duration(seconds: 15));
+        if (messageData.remoteClientId != null) {
+          _deliveryClients[entry.id] = messageData.remoteClientId!;
+        }
         if (!_retryAllowed(entry)) {
           _tickDelivery();
           return;
