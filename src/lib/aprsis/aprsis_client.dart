@@ -90,6 +90,10 @@ class AprsIsClient {
 
   StreamSubscription<String>? _sub;
   final StringBuffer _lineBuffer = StringBuffer();
+  static const int maxIncomingLineLength = 512;
+  bool _discardingLine = false;
+  int oversizedLines = 0;
+  int get bufferedCharacters => _lineBuffer.length;
 
   /// Builds the APRS-IS login line (without CR/LF), e.g.
   /// `user K7VZT-5 pass 12345 vers HTCommander 0.1.21 filter r/47/-122/50`.
@@ -140,27 +144,46 @@ class AprsIsClient {
     await _sub?.cancel();
     _sub = null;
     _lineBuffer.clear();
+    _discardingLine = false;
     _state = AprsIsConnectionState.disconnected;
     await network.close();
   }
 
   void _onData(String chunk) {
-    _lineBuffer.write(chunk);
-    final text = _lineBuffer.toString();
     var start = 0;
-    for (var i = 0; i < text.length; i++) {
-      final c = text.codeUnitAt(i);
-      if (c == 0x0A) {
-        var line = text.substring(start, i);
+    while (start < chunk.length) {
+      final newline = chunk.indexOf('\n', start);
+      final end = newline < 0 ? chunk.length : newline;
+      // Keep at most one bounded partial line. Never concatenate or rescan a
+      // growing unterminated server response. Allow a trailing CR at the cap.
+      if (!_discardingLine) {
+        if (_lineBuffer.length + end - start > maxIncomingLineLength + 1) {
+          _discardingLine = true;
+          _lineBuffer.clear();
+          oversizedLines++;
+          if (oversizedLines == 1) {
+            onDiagnostic?.call('[APRS-IS] Oversized input line discarded');
+          }
+        } else {
+          _lineBuffer.write(chunk.substring(start, end));
+        }
+      }
+      if (newline < 0) return;
+      if (!_discardingLine) {
+        var line = _lineBuffer.toString();
         if (line.isNotEmpty && line.codeUnitAt(line.length - 1) == 0x0D) {
           line = line.substring(0, line.length - 1);
         }
-        _handleLine(line);
-        start = i + 1;
+        if (line.length <= maxIncomingLineLength) {
+          _handleLine(line);
+        } else {
+          oversizedLines++;
+        }
       }
+      _lineBuffer.clear();
+      _discardingLine = false;
+      start = newline + 1;
     }
-    _lineBuffer.clear();
-    if (start < text.length) _lineBuffer.write(text.substring(start));
   }
 
   void _handleLine(String line) {

@@ -51,6 +51,7 @@ class AprsHandler {
   final Map<String, int> _deliveryClients = {};
   final Map<int, Set<int>> _positionRadios = {};
   Timer? _deliveryTimer;
+  Timer? _mapPublishTimer;
   String? _lastDeliverySnapshot;
 
   void _publishDelivery() {
@@ -161,12 +162,18 @@ class AprsHandler {
       );
     }
     if (_stationIndex.add(data)) {
-      _broker.dispatch(
-        deviceId: _aprsDeviceId,
-        name: 'RemoteMapStations',
-        data: _stationIndex.stations,
-        store: true,
-      );
+      // Coalesce bursts before copying/serializing the full station index.
+      // Keep this independent of message ACK processing, which stays immediate.
+      _mapPublishTimer ??= Timer(const Duration(milliseconds: 500), () {
+        _mapPublishTimer = null;
+        if (_disposed) return;
+        _broker.dispatch(
+          deviceId: _aprsDeviceId,
+          name: 'RemoteMapStations',
+          data: _stationIndex.stations,
+          store: true,
+        );
+      });
     }
     if (!data.ax25Packet.incoming) return;
     final packet = data.aprsPacket;
@@ -986,6 +993,7 @@ class AprsHandler {
   void dispose() {
     if (_disposed) return;
     _deliveryTimer?.cancel();
+    _mapPublishTimer?.cancel();
     _delivery.cancelAll();
     _tickDelivery();
     _cancelPositionPackets(null);

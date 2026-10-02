@@ -31,4 +31,6 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 
 Spectrum means received **audio** spectrum. RF-wide spectrum needs hardware/SDR data not supplied by N7500 and is not claimed. No development test performs real RF transmission. These boundaries preserve the original feature list.
 
+Windows hang review (2026-10-02): [audit and regression evidence](windows-hang-audit.md). Moved native control/audio socket close off the Windows platform thread; added bounded APRS-IS input framing, host map snapshot coalescing, bounded/expiring hardware TNC queue, response watchdog with no replay, and Radio subscription/timer cleanup. Eight simulated regression cases and the 450-test Flutter suite passed; final related regression tests and static analysis passed; native MSVC Release target rebuilt successfully. These fixes do not establish the cause of a real Windows whole-window hang; hardware/slow-client profiling remains.
+
 Emergency stop prevents further remote control and retries and cancels queued tagged frames. A frame already handed to the radio may finish; software cannot undo an on-air packet. Restoring remote control is explicit and never replays cancelled messages. Read-only roles are assigned by the Windows host; reconnecting receives the configured default role. Revoking a client revokes all sockets sharing that login session.

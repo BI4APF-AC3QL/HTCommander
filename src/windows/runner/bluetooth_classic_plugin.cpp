@@ -147,6 +147,22 @@ struct RfcommConn {
     try { if (socket) socket.Close(); } catch (...) {}
   }
 
+  static void StopInBackground(std::shared_ptr<RfcommConn> conn) {
+    // Called by the platform-thread disconnect handlers. Closing a WinRT
+    // socket can wait on the Bluetooth driver, especially during link loss.
+    // Mark the connection unusable immediately, but never close it on the UI
+    // thread. Retain it until Close finishes so the destructor also stays on
+    // the worker (unless a read/write worker still owns it).
+    conn->running.store(false);
+    conn->write_ready.notify_all();
+    std::thread([conn = std::move(conn)]() mutable {
+      winrt::init_apartment(winrt::apartment_type::multi_threaded);
+      conn->Stop();
+      conn.reset();
+      winrt::uninit_apartment();
+    }).detach();
+  }
+
   void QueueWrite(std::vector<uint8_t> data, std::unique_ptr<Result> result) {
     {
       std::lock_guard<std::mutex> lock(write_mutex);
@@ -870,8 +886,7 @@ void BluetoothClassicPlugin::Impl::DoDisconnect(
     }
   }
   if (conn) {
-    conn->Stop();
-    if (conn->read_thread.joinable()) conn->read_thread.detach();
+    RfcommConn::StopInBackground(std::move(conn));
     SendEvent(false, "disconnected", address);
   }
   result->Success(flutter::EncodableValue(true));
@@ -958,8 +973,7 @@ void BluetoothClassicPlugin::Impl::DoDisconnectAudio(
     }
   }
   if (conn) {
-    conn->Stop();
-    if (conn->read_thread.joinable()) conn->read_thread.detach();
+    RfcommConn::StopInBackground(std::move(conn));
     SendEvent(true, "disconnected", address);
   }
   result->Success(flutter::EncodableValue(true));
