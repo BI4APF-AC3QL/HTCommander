@@ -1,6 +1,7 @@
 // Exercises the production marshaling window/queue with synthetic bytes only.
 // No RFCOMM sockets, radio discovery or transmission are invoked.
 #include "../runner/bluetooth_classic_plugin.cpp"
+#include "../runner/engine_owned_native_plugin.h"
 #include <cstdlib>
 #include <iostream>
 
@@ -62,6 +63,16 @@ std::shared_ptr<BtStreamHandler> Listen(Capture& capture) {
   return handler;
 }
 int main() {
+  struct OwnedNative {
+    explicit OwnedNative(flutter::BinaryMessenger*) {}
+    ~OwnedNative() { ++Destroyed(); }
+    static size_t& Destroyed() { static size_t count = 0; return count; }
+  };
+  for (size_t i = 0; i < 10000; ++i) {
+    std::unique_ptr<flutter::Plugin> owned =
+        std::make_unique<EngineOwnedNativePlugin<OwnedNative>>(nullptr);
+  }
+  Check(OwnedNative::Destroyed() == 10000);
   struct Reply {
     size_t calls = 0;
     void Success(const flutter::EncodableValue&) { ++calls; }
