@@ -29,6 +29,8 @@ import '../data_broker.dart';
 import 'remote_access_config.dart';
 import 'remote_web_auth.dart';
 import 'remote_mobile_page.dart';
+import 'remote_tile_proxy.dart';
+import '../../utils/map_source.dart';
 
 /// Callback raised when a WebSocket [client] connects or disconnects.
 typedef WebSocketClientCallback = void Function(WebSocketClient client);
@@ -113,6 +115,7 @@ class WebServer {
     List<int>.generate(32, (_) => Random.secure().nextInt(256)),
   );
   final Map<int, WebSocketClient> _clients = <int, WebSocketClient>{};
+  RemoteTileProxy? _tiles;
 
   /// Cached, resolved Flutter web build directory. Null until first resolved;
   /// only cached once a valid build is found so a build produced after startup
@@ -239,6 +242,8 @@ class WebServer {
   /// Stops the web server and closes all WebSocket clients.
   Future<void> stop() async {
     _generation++;
+    _tiles?.close();
+    _tiles = null;
     if (!_running && _server == null) return;
     _running = false;
     for (final client in List<WebSocketClient>.from(_clients.values)) {
@@ -433,6 +438,10 @@ class WebServer {
   }
 
   Future<void> _handleHttpRequest(HttpRequest request) async {
+    if (request.uri.path.startsWith('/remote-tiles/')) {
+      await _handleTile(request);
+      return;
+    }
     final response = request.response;
     try {
       if (remoteConfig.enabled &&
@@ -543,6 +552,43 @@ class WebServer {
         // Response already (partly) sent; nothing more to do.
       }
     }
+  }
+
+  Future<void> _handleTile(HttpRequest request) async {
+    final response = request.response;
+    response.headers.set('Cache-Control', 'no-store');
+    if (!_authorized(request)) {
+      response.statusCode = HttpStatus.unauthorized;
+    } else if (request.method != 'GET') {
+      response.statusCode = HttpStatus.methodNotAllowed;
+    } else {
+      final match = RegExp(
+        r'^/remote-tiles/([a-z0-9-]+)/([0-9]{1,2})/([0-9]{1,6})/([0-9]{1,6})\.png$',
+      ).firstMatch(request.uri.path);
+      final sources = {
+        for (final source in MapSource.builtIn) source.id: source,
+        MapSource.current.id: MapSource.current,
+      };
+      final source = match == null ? null : sources[match[1]];
+      final revision = request.uri.queryParameters['v'];
+      final tile = source == null ||
+              (revision != null && revision != source.cacheNamespace)
+          ? null
+          : await (_tiles ??= RemoteTileProxy()).tile(
+              source,
+              int.parse(match![2]!),
+              int.parse(match[3]!),
+              int.parse(match[4]!),
+            );
+      if (tile == null) {
+        response.statusCode = HttpStatus.badGateway;
+      } else {
+        response.headers.contentType = tile.contentType;
+        response.headers.contentLength = tile.bytes.length;
+        response.add(tile.bytes);
+      }
+    }
+    await response.close();
   }
 
   String _effectiveOrigin(HttpRequest request) {

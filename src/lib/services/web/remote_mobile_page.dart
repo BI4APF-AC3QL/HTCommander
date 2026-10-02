@@ -37,8 +37,8 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p id="gatewayLink"></p><p id="gatewayRf"></p><details><summary>最近 24 小时统计（UTC）</summary><div id="gatewayHealth"></div></details><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。射频转发需电脑许可，排队帧 15 秒过期。统计仅保存在本次运行内，计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
 <section class="card"><h2>近期操作审计</h2><div id="auditEvents"></div><p class="muted">最近 20 条，时间为 UTC；Windows 可复制本次运行最近 200 条脱敏 JSON。“请求接受”不表示已发射或对方收到；不记录密码、地址、消息正文、定位或音频。连续同类拒绝每秒合并一次。</p></section>
 <section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
-<section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p></section>
-<section class="card"><h2>一次性 APRS 位置发送</h2><div class="row"><button id="positionAcquire">获取手机位置</button><button id="positionRadio">预览电台位置</button></div><p id="positionPreview" class="muted">先选择位置来源。获取定位不会发送。</p><button id="positionSend" disabled>确认并发送此位置</button><p id="positionResult" class="muted"></p><p class="muted">位置发送需 Windows 单独授权及总允许发射。定位有效期 2 分钟，精度须在 100 米以内；电台未报告精度时显示未知。位置报文没有消息 ACK，提交不代表已发射或收到。</p></section>
+<section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button><button id="mapRetry">重试地图</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p><p class="muted">瓦片由 Windows 主机获取。若地图显示访问限制或授权提示，请换源，或在电脑配置可用的授权 XYZ 地址。</p></section>
+<section class="card"><h2>一次性 APRS 位置发送</h2><div class="row"><button id="positionAcquire">获取手机位置</button><button id="positionRadio">预览电台位置</button></div><p id="positionPreview" class="muted">先选择位置来源。获取定位不会发送。</p><button id="positionSend" disabled>预览发送此位置</button><div id="positionConfirmation" hidden><p id="positionConfirmText"></p><div class="row"><button id="positionConfirm" disabled>确认发送此位置</button><button id="positionCancel">取消位置发送</button></div></div><p id="positionResult" class="muted"></p><p class="muted">位置发送需 Windows 单独授权及总允许发射。定位有效期 2 分钟，精度须在 100 米以内；电台未报告精度时显示未知。需预览后确认；位置报文没有消息 ACK，提交不代表已发射或收到。</p></section>
 <div class="row"><button id="installApp">添加到主屏幕</button><button id="fullscreen">全屏</button></div><p class="muted">Android 可使用浏览器“安装应用 / 添加到主屏幕”；iPhone 使用 Safari“分享 → 添加到主屏幕”。切到后台可能暂停连接与收听，讲话会停止；返回页面后检查连接状态。</p>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
@@ -54,20 +54,22 @@ let pendingAprs=null,pendingHandoff=null,shortcutsSignature='';
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
 let aprsReadThrough=0,aprsMessageSignature='';
-let positionDraft=null,positionGeneration=0;
+let positionDraft=null,positionGeneration=0,pendingPosition=null;
 function positionPreview(){
  const p=positionDraft;if(!p){$('positionPreview').textContent='先选择位置来源。获取定位不会发送。';return;}
  const age=(Date.now()-Date.parse(p.capturedAt))/1000;
  $('positionPreview').textContent=(p.radio?'电台':'手机')+' · '+p.latitude.toFixed(5)+', '+p.longitude.toFixed(5)+' · 精度 '+(p.accuracy==null?'未知':p.accuracy.toFixed(1)+' 米')+' · '+Math.max(0,Math.round(age))+' 秒前'+(age>120?'（已过期，请重新获取）':'');
 }
-function positionReady(){const p=positionDraft;if(!p)return false;const age=Date.now()-Date.parse(p.capturedAt);return Number.isFinite(age)&&age>=-5000&&age<=120000&&(p.radio&&p.accuracy==null||p.accuracy>0&&p.accuracy<=100);}
+function positionReady(p=positionDraft){if(!p)return false;const age=Date.now()-Date.parse(p.capturedAt);return Number.isFinite(age)&&age>=-5000&&age<=120000&&(p.radio&&p.accuracy==null||p.accuracy>0&&p.accuracy<=100);}
+function cancelPositionPreview(){pendingPosition=null;$('positionConfirmation').hidden=true;$('positionConfirm').disabled=true;}
+function canConfirmPosition(){return pendingPosition&&Date.now()<=pendingPosition.expires&&positionReady(pendingPosition.position)&&JSON.stringify(pendingPosition.position)===JSON.stringify(positionDraft)&&state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped&&state.connected&&state.positionAllowed&&state.txOwner==null&&!document.hidden;}
 let mapLat=31.2,mapLon=121.5,mapZoom=6,mapDirty=true,mapSelected='',mapSourceId='',mapSourceSignature='',mapHits=[],mapDrag=null,mapDragged=false,mapTileErrors=0;
 const mapTiles=new Map();let mapLoads=0,mapTileGeneration=0;
 function mapProject(lat,lon,z){const scale=256*2**z,s=Math.sin(Math.max(-85.051129,Math.min(85.051129,lat))*Math.PI/180);return [(lon+180)/360*scale,(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale];}
 function mapUnproject(x,y,z){const scale=256*2**z;return [Math.atan(Math.sinh(Math.PI*(1-2*y/scale)))*180/Math.PI,((x/scale*360)%360+360)%360-180];}
 function mapBounds(){const c=mapProject(mapLat,mapLon,mapZoom),sw=mapUnproject(c[0]-256,c[1]+160,mapZoom),ne=mapUnproject(c[0]+256,c[1]-160,mapZoom);return [sw[0],sw[1],ne[0],ne[1]];}
 function updateMapState(){
- const sources=state.mapSources||[],signature=JSON.stringify(sources);if(signature!==mapSourceSignature){mapSourceSignature=signature;const selected=mapSourceId||state.mapSource;if(!sources.some(s=>s.id===selected))mapSourceId=state.mapSource||'';else mapSourceId=selected;$('mapSource').replaceChildren(...sources.map(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;return o;}));$('mapSource').value=mapSourceId;mapTiles.clear();mapTileGeneration++;mapDirty=true;}
+ const sources=state.mapSources||[],signature=JSON.stringify(sources);if(signature!==mapSourceSignature){mapSourceSignature=signature;const selected=mapSourceId||state.mapSource;if(!sources.some(s=>s.id===selected))mapSourceId=state.mapSource||'';else mapSourceId=selected;$('mapSource').replaceChildren(...sources.map(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;return o;}));$('mapSource').value=mapSourceId;resetMapTiles();}
  mapDirty=true;const query=$('mapSearch').value.trim().toUpperCase();const rows=(state.mapStations||[]).filter(s=>!query||s.call.includes(query)).slice(0,20).map(s=>{const b=document.createElement('button');b.textContent=s.call+' · '+s.lat.toFixed(3)+', '+s.lon.toFixed(3);b.onclick=()=>{mapSelected=s.call;mapLat=s.lat;mapLon=s.lon;mapDirty=true;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已定位 '+s.call+' 并填写消息目标。');requestMap();};return b;});$('mapStationList').replaceChildren(...rows);
 }
 function requestMap(){send({op:'state',mapBounds:mapBounds()});}
@@ -78,7 +80,7 @@ function tileImage(source,z,x,y){
  image.onload=()=>{mapLoads--;if(generation!==mapTileGeneration)return;image.loaded=true;mapDirty=true;};image.onerror=()=>{mapLoads--;if(generation!==mapTileGeneration)return;mapTileErrors++;mapDirty=true;};
  mapTiles.set(key,image);while(mapTiles.size>64)mapTiles.delete(mapTiles.keys().next().value);
  const url=source.url.replaceAll('{z}',z).replaceAll('{x}',x).replaceAll('{y}',y).replaceAll('{s}','a');
- if(!/^https:\/\//i.test(url)){mapLoads--;mapTileErrors++;return image;}image.src=url;return image;
+ if(!/^https:\/\//i.test(url)&&!/^\/remote-tiles\//.test(url)){mapLoads--;mapTileErrors++;return image;}image.src=url;return image;
 }
 function drawMap(){
  if(document.hidden||!mapDirty)return;mapDirty=false;const canvas=$('stationMap'),ctx=canvas.getContext('2d');if(!ctx)return;
@@ -87,7 +89,7 @@ function drawMap(){
  const clusters=new Map();mapHits=[];for(const station of state.mapStations||[]){const p=mapProject(station.lat,station.lon,mapZoom),world=256*2**mapZoom;let x=p[0]-left;if(x>world/2+256)x-=world;if(x<-world/2+256)x+=world;const y=p[1]-top;if(x<0||x>512||y<0||y>320)continue;const key=Math.floor(x/40)+','+Math.floor(y/40);if(!clusters.has(key))clusters.set(key,[]);clusters.get(key).push({station,x,y});}
  for(const items of clusters.values()){const {station,x,y}=items[0];const stale=Date.now()-Date.parse(station.time)>1800000;ctx.fillStyle=stale?'#929da9':'#79ddc7';ctx.beginPath();ctx.arc(x,y,items.length>1?14:7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#eef4ff';ctx.fillText(items.length>1?String(items.length):station.call,x+9,y-8);mapHits.push({x,y,items});
   if(station.call===mapSelected){ctx.strokeStyle='#ffcea0';ctx.beginPath();for(let i=0;i<(station.track||[]).length;i++){const p=mapProject(station.track[i][0],station.track[i][1],mapZoom);if(i===0)ctx.moveTo(p[0]-left,p[1]-top);else ctx.lineTo(p[0]-left,p[1]-top);}ctx.stroke();}}
- $('mapInfo').textContent='视野内 '+(state.mapStations||[]).length+' 台 · 缩放 '+mapZoom+' · 瓦片缓存 '+mapTiles.size+'/64 · 瓦片失败 '+mapTileErrors+'。灰色表示位置超过 30 分钟。';if(mapLoads)mapDirty=true;
+ $('mapInfo').textContent='视野内 '+(state.mapStations||[]).length+' 台 · 缩放 '+mapZoom+' · 瓦片缓存 '+mapTiles.size+'/64 · 瓦片失败 '+mapTileErrors+'。灰色表示位置超过 30 分钟。'+(mapTileErrors?' 地图源可能无法访问或要求授权，请换源或在 Windows 配置已授权的 XYZ 地址。':'');if(mapLoads)mapDirty=true;
 }
 const spectrumSamples=new Float32Array(1024),scheduledAudio=new Set();
 let spectrumCursor=0,spectrumRate=32000,spectrumCount=0,spectrumPaused=false,audioResets=0,audioClips=0,audioPeak=0,spectrumDirty=false;
@@ -151,6 +153,7 @@ function render(){
  if(pendingHandoff){const draft=pendingHandoff,warning=document.createElement('p'),yes=document.createElement('button'),no=document.createElement('button');warning.textContent='移交会停止当前讲话并取消原端待发/重试 APRS。';yes.textContent='确认移交给 #'+draft.id;yes.onclick=()=>{if(pendingHandoff!==draft||Date.now()>draft.expires||state.controlOwner!==clientId||state.readOnly||state.emergencyStopped||state.controlApprovalRequired||!(state.controlRequests||[]).includes(draft.id))return;pendingHandoff=null;stopPtt();send({op:'handoffControl',clientId:draft.id});render();};no.textContent='取消移交';no.onclick=()=>{pendingHandoff=null;render();};handoffButtons.push(warning,yes,no);} $('controlHandoff').replaceChildren(...handoffButtons);
  if(pressed&&!control)stopPtt();
  positionPreview();$('positionSend').disabled=!positionReady()||!state.connected||!state.positionAllowed||!control||state.txOwner!=null;
+ if(pendingPosition&&!canConfirmPosition())cancelPositionPreview();
  const ps=state.positionStatus;if(ps&&ps.clientId===clientId)$('positionResult').textContent=ps.status==='submitted'?'电脑已提交位置报文，尚无射频发送或接收确认。':'电脑拒绝位置发送，请检查权限、定位时间与电台状态。';
  updateMapState();
  const g=state.gatewayMetrics||{};$('gatewayMetrics').textContent='排队 '+(g.queueDepth||0)+' · 过期 '+(g.queueExpired||0)+' · 队列溢出 '+(g.queueOverflow||0)+' · 重复 '+((g.queueDuplicates||0)+(g.duplicateDrops||0))+' · 限速丢弃 '+(g.rateDrops||0)+' · 写入错误 '+(g.sendErrors||0);
@@ -188,7 +191,7 @@ async function prepareMic(){const ctx=await context();if(!pressed)return false;i
 return true;}
 $('ptt').addEventListener('pointerdown',async event=>{event.preventDefault();if(pressed)return;pressed=true;$('ptt').setPointerCapture(event.pointerId);try{if(!await prepareMic()||!pressed)return;micPosition=0;send({op:'pttStart'});}catch(error){stopPtt();notice('麦克风失败：'+error.message);}});
 for(const name of ['pointerup','pointercancel','lostpointercapture'])$('ptt').addEventListener(name,()=>stopPtt());
-window.addEventListener('blur',stopPtt);document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPtt();});window.addEventListener('pagehide',()=>{stopPtt();if(micStream)micStream.getTracks().forEach(t=>t.stop());});
+window.addEventListener('blur',()=>{stopPtt();cancelPositionPreview();});document.addEventListener('visibilitychange',()=>{if(document.hidden){stopPtt();cancelPositionPreview();positionGeneration++;}});window.addEventListener('pagehide',()=>{stopPtt();cancelPositionPreview();positionGeneration++;if(micStream)micStream.getTracks().forEach(t=>t.stop());});
 $('channel').onchange=()=>send({op:'channel',value:Number($('channel').value),vfo:'A'});
 $('scan').onclick=()=>send({op:'scan',value:!state.settings?.scan});
 $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});
@@ -197,7 +200,8 @@ $('spectrumPause').onclick=()=>{spectrumPaused=!spectrumPaused;$('spectrumPause'
 $('spectrumRange').onchange=()=>{spectrumDirty=true;};$('spectrumGain').oninput=()=>{spectrumDirty=true;};
 function mapZoomBy(delta){mapZoom=Math.max(2,Math.min(18,mapZoom+delta));mapDirty=true;requestMap();}
 $('mapZoomIn').onclick=()=>mapZoomBy(1);$('mapZoomOut').onclick=()=>mapZoomBy(-1);
-$('mapSource').onchange=()=>{mapSourceId=$('mapSource').value;mapTiles.clear();mapTileGeneration++;mapDirty=true;};$('mapSearch').oninput=updateMapState;
+function resetMapTiles(){mapTiles.clear();mapTileGeneration++;mapTileErrors=0;mapDirty=true;}
+$('mapSource').onchange=()=>{mapSourceId=$('mapSource').value;resetMapTiles();};$('mapRetry').onclick=resetMapTiles;$('mapSearch').oninput=updateMapState;
 $('stationMap').addEventListener('pointerdown',e=>{mapDrag={x:e.clientX,y:e.clientY,c:mapProject(mapLat,mapLon,mapZoom)};mapDragged=false;$('stationMap').setPointerCapture(e.pointerId);});
 $('stationMap').addEventListener('pointermove',e=>{if(!mapDrag)return;const r=$('stationMap').getBoundingClientRect(),dx=(e.clientX-mapDrag.x)*512/r.width,dy=(e.clientY-mapDrag.y)*320/r.height;if(Math.abs(dx)+Math.abs(dy)>5)mapDragged=true;[mapLat,mapLon]=mapUnproject(mapDrag.c[0]-dx,mapDrag.c[1]-dy,mapZoom);mapDirty=true;});
 $('stationMap').addEventListener('pointerup',e=>{mapDrag=null;if(!mapDragged){const r=$('stationMap').getBoundingClientRect(),x=(e.clientX-r.left)*512/r.width,y=(e.clientY-r.top)*320/r.height;const hit=mapHits.find(h=>Math.hypot(h.x-x,h.y-y)<20);if(hit){const s=hit.items[0].station;mapLat=s.lat;mapLon=s.lon;if(hit.items.length>1)mapZoomBy(1);else{mapSelected=s.call;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已选择 '+s.call+'，可发送 APRS 消息。');}}}mapDirty=true;requestMap();});
@@ -207,9 +211,11 @@ $('listen').onclick=async()=>{try{await context();listening=!listening;send(list
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
 $('aprsSearch').oninput=renderMessages;
 $('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.aprsMessages||[]).map(e=>e.id));renderMessages();};
-$('positionAcquire').onclick=()=>{if(!window.isSecureContext||!navigator.geolocation){notice('手机定位需要 HTTPS 和浏览器定位权限。');return;}const generation=++positionGeneration;$('positionPreview').textContent='等待定位授权…';navigator.geolocation.getCurrentPosition(p=>{if(generation!==positionGeneration||document.hidden)return;positionDraft={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,capturedAt:new Date(p.timestamp).toISOString(),radio:false};render();},error=>{if(generation===positionGeneration){positionDraft=null;notice('定位失败：'+error.message);render();}},{enableHighAccuracy:true,timeout:15000,maximumAge:0});};
-$('positionRadio').onclick=()=>{positionGeneration++;const p=state.radioPosition;if(!p||!p.locked){positionDraft=null;notice('电台尚无锁定位置。');render();return;}positionDraft={latitude:p.latitude,longitude:p.longitude,accuracy:p.accuracy>0?p.accuracy:null,capturedAt:p.receivedTime,radio:true};render();};
-$('positionSend').onclick=()=>{if($('positionSend').disabled||!positionReady())return;positionPreview();if(!window.confirm('将通过电台发送当前位置：'+positionDraft.latitude.toFixed(5)+', '+positionDraft.longitude.toFixed(5)+'。确认发射？'))return;send({op:'aprsPosition',source:positionDraft.radio?'radio':'phone',position:positionDraft,confirmed:true});notice('已提交位置发送请求，请查看电脑处理结果。');};
+$('positionAcquire').onclick=()=>{cancelPositionPreview();positionDraft=null;if(!window.isSecureContext||!navigator.geolocation){render();notice('手机定位需要 HTTPS 和浏览器定位权限。');return;}const generation=++positionGeneration;render();$('positionPreview').textContent='等待定位授权…';navigator.geolocation.getCurrentPosition(p=>{if(generation!==positionGeneration||document.hidden)return;positionDraft={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,capturedAt:new Date(p.timestamp).toISOString(),radio:false};render();},error=>{if(generation===positionGeneration){positionDraft=null;notice('定位失败：'+error.message);render();}},{enableHighAccuracy:true,timeout:15000,maximumAge:0});};
+$('positionRadio').onclick=()=>{cancelPositionPreview();positionGeneration++;const p=state.radioPosition;if(!p||!p.locked){positionDraft=null;notice('电台尚无锁定位置。');render();return;}positionDraft={latitude:p.latitude,longitude:p.longitude,accuracy:p.accuracy>0?p.accuracy:null,capturedAt:p.receivedTime,radio:true};render();};
+$('positionSend').onclick=()=>{if($('positionSend').disabled||!positionReady())return;pendingPosition={position:{...positionDraft},expires:Date.now()+30000};$('positionConfirmText').textContent='将通过电台提交'+(positionDraft.radio?'电台':'手机')+'位置：'+positionDraft.latitude.toFixed(5)+', '+positionDraft.longitude.toFixed(5)+'。预览 30 秒后失效，确认前不会发送。';$('positionConfirmation').hidden=false;$('positionConfirm').disabled=!canConfirmPosition();};
+$('positionCancel').onclick=cancelPositionPreview;
+$('positionConfirm').onclick=()=>{if($('positionConfirm').disabled)return;if(!canConfirmPosition()){cancelPositionPreview();notice('定位或权限已变化，请重新预览。');return;}const p=pendingPosition.position;cancelPositionPreview();send({op:'aprsPosition',source:p.radio?'radio':'phone',position:p,confirmed:true});notice('已提交位置发送请求，请查看电脑处理结果。');};
 function renderShortcuts(){const value=state.aprsShortcuts||{},signature=JSON.stringify(value);if(signature===shortcutsSignature)return;shortcutsSignature=signature;
  const options=(entries,placeholder)=>{const start=document.createElement('option');start.value='';start.textContent=placeholder;return [start,...entries];};
  $('aprsFavorite').replaceChildren(...options((value.favorites||[]).slice(0,20).map(call=>{const option=document.createElement('option');option.value=call;option.textContent=call;return option;}),'选择呼号（仅填写草稿）'));

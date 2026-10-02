@@ -214,6 +214,7 @@ class AprsIsManager {
 
   /// Whether the persisted history has finished loading.
   bool _historyReady = false;
+  int _historyEpoch = 0;
 
   /// Guards against overlapping aprs.fi backfill requests.
   bool _mergingAprsFi = false;
@@ -342,10 +343,20 @@ class AprsIsManager {
   /// Loads the persisted internet history from disk, decodes it, and announces
   /// readiness so the APRS / Map tabs can request the list. No-op on web.
   Future<void> _loadHistory() async {
+    final epoch = _historyEpoch;
     final records = await _history.init();
-    for (final rec in records) {
+    if (_disposed) return;
+    for (final rec
+        in epoch == _historyEpoch ? records : <AprsIsHistoryRecord>[]) {
       final aprs = _decodeHistoryRecord(rec);
       if (aprs != null) _historyPackets.add(aprs);
+    }
+    _historyPackets.sort((a, b) => a.packet!.time.compareTo(b.packet!.time));
+    if (_historyPackets.length > _maxHistoryInMemory) {
+      _historyPackets.removeRange(
+        0,
+        _historyPackets.length - _maxHistoryInMemory,
+      );
     }
     _historyReady = true;
     _broker.dispatch(
@@ -393,6 +404,7 @@ class AprsIsManager {
   /// Clears in-memory and persisted internet history when the user clears APRS
   /// messages, so a cleared message cannot reload from disk on the next launch.
   void _onClearAprsPackets(int deviceId, String name, Object? data) {
+    _historyEpoch++;
     _historyPackets.clear();
     _history.clear();
   }
@@ -419,6 +431,7 @@ class AprsIsManager {
     final self = _readCallsignWithId();
     if (apiKey.isEmpty || self.isEmpty) return;
     final selfUpper = self.toUpperCase();
+    final epoch = _historyEpoch;
 
     _mergingAprsFi = true;
     try {
@@ -432,6 +445,7 @@ class AprsIsManager {
         dstCallsign: self,
         userAgent: userAgent,
       );
+      if (_disposed || epoch != _historyEpoch) return;
       if (!received.ok) {
         _broker.logInfo('[aprs.fi] Backfill failed: ${received.error}');
         return;
@@ -452,7 +466,13 @@ class AprsIsManager {
         if (peer.isNotEmpty && peer != selfUpper) peers.add(peer);
       }
       if (peers.isNotEmpty) {
-        merged += await _mergeSentMessages(apiKey, userAgent, selfUpper, peers);
+        merged += await _mergeSentMessages(
+          apiKey,
+          userAgent,
+          selfUpper,
+          peers,
+          epoch,
+        );
       }
 
       if (merged > 0) {
@@ -471,6 +491,7 @@ class AprsIsManager {
     String userAgent,
     String selfUpper,
     Set<String> peers,
+    int epoch,
   ) async {
     var merged = 0;
     final list = peers.toList();
@@ -481,6 +502,7 @@ class AprsIsManager {
         dstCallsign: batch.join(','),
         userAgent: userAgent,
       );
+      if (_disposed || epoch != _historyEpoch) return merged;
       if (!result.ok) continue;
       for (final msg in result.messages.reversed) {
         // Keep only the messages we sent to these peers.

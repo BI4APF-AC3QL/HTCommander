@@ -122,8 +122,25 @@ class RemoteRadioController {
         (DataBroker.getValueDynamic(1, 'RemoteMapStations', []) as List)
             .whereType<Map>()
             .where((s) {
+              final lat = s['lat'], lon = s['lon'];
+              if (lat is! num ||
+                  lon is! num ||
+                  !lat.isFinite ||
+                  !lon.isFinite ||
+                  lat.abs() > 90 ||
+                  lon.abs() > 180) {
+                return false;
+              }
+              final time = s['time'] is String
+                  ? DateTime.tryParse(s['time'] as String)
+                  : null;
+              if (s['time'] != null &&
+                  (time == null ||
+                      _clock().difference(time) > const Duration(hours: 24) ||
+                      time.isAfter(_clock().add(const Duration(minutes: 5))))) {
+                return false;
+              }
               if (bounds == null) return true;
-              final lat = s['lat'] as num, lon = s['lon'] as num;
               return lat >= bounds[0] &&
                   lat <= bounds[2] &&
                   (bounds[1] <= bounds[3]
@@ -152,7 +169,8 @@ class RemoteRadioController {
                 (s) => {
                   'id': s.id,
                   'name': s.name,
-                  'url': s.urlTemplate,
+                  'url':
+                      '/remote-tiles/${s.id}/{z}/{x}/{y}.png?v=${s.cacheNamespace}',
                   'attribution': s.attribution,
                 },
               )

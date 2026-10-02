@@ -12,6 +12,10 @@ class ConversationHistory {
   List<Map<String, Object>> get messages =>
       _messages.map((e) => Map<String, Object>.unmodifiable(e)).toList();
 
+  // Keep IDs monotonic so a connected phone does not confuse a new message
+  // with a previously read one after the host clears history.
+  void clear() => _messages.clear();
+
   bool add(AprsFrameEventArgs event, String localCallsign) {
     final packet = event.aprsPacket;
     final message = packet.messageData;
@@ -28,16 +32,20 @@ class ConversationHistory {
     }
     final incoming = source != local;
     final time = event.ax25Packet.time;
-    if (message.seqId.isNotEmpty &&
-        _messages.any(
-          (e) =>
-              e['source'] == source &&
-              e['destination'] == destination &&
-              e['sequence'] == message.seqId &&
-              e['text'] == message.msgText &&
-              time.difference(DateTime.parse(e['time'] as String)).abs() <
-                  const Duration(minutes: 5),
-        )) {
+    final text = message.msgText.length > 512
+        ? message.msgText.substring(0, 512)
+        : message.msgText;
+    if (_messages.any(
+      (e) =>
+          e['source'] == source &&
+          e['destination'] == destination &&
+          e['sequence'] == message.seqId &&
+          e['text'] == text &&
+          (message.seqId.isEmpty
+              ? time.isAtSameMomentAs(DateTime.parse(e['time'] as String))
+              : time.difference(DateTime.parse(e['time'] as String)).abs() <
+                    const Duration(minutes: 5)),
+    )) {
       return false;
     }
     _messages.add({
@@ -47,15 +55,19 @@ class ConversationHistory {
       'peer': incoming ? source : destination,
       'incoming': incoming,
       'sequence': message.seqId,
-      'text': message.msgText.length > 512
-          ? message.msgText.substring(0, 512)
-          : message.msgText,
-      'time': time.toIso8601String(),
+      'text': text,
+      'time': time.toUtc().toIso8601String(),
       'viaInternet': packet.fromAprsIs,
+    });
+    _messages.sort((a, b) {
+      final order = DateTime.parse(
+        a['time'] as String,
+      ).compareTo(DateTime.parse(b['time'] as String));
+      return order == 0 ? (a['id'] as int).compareTo(b['id'] as int) : order;
     });
     while (_messages.length > capacity) {
       _messages.removeAt(0);
     }
-    return true;
+    return _messages.any((e) => e['id'] == _nextId);
   }
 }

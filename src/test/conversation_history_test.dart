@@ -69,11 +69,47 @@ void main() {
       );
       expect(history.add(message('AC3QL', 'BI4APF', 'Reply{2'), 'AC3QL'), true);
       expect(history.messages, hasLength(2));
-      expect(history.messages.first['id'], 2);
+      expect(history.messages.first['id'], 3);
+      expect(history.messages.last['id'], 2);
       expect(
         () => history.messages.first['text'] = 'changed',
         throwsUnsupportedError,
       );
+    },
+  );
+  test(
+    'late history cannot evict newer messages and clear keeps IDs unique',
+    () {
+      final history = ConversationHistory(capacity: 2);
+      final now = DateTime(2026);
+      history.add(message('W1AW', 'AC3QL', 'Live{3', time: now), 'AC3QL');
+      history.add(
+        message(
+          'W1AW',
+          'AC3QL',
+          'Middle{2',
+          time: now.subtract(const Duration(minutes: 1)),
+        ),
+        'AC3QL',
+      );
+      expect(
+        history.add(
+          message(
+            'W1AW',
+            'AC3QL',
+            'Old{1',
+            time: now.subtract(const Duration(minutes: 2)),
+          ),
+          'AC3QL',
+        ),
+        false,
+      );
+      expect(history.messages.map((m) => m['text']), ['Middle', 'Live']);
+      final ids = history.messages.map((m) => m['id'] as int).toList();
+      history.clear();
+      expect(history.messages, isEmpty);
+      history.add(message('W1AW', 'AC3QL', 'New{4'), 'AC3QL');
+      expect(history.messages.single['id'] as int, greaterThan(ids.last));
     },
   );
 }

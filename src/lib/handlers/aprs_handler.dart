@@ -192,6 +192,50 @@ class AprsHandler {
     }
   }
 
+  void _publishRemoteHistory() {
+    _broker.dispatch(
+      deviceId: _aprsDeviceId,
+      name: 'RemoteAprsMessages',
+      data: _conversations.messages,
+      allowEmpty: true,
+    );
+    _broker.dispatch(
+      deviceId: _aprsDeviceId,
+      name: 'RemoteMapStations',
+      data: _stationIndex.stations,
+      allowEmpty: true,
+    );
+  }
+
+  void _restoreRemoteHistory(Iterable<AprsPacket> packets) {
+    final events =
+        packets
+            .where((p) => p.packet != null)
+            .map((p) => AprsFrameEventArgs(p, p.packet!, null))
+            .toList()
+          ..sort((a, b) => a.ax25Packet.time.compareTo(b.ax25Packet.time));
+    for (final event in events) {
+      _conversations.add(event, _localCallsignWithId ?? '');
+    }
+    _stationIndex.restore(events);
+    _publishRemoteHistory();
+  }
+
+  void _requestInternetHistory(int deviceId, String name, Object? data) {
+    if (_disposed) return;
+    _broker.dispatch(
+      deviceId: 1,
+      name: 'RequestAprsIsPackets',
+      data: null,
+      store: false,
+    );
+  }
+
+  void _onInternetHistory(int deviceId, String name, Object? data) {
+    if (_disposed || data is! List) return;
+    _restoreRemoteHistory(data.whereType<AprsPacket>());
+  }
+
   final List<AprsPacket> _aprsFrames = [];
   bool _disposed = false;
   bool _storeReady = false;
@@ -269,6 +313,16 @@ class AprsHandler {
       name: 'PacketList',
       callback: _onPacketList,
     );
+    _broker.subscribe(
+      deviceId: 1,
+      name: 'AprsIsStoreReady',
+      callback: _requestInternetHistory,
+    );
+    _broker.subscribe(
+      deviceId: 1,
+      name: 'AprsIsPacketList',
+      callback: _onInternetHistory,
+    );
 
     // Outbound message requests from the UI.
     _broker.subscribe(
@@ -314,6 +368,7 @@ class AprsHandler {
       callback: _onCallsignOrStationIdChanged,
     );
     _updateLocalCallsignWithId();
+    _requestInternetHistory(1, '', null);
 
     // If the PacketStore is already ready, request the historical list now.
     if (_broker.hasValue(_aprsDeviceId, 'PacketStoreReady')) {
@@ -367,6 +422,9 @@ class AprsHandler {
   void _onCallsignOrStationIdChanged(int deviceId, String name, Object? data) {
     if (_disposed) return;
     _updateLocalCallsignWithId();
+    _conversations.clear();
+    _restoreRemoteHistory(_aprsFrames);
+    _requestInternetHistory(1, '', null);
   }
 
   /// Returns the next APRS message id (1..999), persisting the successor.
@@ -699,6 +757,7 @@ class AprsHandler {
     _trimFrames();
 
     _storeReady = true;
+    _restoreRemoteHistory(_aprsFrames);
     _broker.dispatch(
       deviceId: _aprsDeviceId,
       name: 'AprsStoreReady',
@@ -981,6 +1040,11 @@ class AprsHandler {
   void _onClearAprsPackets(int deviceId, String name, Object? data) {
     if (_disposed) return;
     clearFrames();
+    _mapPublishTimer?.cancel();
+    _mapPublishTimer = null;
+    _conversations.clear();
+    _stationIndex.clear();
+    _publishRemoteHistory();
     _broker.dispatch(
       deviceId: _aprsDeviceId,
       name: 'AprsPacketsCleared',

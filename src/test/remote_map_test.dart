@@ -16,6 +16,54 @@ AprsFrameEventArgs position(String call, DateTime time, double lat) {
 
 void main() {
   tearDown(DataBroker.reset);
+  test('snapshot expires stale map entries even when no new frames arrive', () {
+    final now = DateTime.utc(2026, 10, 2);
+    DataBroker.dispatch(
+      deviceId: 1,
+      name: 'RemoteMapStations',
+      data: [
+        {'lat': 31.2, 'lon': 121.5, 'time': now.toIso8601String()},
+        {
+          'lat': 31.2,
+          'lon': 121.5,
+          'time': now.subtract(const Duration(days: 2)).toIso8601String(),
+        },
+        {'lat': 31.2, 'lon': 121.5, 'time': 'invalid'},
+        {'lat': double.nan, 'lon': 121.5},
+      ],
+    );
+    var clock = now;
+    final controller = RemoteRadioController(
+      target: () => -1,
+      clock: () => clock,
+    );
+    expect(controller.snapshot()['mapStations'], hasLength(1));
+    clock = now.add(const Duration(hours: 25));
+    expect(controller.snapshot()['mapStations'], isEmpty);
+  });
+  test(
+    'restore merges tracks by time, preserves live fix and isolates copies',
+    () {
+      final now = DateTime(2026);
+      final index = StationIndex(clock: () => now);
+      index.add(position('W1AW', now, 42));
+      index.restore([
+        position('W1AW', now.subtract(const Duration(minutes: 1)), 41),
+        position('W1AW', now.subtract(const Duration(minutes: 2)), 40),
+        position('W1AW', now.subtract(const Duration(days: 2)), 39),
+      ]);
+      expect(index.stations.single['lat'], 42);
+      expect((index.stations.single['track'] as List).map((p) => p[0]), [
+        40,
+        41,
+        42,
+      ]);
+      (index.stations.single['track'] as List).first[0] = 0.0;
+      expect((index.stations.single['track'] as List).first[0], 40);
+      index.clear();
+      expect(index.stations, isEmpty);
+    },
+  );
   test(
     'station and track limits, stale cleanup and old/future position rejection',
     () {
