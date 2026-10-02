@@ -28,6 +28,7 @@ class WebSocketClient {
   WebSocketClient(this.id);
 
   final int id;
+  bool readOnly = false;
 
   void sendText(String message) {}
 
@@ -42,7 +43,12 @@ class WebServer {
 
   WebSocketClientCallback? onClientConnected;
   WebSocketClientCallback? onClientDisconnected;
+  WebSocketClientCallback? onClientRoleChanged;
+  List<Map<String, Object>> get clientSummaries => [];
+  void setClientReadOnly(int id, bool readOnly) {}
+  void revokeClient(int id) {}
   WebSocketTextCallback? onTextMessage;
+  WebSocketClientCallback? onWriteDenied;
   WebSocketBinaryCallback? onBinaryMessage;
 
   bool get isRunning => false;
@@ -50,6 +56,7 @@ class WebServer {
   int? get boundPort => null;
 
   int get clientCount => 0;
+  WebSocketClient? clientById(int id) => null;
 
   Future<bool> start() async => false;
 

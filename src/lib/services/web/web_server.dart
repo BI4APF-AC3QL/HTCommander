@@ -7,5 +7,4 @@
 //
 // The web server feature is only wired up on desktop (Windows / Linux / macOS);
 // the stub keeps the web/iOS/Android builds compiling.
-export 'web_server_stub.dart'
-    if (dart.library.io) 'web_server_io.dart';
+export 'web_server_stub.dart' if (dart.library.io) 'web_server_io.dart';

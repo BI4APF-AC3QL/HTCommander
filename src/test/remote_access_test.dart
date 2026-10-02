@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:fake_async/fake_async.dart';
@@ -133,6 +134,18 @@ void main() {
       final page = await get('/remote.html', cookie: session);
       expect(page.statusCode, 200);
       await page.drain<void>();
+      final manifest = await get('/remote.webmanifest', cookie: session);
+      expect(manifest.statusCode, 200);
+      final data = jsonDecode(await utf8.decoder.bind(manifest).join()) as Map;
+      expect(data['start_url'], '/remote.html');
+      expect(data['display'], 'standalone');
+      final worker = await get('/remote-worker.js', cookie: session);
+      final workerText = await utf8.decoder.bind(worker).join();
+      expect(workerText, contains('activate'));
+      expect(workerText, isNot(contains('fetch')));
+      final protectedManifest = await get('/remote.webmanifest');
+      expect(protectedManifest.statusCode, 303);
+      await protectedManifest.drain<void>();
       final ws = '${base.replaceFirst('http:', 'ws:')}/websocket.aspx';
       await expectLater(
         WebSocket.connect(ws, headers: {'Origin': base}),
@@ -253,7 +266,7 @@ void main() {
   test(
     'PTT requires both permissions and valid radio; ownership is exclusive',
     () {
-      final controls = RemoteRadioController(target: () => 2);
+      final controls = RemoteRadioController(target: () => 2)..grantControl(1);
       expect(controls.command(1, {'op': 'pttStart'}), isNotNull);
       readyRadio();
       expect(controls.command(1, {'op': 'pttStart'}), isNull);
@@ -273,7 +286,7 @@ void main() {
       final controls = RemoteRadioController(
         target: () => 2,
         clock: () => time.getClock(DateTime(2026)).now(),
-      );
+      )..grantControl(1);
       final broker = DataBrokerClient();
       var cancelled = 0;
       broker.subscribe(
@@ -298,7 +311,7 @@ void main() {
   });
   test('permissions revoked or malformed/oversized PCM releases owner', () {
     readyRadio();
-    final controls = RemoteRadioController(target: () => 2);
+    final controls = RemoteRadioController(target: () => 2)..grantControl(1);
     controls.command(1, {'op': 'pttStart'});
     expect(controls.microphone(1, Uint8List(9000)), false);
     expect(controls.snapshot()['txOwner'], isNull);

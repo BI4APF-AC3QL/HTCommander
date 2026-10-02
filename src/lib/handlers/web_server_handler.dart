@@ -43,7 +43,11 @@ import '../winlink/winlink_mail.dart';
 /// radio, based on app settings.
 class WebServerHandler {
   WebServerHandler() : _broker = DataBrokerClient() {
-    _remote = RemoteRadioController(target: () => _targetRadioDeviceId);
+    _remote = RemoteRadioController(
+      target: () => _targetRadioDeviceId,
+      clientCanControl: (id) => _server?.clientById(id)?.readOnly == false,
+      onControlChanged: _publishClients,
+    );
   }
   late final RemoteRadioController _remote;
   Timer? _rebindTimer;
@@ -51,6 +55,7 @@ class WebServerHandler {
   final DataBrokerClient _broker;
 
   WebServer? _server;
+  int? get boundPort => _server?.boundPort;
   bool _enabled = false;
   int _port = 8080;
   bool _disposed = false;
@@ -86,6 +91,7 @@ class WebServerHandler {
   /// Initializes the handler: loads settings, subscribes to changes, and starts
   /// the server if enabled.
   void init() {
+    _publishClients();
     _enabled = (_broker.getValue<int>(0, 'webServerEnabled', 0) ?? 0) == 1;
     _port = _broker.getValue<int>(0, 'webServerPort', 8080) ?? 8080;
 
@@ -102,8 +108,72 @@ class WebServerHandler {
         'webServerPassword',
         'webServerPublicOrigin',
         'webServerAllowTransmit',
+        'webServerAllowAprs',
+        'webServerAllowPosition',
+        'webServerDefaultReadOnly',
+        'webServerRequireControlApproval',
       ],
       callback: _onSettingChanged,
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'webServerEmergencyStopped',
+      callback: (_, _, value) {
+        if (value == 1) {
+          _remote.recallControl();
+          _broker.dispatch(
+            deviceId: 0,
+            name: 'CancelRemoteAprs',
+            data: null,
+            store: false,
+          );
+        }
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteClientRevoke',
+      callback: (_, _, value) {
+        if (value is int && _server?.clientById(value) != null) {
+          _remote.audit(0, 'revokeLogin', 'accepted', affectedClient: value);
+          _server?.revokeClient(value);
+        }
+        _publishClients();
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteClientRole',
+      callback: (_, _, value) {
+        if (value is Map && value['id'] is int && value['readOnly'] is bool) {
+          _remote.audit(
+            0,
+            'readOnlyRole',
+            'accepted',
+            affectedClient: value['id'],
+          );
+          _server?.setClientReadOnly(value['id'], value['readOnly']);
+        }
+        _publishClients();
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteControlGrant',
+      callback: (_, _, value) {
+        if (value is! int ||
+            _server?.clientById(value) == null ||
+            _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
+          return;
+        }
+        _server!.setClientReadOnly(value, false);
+        _remote.grantControl(value);
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteControlRecall',
+      callback: (_, _, _) => _remote.recallControl(),
     );
     _broker.subscribe(
       deviceId: 1,
@@ -187,7 +257,7 @@ class WebServerHandler {
     if (_disposed) return;
     if (name == 'webServerEnabled') _enabled = data == 1;
     if (name == 'webServerPort' && data is int) _port = data;
-    _remote.release();
+    _remote.recallControl();
     _rebindTimer?.cancel();
     _rebindTimer = Timer(const Duration(milliseconds: 200), () async {
       await _stopServer();
@@ -221,9 +291,15 @@ class WebServerHandler {
   /// disconnect/reconnect cycle makes the client re-fetch the radio's device
   /// info, channels, settings and status.
   void _repointBrowsers() {
+    _remote.recallControl();
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: null,
+      store: false,
+    );
     final server = _server;
     if (server == null || server.clientCount == 0) return;
-    _remote.release();
     server.broadcastText('disconnected');
     server.broadcastText(_stateMessageFor(_currentRadioState));
   }
@@ -295,6 +371,7 @@ class WebServerHandler {
     if (_disposed) return;
     if (deviceId != _targetRadioDeviceId) return;
     final state = data is String ? data : 'Disconnected';
+    if (state != 'Connected') _remote.recallControl();
     _server?.broadcastText(_stateMessageFor(state));
   }
 
@@ -312,6 +389,7 @@ class WebServerHandler {
   // ---------------------------------------------------------------------------
 
   void _onClientConnected(WebSocketClient client) {
+    _publishClients();
     if (_disposed) return;
     // Report the current radio status to the freshly connected browser.
     client.sendText(_stateMessageFor(_currentRadioState));
@@ -643,8 +721,13 @@ class WebServerHandler {
         final command = jsonDecode(message.substring(7));
         if (command is! Map) return;
         final error = _remote.command(client.id, command);
+        _autoGrantNext();
         client.sendText(
-          'remote:${jsonEncode({'clientId': client.id, 'state': _remote.snapshot(), 'error': error})}',
+          'remote:${jsonEncode({
+            'clientId': client.id,
+            'state': {..._remote.snapshot(client.id), 'readOnly': client.readOnly},
+            'error': error,
+          })}',
         );
       } catch (_) {
         client.sendText('remote:{"error":"Invalid remote control message."}');
@@ -666,6 +749,12 @@ class WebServerHandler {
       return;
     }
     if (message.startsWith('selectradio:')) {
+      if (_remote.controlOwner != client.id) {
+        client.sendText(
+          'remote:{"error":"Request exclusive control before selecting a radio."}',
+        );
+        return;
+      }
       _applyClientSelectRadio(message.substring('selectradio:'.length));
       return;
     }
@@ -674,7 +763,7 @@ class WebServerHandler {
       return;
     }
     if (message == 'audiooff') {
-      _remote.disconnected(client.id);
+      _remote.command(client.id, {'op': 'pttStop'});
       _audioClients.remove(client.id);
       return;
     }
@@ -724,8 +813,8 @@ class WebServerHandler {
       _remote.microphone(client.id, data);
       return;
     }
-    if (RemoteAccessConfig.current.enabled &&
-        !RemoteRadioController.safeRawCommand(data)) {
+    if (!RemoteRadioController.safeRawCommand(data)) {
+      _remote.audit(client.id, 'rawWrite', 'denied');
       client.sendText(
         'log:Raw write/TX commands are disabled; use the mobile remote page.',
       );
@@ -751,7 +840,21 @@ class WebServerHandler {
     final server = WebServer(_port, remoteConfig: RemoteAccessConfig.current);
     server.onClientConnected = _onClientConnected;
     server.onClientDisconnected = _onClientDisconnected;
+    server.onClientRoleChanged = (client) {
+      if (client.readOnly) {
+        _remote.disconnected(client.id);
+        _broker.dispatch(
+          deviceId: 0,
+          name: 'CancelRemoteAprs',
+          data: client.id,
+          store: false,
+        );
+      }
+      _publishClients();
+    };
     server.onTextMessage = _onTextMessage;
+    server.onWriteDenied = (client) =>
+        _remote.audit(client.id, 'writeDenied', 'denied');
     server.onBinaryMessage = _onBinaryMessage;
     _server = server;
     server.start().then((ok) {
@@ -781,17 +884,64 @@ class WebServerHandler {
     final server = _server;
     if (server == null) return;
     if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
-    _remote.release();
+    _remote.recallControl();
     _audioClients.clear();
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: null,
+      store: false,
+    );
     _server = null;
     await server.stop();
     server.dispose();
   }
 
   void _onClientDisconnected(WebSocketClient client) {
+    _remote.audit(client.id, 'disconnect', 'released');
     if (_disposed) return;
     _remote.disconnected(client.id);
     _audioClients.remove(client.id);
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: client.id,
+      store: false,
+    );
+    _publishClients();
+  }
+
+  void _autoGrantNext() {
+    if (_remote.controlOwner != null ||
+        RemoteAccessConfig.current.requireControlApproval ||
+        _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
+      return;
+    }
+    for (final id in _remote.controlRequests) {
+      if (_server?.clientById(id)?.readOnly == false) {
+        _remote.grantControl(id);
+        break;
+      }
+    }
+  }
+
+  void _publishClients() {
+    final requests = _remote.controlRequests;
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'RemoteClients',
+      data: [
+        for (final client
+            in _server?.clientSummaries ?? <Map<String, Object>>[])
+          {
+            ...client,
+            'ownsControl': _remote.controlOwner == client['id'],
+            'controlRequested': requests.contains(client['id']),
+            'queuePosition': requests.indexOf(client['id'] as int) + 1,
+          },
+      ],
+      store: true,
+    );
   }
 
   /// Mirrors a buffer of host playback audio to every opted-in browser as a
@@ -815,10 +965,14 @@ class WebServerHandler {
 
   /// Stops the server and releases all resources.
   void dispose() {
+    unawaited(close());
+  }
+
+  Future<void> close() async {
     if (_disposed) return;
     _disposed = true;
     _rebindTimer?.cancel();
-    _stopServer();
+    await _stopServer();
     _broker.dispose();
   }
 }
