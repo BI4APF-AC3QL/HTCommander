@@ -24,6 +24,7 @@ const remoteMobilePage = r'''<!doctype html>
 </section>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
 <section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
+<section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
@@ -43,6 +44,8 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onerror=()=>socket.close();
 }
 function render(){
+ const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
+ $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
  $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null;
  const connected=state.connected===true;const s=state.settings||{};channels=state.channels||[];
  const sig=JSON.stringify(channels);if(sig!==listSignature){listSignature=sig;$('channel').replaceChildren(...channels.map(c=>{const o=document.createElement('option');o.value=c.channelId;o.textContent=(c.channelId+1)+' · '+(c.name||'未命名')+' · '+((c.rxFreq||0)/1e6).toFixed(5);return o;}));}

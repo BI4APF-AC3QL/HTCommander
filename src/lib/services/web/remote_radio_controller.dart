@@ -19,6 +19,7 @@ class RemoteRadioController {
   DateTime? _rateWindow;
   int _bytesInWindow = 0;
   DateTime? _lastAprsSubmission;
+  int _aprsRequestCounter = 0;
   static const int microphoneFrameMagic = 0xf2;
 
   bool get _txAllowed =>
@@ -39,6 +40,11 @@ class RemoteRadioController {
           RemoteAccessConfig.current.allowPosition &&
           DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1,
       'txOwner': _owner,
+      'aprsDeliveries': DataBroker.getValueDynamic(
+        1,
+        'RemoteAprsDeliveries',
+        [],
+      ),
       'settings': DataBroker.getValueDynamic(id, 'Settings', null),
       'status': DataBroker.getValueDynamic(id, 'HtStatus', null),
       'volume': DataBroker.getValue<int>(id, 'Volume', 0),
@@ -188,6 +194,8 @@ class RemoteRadioController {
         destination: destination,
         message: text,
         radioDeviceId: id,
+        remoteRequestId:
+            '${now.microsecondsSinceEpoch}-${++_aprsRequestCounter}',
       ),
     );
     return null;

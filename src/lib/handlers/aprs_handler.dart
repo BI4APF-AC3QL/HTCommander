@@ -6,6 +6,10 @@ http://www.apache.org/licenses/LICENSE-2.0
 Ported from the C# `HTCommander.AprsHandler` class.
 */
 
+import 'dart:async';
+import 'dart:convert';
+import '../aprs/message_delivery.dart';
+import '../services/web/remote_access_config.dart';
 import '../aprs/aprs_auth.dart';
 import '../aprs/aprs_events.dart';
 import '../aprs/aprs_packet.dart';
@@ -37,6 +41,89 @@ class AprsHandler {
 
   final DataBrokerClient _broker = DataBrokerClient();
   final AprsAuth _auth = AprsAuth();
+  final _delivery = MessageDeliveryTracker(clock: DateTime.now);
+  final Map<String, (int, AX25Packet)> _retryFrames = {};
+  Timer? _deliveryTimer;
+  String? _lastDeliverySnapshot;
+
+  void _publishDelivery() {
+    final entries = _delivery.entries.map((e) => e.toJson()).toList();
+    final signature = jsonEncode(entries);
+    if (signature == _lastDeliverySnapshot) return;
+    _lastDeliverySnapshot = signature;
+    _broker.dispatch(
+      deviceId: _aprsDeviceId,
+      name: 'RemoteAprsDeliveries',
+      data: entries,
+      store: true,
+    );
+  }
+
+  bool _retryAllowed(MessageDelivery entry) {
+    final frame = _retryFrames[entry.id];
+    if (frame == null ||
+        !RemoteAccessConfig.current.allowAprs ||
+        _broker.getValue<int>(0, 'AllowTransmit', 0) != 1 ||
+        _broker.getValue<String>(frame.$1, 'State', '') != 'Connected' ||
+        _localCallsignWithId?.toUpperCase() != entry.source) {
+      return false;
+    }
+    final status = _broker.getValueDynamic(frame.$1, 'HtStatus', null);
+    final lock = _broker.getValueDynamic(frame.$1, 'LockState', null);
+    final channels = _broker.getValueDynamic(frame.$1, 'Channels', null);
+    return status is Map &&
+        status['isPowerOn'] == true &&
+        status['isInTx'] != true &&
+        !(lock is Map && lock['isLocked'] == true) &&
+        channels is List &&
+        channels.whereType<Map>().any(
+          (c) =>
+              c['channelId'] == frame.$2.channelId &&
+              c['name'] == 'APRS' &&
+              c['txDisable'] == false,
+        );
+  }
+
+  void _tickDelivery() {
+    if (_disposed) return;
+    for (final entry in _delivery.tick(allowed: _retryAllowed)) {
+      final frame = _retryFrames[entry.id]!;
+      _broker.dispatch(
+        deviceId: frame.$1,
+        name: 'TransmitDataFrame',
+        data: TransmitDataFrameData(
+          packet: frame.$2,
+          channelId: frame.$2.channelId,
+          regionId: -1,
+        ),
+        store: false,
+      );
+    }
+    _retryFrames.removeWhere(
+      (id, _) => !_delivery.entries.any((e) => e.id == id && e.pending),
+    );
+    _publishDelivery();
+  }
+
+  void _onDeliveryFrame(int deviceId, String name, Object? data) {
+    if (_disposed || data is! AprsFrameEventArgs || !data.ax25Packet.incoming) {
+      return;
+    }
+    final packet = data.aprsPacket;
+    final message = packet.messageData;
+    if (message.msgType != MessageType.mtAck &&
+        message.msgType != MessageType.mtRej) {
+      return;
+    }
+    if (_delivery.acknowledge(
+      packet.sourceCallsignWithId,
+      message.addressee,
+      message.seqId,
+      rejected: message.msgType == MessageType.mtRej,
+    )) {
+      _tickDelivery();
+    }
+  }
 
   final List<AprsPacket> _aprsFrames = [];
   bool _disposed = false;
@@ -57,6 +144,28 @@ class AprsHandler {
   /// Initializes the handler: subscribes to broker events and loads persisted
   /// state. Safe to call once at startup.
   void init() {
+    _broker.subscribeMultiple(
+      deviceId: DataBroker.allDevices,
+      names: const [
+        'State',
+        'AllowTransmit',
+        'webServerAllowAprs',
+        'CallSign',
+        'StationId',
+        'Channels',
+        'LockState',
+      ],
+      callback: (_, _, _) => _tickDelivery(),
+    );
+    _broker.subscribe(
+      deviceId: _aprsDeviceId,
+      name: 'AprsFrame',
+      callback: _onDeliveryFrame,
+    );
+    _deliveryTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _tickDelivery(),
+    );
     // Incoming frames from all radios.
     _broker.subscribe(
       deviceId: DataBroker.allDevices,
@@ -310,6 +419,26 @@ class AprsHandler {
     ax25Packet.channelId = aprsChannelId;
     ax25Packet.channelName = 'APRS';
 
+    if (messageData.remoteRequestId != null) {
+      try {
+        final entry = _delivery.start(
+          messageData.remoteRequestId!,
+          srcCallsignWithId,
+          messageData.destination,
+          msgId.toString(),
+        );
+        _retryFrames[entry.id] = (messageData.radioDeviceId, ax25Packet);
+        if (!_retryAllowed(entry)) {
+          _tickDelivery();
+          return;
+        }
+        _publishDelivery();
+      } on StateError {
+        _broker.logError('Remote APRS outbox full or duplicate request');
+        return;
+      }
+    }
+
     if (!aprsIsOnly) {
       _broker.dispatch(
         deviceId: messageData.radioDeviceId,
@@ -517,9 +646,7 @@ class AprsHandler {
   /// Raises a system notification when an APRS message addressed to our station
   /// arrives. [NotificationService] itself suppresses the pop-up while the app
   /// is in the foreground.
-  void _notifyIncomingAprsMessage(
-    AprsPacket aprsPacket,
-  ) {
+  void _notifyIncomingAprsMessage(AprsPacket aprsPacket) {
     // The desktop host raises the notification; on the hosted web build it would
     // be a duplicate of the host's own pop-up.
     if (HostBridge.isHosted) return;
@@ -671,6 +798,9 @@ class AprsHandler {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _deliveryTimer?.cancel();
+    _delivery.cancelAll();
+    _retryFrames.clear();
     _broker.dispose();
     _aprsFrames.clear();
   }
