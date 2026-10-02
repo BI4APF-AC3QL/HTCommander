@@ -6,7 +6,7 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 |---|---|---|---|
 | 1 | Remote APRS messaging, ACK, bounded retry and timeout | Browser send path plus simulated ACK/reject/timeout/retry tests | Pending |
 | 2 | Separate voice/message/position permissions and emergency stop | Host UI, server checks, unauthorized-command and revocation tests | Pending |
-| 3 | APRS gateway reconnect, backoff, dedup, queue limits and expiry | Fake-network disconnect/overload/expiry tests and gateway metrics | Pending |
+| 3 | APRS gateway reconnect, backoff, dedup, queue limits and expiry | Fake-network disconnect/overload/expiry tests and gateway metrics | Partial: jittered backoff, bounded/expiring paced up-queue and phone counters. Queue/predicate tests passed; manager fake-network integration remains. |
 | 4 | RF/IS transfer controls, forbidden paths and loop/rate safeguards | Forwarding matrix tests and host configuration | Pending |
 | 5 | Link diagnostics, latency/audio backlog/counters and failure causes | Real data sources, browser panel and tests | Pending |
 | 6 | APRS conversations, replies, unread, ACK and search | Host/mobile synchronization and browser verification | Partial: bounded live history, search/reply/page-local unread; Dart and simulated DOM tests. Real-browser verification and persisted history remain. |

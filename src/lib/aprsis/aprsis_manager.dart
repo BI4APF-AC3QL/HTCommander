@@ -52,6 +52,7 @@ import 'aprsis_history_store.dart';
 import 'aprsis_network_io.dart';
 import 'tnc2_codec.dart';
 import 'gate_budget.dart';
+import 'gate_queue.dart';
 
 /// Owns the [AprsIsClient] and bridges it to the app's Data Broker. Registered
 /// as a Data Broker handler in `main()` on platforms with a dart:io socket
@@ -104,6 +105,37 @@ class AprsIsManager {
   /// Callsigns heard on RF recently, mapped to the last time they were heard.
   final Map<String, DateTime> _heardStations = {};
   final GateBudget _upGateBudget = GateBudget();
+  final GateQueue _upQueue = GateQueue(clock: DateTime.now);
+  Timer? _gateTimer;
+  int _gateSendErrors = 0;
+
+  void _drainUpQueue() {
+    _upQueue.prune();
+    if (!_readEnabled()) _upQueue.clear();
+    final client = _client;
+    if (client != null &&
+        client.state == AprsIsConnectionState.connected &&
+        client.canTransmit &&
+        client.isVerified) {
+      final line = _upQueue.take();
+      if (line != null && _upGateBudget.accept(line)) {
+        try {
+          client.sendPacketLine(line);
+        } catch (_) {
+          _gateSendErrors++;
+        }
+      }
+    }
+    _broker.dispatch(
+      deviceId: aprsIsDeviceId,
+      name: 'GateMetrics',
+      data: {
+        ..._upGateBudget.metrics,
+        ..._upQueue.metrics,
+        'sendErrors': _gateSendErrors,
+      },
+    );
+  }
 
   /// Append-only on-disk store that lets internet APRS history survive restarts.
   final AprsIsHistoryStore _history = AprsIsHistoryStore();
@@ -122,6 +154,10 @@ class AprsIsManager {
   void init() {
     if (_initialized) return;
     _initialized = true;
+    _gateTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _drainUpQueue(),
+    );
 
     _appVersion = _broker.getValue<String>(0, 'AppVersion', '') ?? '';
 
@@ -136,7 +172,10 @@ class AprsIsManager {
         'AprsIsPort',
         'AprsIsGateToRf',
       ],
-      callback: (_, _, _) => unawaited(_reconcile()),
+      callback: (_, name, _) {
+        if (name != 'AprsIsGateToRf') _upQueue.clear();
+        unawaited(_reconcile());
+      },
     );
 
     // The range setting changes the server-side filter but not the connection;
@@ -679,7 +718,12 @@ class AprsIsManager {
     if (!_readEnabled()) return;
     if (_readCallsignWithId().isEmpty) return;
     _retryTimer?.cancel();
-    final delay = _retryDelay;
+    final delay = Duration(
+      milliseconds:
+          (_retryDelay.inMilliseconds *
+                  (0.8 + math.Random().nextDouble() * 0.4))
+              .round(),
+    );
     _retryDelay = Duration(
       seconds: (_retryDelay.inSeconds * 2).clamp(
         _minRetry.inSeconds,
@@ -877,24 +921,13 @@ class AprsIsManager {
 
     _recordHeard(aprs);
 
-    final client = _client;
-    if (client == null) return;
-    if (client.state != AprsIsConnectionState.connected) return;
-    if (!client.canTransmit || !client.isVerified) return;
-    if (!AprsIsClient.shouldGateToInternet(aprs)) return;
+    if (!_readEnabled() || !AprsIsClient.shouldGateToInternet(aprs)) return;
 
     final igateCall = _readCallsignWithId();
     if (igateCall.isEmpty) return;
     final line = AprsIsClient.buildGateUpLine(aprs, igateCall);
     if (line == null) return;
-    final accepted = _upGateBudget.accept(line);
-    _broker.dispatch(
-      deviceId: aprsIsDeviceId,
-      name: 'GateMetrics',
-      data: _upGateBudget.metrics,
-    );
-    if (!accepted) return;
-    client.sendPacketLine(line);
+    _upQueue.add(line);
   }
 
   void _recordHeard(AprsPacket aprs) {
@@ -1050,6 +1083,8 @@ class AprsIsManager {
   }
 
   Future<void> dispose() async {
+    _gateTimer?.cancel();
+    _upQueue.clear();
     _retryTimer?.cancel();
     await _closeClient();
     _broker.dispose();

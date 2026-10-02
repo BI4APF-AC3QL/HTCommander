@@ -17,12 +17,7 @@ import '../radio/ax25_packet.dart';
 const int aprsIsDeviceId = 201;
 
 /// High-level connection state of the APRS-IS client.
-enum AprsIsConnectionState {
-  disconnected,
-  connecting,
-  loggingIn,
-  connected,
-}
+enum AprsIsConnectionState { disconnected, connecting, loggingIn, connected }
 
 /// Abstraction over the raw TCP transport so [AprsIsClient] can be unit tested
 /// against a fake network. The real implementation lives in
@@ -113,12 +108,17 @@ class AprsIsClient {
     _state = AprsIsConnectionState.connecting;
     await network.connect(host, port);
     _state = AprsIsConnectionState.loggingIn;
-    _sub = network.incoming.listen(_onData, onError: (Object e) {
-      onDiagnostic?.call('[APRS-IS] Stream error: $e');
-    });
+    _sub = network.incoming.listen(
+      _onData,
+      onError: (Object e) {
+        onDiagnostic?.call('[APRS-IS] Stream error: $e');
+      },
+    );
     network.sendLine(buildLoginLine());
-    onDiagnostic?.call('[APRS-IS] Connected to $host:$port, logging in as '
-        '$callsign');
+    onDiagnostic?.call(
+      '[APRS-IS] Connected to $host:$port, logging in as '
+      '$callsign',
+    );
   }
 
   /// Sends a raw TNC2 packet line to APRS-IS. No-op on a receive-only login.
@@ -180,7 +180,9 @@ class AprsIsClient {
     if (lower.contains('logresp')) {
       _verified = lower.contains(' verified');
       _state = AprsIsConnectionState.connected;
-      onDiagnostic?.call('[APRS-IS] Login response: ${line.substring(1).trim()}');
+      onDiagnostic?.call(
+        '[APRS-IS] Login response: ${line.substring(1).trim()}',
+      );
       onLogin?.call(_verified);
     }
   }
@@ -214,8 +216,7 @@ class AprsIsClient {
     // Never gate a packet that already came from the internet.
     if (aprsPacket.fromAprsIs) return false;
     // Must be a UI frame with at least source + destination.
-    if (packet.type != FrameType.uFrameUi &&
-        packet.type != FrameType.uFrame) {
+    if (packet.type != FrameType.uFrameUi && packet.type != FrameType.uFrame) {
       return false;
     }
     if (packet.addresses.length < 2) return false;
@@ -280,6 +281,12 @@ class AprsIsClient {
     }
     final addressee = md.addressee.trim().toUpperCase();
     if (addressee.isEmpty) return false;
+    final source = aprsPacket.sourceCallsignWithId.toUpperCase();
+    final sourceBase = source.replaceFirst(RegExp(r'-\d+$'), '');
+    if (heardCallsigns.contains(source) ||
+        heardCallsigns.contains(sourceBase)) {
+      return false;
+    }
     return heardCallsigns.contains(addressee);
   }
 }

@@ -26,6 +26,7 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
+<section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
@@ -58,6 +59,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onerror=()=>socket.close();
 }
 function render(){
+ const g=state.gatewayMetrics||{};$('gatewayMetrics').textContent='排队 '+(g.queueDepth||0)+' · 过期 '+(g.queueExpired||0)+' · 队列溢出 '+(g.queueOverflow||0)+' · 重复 '+((g.queueDuplicates||0)+(g.duplicateDrops||0))+' · 限速丢弃 '+(g.rateDrops||0)+' · 写入错误 '+(g.sendErrors||0);
  renderMessages();
  const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
  $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
