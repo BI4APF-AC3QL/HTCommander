@@ -438,12 +438,12 @@ class WebServer {
   }
 
   Future<void> _handleHttpRequest(HttpRequest request) async {
-    if (request.uri.path.startsWith('/remote-tiles/')) {
-      await _handleTile(request);
-      return;
-    }
     final response = request.response;
     try {
+      if (request.uri.path.startsWith('/remote-tiles/')) {
+        await _handleTile(request);
+        return;
+      }
       if (remoteConfig.enabled &&
           const [
             '/remote.webmanifest',
