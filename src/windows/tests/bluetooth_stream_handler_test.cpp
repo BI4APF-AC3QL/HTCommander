@@ -46,6 +46,15 @@ void Pump() {
     ::DispatchMessageW(&msg);
   }
 }
+template <typename Predicate>
+void PumpUntil(Predicate ready) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!ready() && std::chrono::steady_clock::now() < deadline) {
+    Pump();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Check(ready());
+}
 std::shared_ptr<BtStreamHandler> Listen(Capture& capture) {
   auto handler = std::make_shared<BtStreamHandler>();
   handler->OnListen(nullptr, std::make_unique<TestSink>(capture));
@@ -84,10 +93,10 @@ int main() {
   // A stalled UI recovers: every accepted byte reaches the sink exactly once.
   while (!done.load()) { Pump(); std::this_thread::yield(); }
   worker.join();
-  Pump();
+  PumpUntil([&capture]() { return capture.bytes == 17 * 32768; });
   Check(capture.connected == 1 && capture.bytes == 17 * 32768);
   Check(handler->Send("disconnected", "a", nullptr));
-  Pump();
+  PumpUntil([&capture]() { return capture.disconnected == 1; });
   Check(capture.disconnected == 1);
   handler->Shutdown();
 
@@ -102,12 +111,12 @@ int main() {
   });
   // No pumping until the worker reaches its one-second pressure deadline.
   worker.join();
-  Pump();
+  PumpUntil([&overloaded]() { return overloaded.disconnected == 1; });
   Check(overloaded.bytes == 0 && overloaded.disconnected == 1 &&
         overloaded.reason == "receive_queue_overflow");
   Check(handler->Send("connected", "a", nullptr));
   Check(handler->Send("data", "a", &chunk, &running));
-  Pump();
+  PumpUntil([&overloaded]() { return overloaded.bytes == 32768; });
   Check(overloaded.bytes == 32768); // Reconnect uses a fresh parser stream.
   handler->Shutdown();
 

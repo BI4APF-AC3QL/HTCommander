@@ -335,12 +335,14 @@ class BtStreamHandler
     sink_ = nullptr;
     pending_events_.Clear();
     space_ready_.notify_all();
+    if (message_hwnd_) ::KillTimer(message_hwnd_, kDrainTimer);
     drain_posted_ = false;
     return nullptr;
   }
 
  private:
   static constexpr UINT kDrainMessage = WM_USER + 0x42;
+  static constexpr UINT_PTR kDrainTimer = 1;
 
   std::mutex mutex_;
   std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> sink_;
@@ -350,8 +352,15 @@ class BtStreamHandler
   bool drain_posted_ = false;
   HWND message_hwnd_ = nullptr;
 
-  void ScheduleDrainLocked() {
+  void ScheduleDrainLocked(bool yield_to_input = false) {
     if (!sink_ || !message_hwnd_ || drain_posted_ || pending_events_.empty()) return;
+    // Posted messages outrank keyboard/mouse input in the Windows loop. A
+    // continuously reposted drain could starve input even with a small batch.
+    // Use a low-priority timer for successive batches so input/paint can run.
+    if (yield_to_input) {
+      drain_posted_ = ::SetTimer(message_hwnd_, kDrainTimer, 10, nullptr) != 0;
+      if (drain_posted_) return;
+    }
     drain_posted_ = ::PostMessageW(message_hwnd_, kDrainMessage, 0, 0) != 0;
   }
 
@@ -366,7 +375,7 @@ class BtStreamHandler
       // per platform turn, rather than up to one MiB in a single message.
       events = pending_events_.Drain();
       space_ready_.notify_all();
-      ScheduleDrainLocked();
+      ScheduleDrainLocked(true);
     }
     for (const auto& event : events) {
       if (!sink_) break;
@@ -414,7 +423,8 @@ class BtStreamHandler
                           reinterpret_cast<LONG_PTR>(create->lpCreateParams));
       return ::DefWindowProcW(hwnd, msg, wparam, lparam);
     }
-    if (msg == kDrainMessage) {
+    if (msg == kDrainMessage || (msg == WM_TIMER && wparam == kDrainTimer)) {
+      if (msg == WM_TIMER) ::KillTimer(hwnd, kDrainTimer);
       auto* self = reinterpret_cast<BtStreamHandler*>(
           ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
       if (self) {
