@@ -32,6 +32,7 @@ import '../widgets/contact_avatar.dart';
 import 'app_settings.dart';
 import 'remote_access_dialog.dart';
 import 'aprs_route_dialog.dart';
+import 'gateway_policy_dialog.dart';
 import 'contact_logo_picker_dialog.dart';
 import 'echolink_create_account_dialog.dart';
 import 'image_crop_dialog.dart';
@@ -2023,6 +2024,14 @@ class _SettingsDialogState extends State<SettingsDialog>
           ),
           const SizedBox(height: 4),
           Text(l10n.settingsAprsIsGateToRfHelp, style: _secondaryStyle()),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.rule),
+            label: Text(Localizations.localeOf(context).languageCode == 'zh'
+                ? 'APRS 网关转发规则' : 'APRS gateway forwarding rules'),
+            onPressed: () => showDialog<void>(context: context,
+              builder: (_) => const GatewayPolicyDialog()),
+          ),
           const SizedBox(height: 16),
           // Cloud push notifications via aprs.meshcentral.com. Available on
           // Android through FCM and iOS through APNs.

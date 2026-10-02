@@ -64,6 +64,11 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
   assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
+  state.gatewayMetrics={queueDepth:2,connectionFailures:3,disconnects:1,reconnectAttempts:4,failureReason:'loginTimeout',toInternet:true,toRf:false,rfForwarded:5};
+  state.gatewayHealth=[{hour:'2026-10-02T00:00:00Z',receivedRf:6,receivedIs:7,toInternet:8,toRfRequested:2,dropped:3,failures:1}];update();
+  assert.ok(element('gatewayLink').textContent.includes('APRS-IS 登录超时'));
+  assert.ok(element('gatewayRf').textContent.includes('下行提交 5'));
+  assert.ok(element('gatewayHealth').children[0].textContent.includes('RF 收到 6'));
   state.auditEvents=[{time:'2026-10-02T12:00:00Z',clientId:1,action:'aprsMessage',result:'accepted',text:'private-message'}];update();
   assert.ok(element('auditEvents').children[0].textContent.includes('客户端 #1'));
   assert.ok(element('auditEvents').children[0].textContent.includes('请求接受'));

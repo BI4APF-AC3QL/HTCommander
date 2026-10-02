@@ -176,6 +176,7 @@ class RemoteRadioController {
         null,
       ),
       'gatewayMetrics': DataBroker.getValueDynamic(201, 'GateMetrics', {}),
+      'gatewayHealth': DataBroker.getValueDynamic(201, 'GateHealth', []),
       'aprsMessages': DataBroker.getValueDynamic(1, 'RemoteAprsMessages', []),
       'aprsDeliveries': DataBroker.getValueDynamic(
         1,

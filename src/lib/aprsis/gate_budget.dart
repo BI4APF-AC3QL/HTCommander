@@ -1,5 +1,5 @@
-/// Bounded duplicate and rate protection for an RF -> IS forwarding session.
-/// No disconnected traffic is retained or replayed.
+/// Bounded duplicate and rate protection for either forwarding direction.
+/// Path changes do not bypass duplicate detection; payload/sequence does.
 class GateBudget {
   GateBudget({
     DateTime Function()? clock,
@@ -9,11 +9,19 @@ class GateBudget {
   }) : _clock = clock ?? DateTime.now;
   final DateTime Function() _clock;
   final int capacity;
-  final int limitPerMinute;
+  int limitPerMinute;
   final Duration duplicateWindow;
   final Map<String, DateTime> _seen = {};
   final List<DateTime> _accepted = [];
   int forwarded = 0, duplicates = 0, limited = 0, invalid = 0;
+  static String duplicateKey(String line) {
+    final colon = line.indexOf(':');
+    if (colon < 0) return line;
+    final header = line.substring(0, colon);
+    final comma = header.indexOf(',');
+    return '${comma < 0 ? header : header.substring(0, comma)}${line.substring(colon)}';
+  }
+
   bool accept(String line) {
     if (line.isEmpty ||
         line.length > 512 ||
@@ -27,7 +35,8 @@ class GateBudget {
     _accepted.removeWhere(
       (t) => now.difference(t) >= const Duration(minutes: 1),
     );
-    if (_seen.containsKey(line)) {
+    final key = duplicateKey(line);
+    if (_seen.containsKey(key)) {
       duplicates++;
       return false;
     }
@@ -36,7 +45,7 @@ class GateBudget {
       return false;
     }
     if (_seen.length >= capacity) _seen.remove(_seen.keys.first);
-    _seen[line] = now;
+    _seen[key] = now;
     _accepted.add(now);
     forwarded++;
     return true;

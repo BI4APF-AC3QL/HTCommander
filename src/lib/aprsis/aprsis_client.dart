@@ -89,6 +89,7 @@ class AprsIsClient {
   bool get canTransmit => passcode.trim() != '-1' && passcode.trim().isNotEmpty;
 
   StreamSubscription<String>? _sub;
+  bool _closed = false;
   final StringBuffer _lineBuffer = StringBuffer();
   static const int maxIncomingLineLength = 512;
   bool _discardingLine = false;
@@ -109,8 +110,13 @@ class AprsIsClient {
 
   /// Connects, sends the login line, and begins processing inbound lines.
   Future<void> open(String host, int port) async {
+    if (_closed) return;
     _state = AprsIsConnectionState.connecting;
     await network.connect(host, port);
+    if (_closed) {
+      await network.close();
+      return;
+    }
     _state = AprsIsConnectionState.loggingIn;
     _sub = network.incoming.listen(
       _onData,
@@ -141,6 +147,9 @@ class AprsIsClient {
   }
 
   Future<void> close() async {
+    _closed = true;
+    _verified = false;
+    _state = AprsIsConnectionState.disconnected;
     await _sub?.cancel();
     _sub = null;
     _lineBuffer.clear();
@@ -257,6 +266,7 @@ class AprsIsClient {
     // Reject if any address in the path carries a no-gate marker.
     for (final addr in packet.addresses) {
       final call = addr.address.toUpperCase();
+      if (RegExp(r'^QA[A-Z]$').hasMatch(call)) return false;
       for (final marker in _noGateMarkers) {
         if (call == marker) return false;
       }
@@ -297,6 +307,20 @@ class AprsIsClient {
     AprsPacket aprsPacket,
     Set<String> heardCallsigns,
   ) {
+    final packet = aprsPacket.packet;
+    if (packet == null || packet.dataStr?.startsWith('}') != false) {
+      return false;
+    }
+    for (final hop in packet.addresses.skip(2)) {
+      if (const [
+        'TCPXX',
+        'NOGATE',
+        'RFONLY',
+        'QAX',
+      ].contains(hop.address.toUpperCase())) {
+        return false;
+      }
+    }
     if (aprsPacket.dataType != PacketDataType.message) return false;
     final md = aprsPacket.messageData;
     if (md.msgType == MessageType.mtAck || md.msgType == MessageType.mtRej) {

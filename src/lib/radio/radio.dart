@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../services/data_broker_client.dart';
+import '../services/data_broker.dart';
 import '../gps/gps_data.dart';
 import 'radio_models.dart';
 import 'radio_transport.dart';
@@ -374,6 +375,13 @@ class Radio implements FirmwareRadio {
         if (tag is String && tag.startsWith('remote-aprs:')) {
           deleteTransmitByTag(tag);
         }
+      },
+    );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelGatewayFrames',
+      callback: (_, _, tag) {
+        if (tag == 'aprs-is-gate') deleteTransmitByTag('aprs-is-gate');
       },
     );
 
@@ -2234,6 +2242,9 @@ class Radio implements FirmwareRadio {
     );
 
     final String softwareMode = _activeSoftwareModemModeFor(fragment);
+    fragment.transmitTag = tag;
+    fragment.transmitDeadline = deadline;
+    if (deadline != null && !deadline.isAfter(_queueClock())) return 0;
 
     if (_loopbackMode) {
       _transmitLoopback(

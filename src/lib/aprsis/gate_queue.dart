@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'gate_budget.dart';
 
 /// Short-lived RF-to-internet backlog; never used to replay RF transmissions.
 class GateQueue {
@@ -29,7 +30,9 @@ class GateQueue {
       invalid++;
       return false;
     }
-    if (_queue.any((e) => e.$1 == line)) {
+    if (_queue.any(
+      (e) => GateBudget.duplicateKey(e.$1) == GateBudget.duplicateKey(line),
+    )) {
       duplicates++;
       return false;
     }
@@ -46,7 +49,12 @@ class GateQueue {
     return _queue.isEmpty ? null : _queue.removeFirst().$1;
   }
 
-  void clear() => _queue.clear();
+  int clear() {
+    final count = _queue.length;
+    _queue.clear();
+    return count;
+  }
+
   Map<String, int> get metrics => {
     'queueDepth': _queue.length,
     'queueExpired': expired,

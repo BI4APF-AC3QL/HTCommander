@@ -296,4 +296,25 @@ void main() {
       await current.dispose();
     },
   );
+  testWidgets('gateway cancellation removes only tagged hardware packets', (
+    tester,
+  ) async {
+    final radio = _radio(busy: true);
+    final transport = _Transport();
+    await radio.connect(transport);
+    radio.transmitTncData(Uint8List(20), '', channelId: 1, tag: 'aprs-is-gate');
+    radio.transmitTncData(Uint8List(20), '', channelId: 1, tag: 'local');
+    expect(radio.transmitQueueLength, 2);
+    DataBroker.dispatch(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelGatewayFrames',
+      data: 'aprs-is-gate',
+      store: false,
+    );
+    await tester.pump(const Duration(seconds: 1));
+    expect(radio.transmitQueueLength, 1);
+    expect(transport.tncWrites, 0);
+    radio.dispose();
+    await transport.dispose();
+  });
 }

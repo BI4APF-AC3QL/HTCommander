@@ -53,12 +53,28 @@ import 'aprsis_network_io.dart';
 import 'tnc2_codec.dart';
 import 'gate_budget.dart';
 import 'gate_queue.dart';
+import 'gateway_policy.dart';
+import 'gate_health.dart';
 
 /// Owns the [AprsIsClient] and bridges it to the app's Data Broker. Registered
 /// as a Data Broker handler in `main()` on platforms with a dart:io socket
 /// stack (desktop / mobile).
 class AprsIsManager {
-  AprsIsManager();
+  AprsIsManager({
+    AprsIsNetwork Function()? networkFactory,
+    DateTime Function()? clock,
+    double Function()? retryRandom,
+  }) : _networkFactory = networkFactory ?? DartIoAprsIsNetwork.new,
+       _clock = clock ?? DateTime.now,
+       _retryRandom = retryRandom ?? math.Random().nextDouble {
+    _upQueue = GateQueue(clock: _clock);
+    _upGateBudget = GateBudget(clock: _clock);
+    _downBudget = GateBudget(clock: _clock, limitPerMinute: 6);
+    _health = GateHealth(clock: _clock);
+  }
+  final AprsIsNetwork Function() _networkFactory;
+  final DateTime Function() _clock;
+  final double Function() _retryRandom;
 
   /// Software name/version reported in the APRS-IS login line.
   static const String _softwareName = 'HTCommander';
@@ -84,6 +100,8 @@ class AprsIsManager {
   bool _initialized = false;
   bool _opened = false;
   bool _reconciling = false;
+  bool _reconcileAgain = false;
+  bool _disposed = false;
 
   /// The connection parameters (callsign, server, port) of the currently open
   /// session. Used to avoid tearing down and re-establishing an identical
@@ -97,21 +115,44 @@ class AprsIsManager {
   int _generation = 0;
 
   Timer? _retryTimer;
+  Timer? _loginTimer;
   Duration _retryDelay = _minRetry;
+  int _connectionFailures = 0, _disconnects = 0, _reconnectAttempts = 0;
+  DateTime? _nextRetryAt;
+  String _failureReason = '';
 
   /// Application version, read once at init for the login line.
   String _appVersion = '';
 
   /// Callsigns heard on RF recently, mapped to the last time they were heard.
   final Map<String, DateTime> _heardStations = {};
-  final GateBudget _upGateBudget = GateBudget();
-  final GateQueue _upQueue = GateQueue(clock: DateTime.now);
+  late final GateBudget _upGateBudget;
+  late final GateQueue _upQueue;
   Timer? _gateTimer;
   int _gateSendErrors = 0;
+  int _upForwarded = 0;
+  late final GateBudget _downBudget;
+  int _downForwarded = 0, _downUnavailable = 0, _policyDrops = 0;
+  static const gateFrameTag = 'aprs-is-gate';
+  late final GateHealth _health;
+  void _clearUpQueue() => _health.record('dropped', _upQueue.clear());
+
+  void _cancelGateFrames() {
+    // Cancels only gateway-tagged queued frames, never other local traffic.
+    _broker.dispatch(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelGatewayFrames',
+      data: gateFrameTag,
+      store: false,
+    );
+  }
 
   void _drainUpQueue() {
+    if (_disposed) return;
+    final beforeExpired = _upQueue.expired;
     _upQueue.prune();
-    if (!_readEnabled()) _upQueue.clear();
+    _health.record('dropped', _upQueue.expired - beforeExpired);
+    if (!_readEnabled() || !GatewayPolicy.current.toInternet) _clearUpQueue();
     final client = _client;
     if (client != null &&
         client.state == AprsIsConnectionState.connected &&
@@ -121,9 +162,16 @@ class AprsIsManager {
       if (line != null && _upGateBudget.accept(line)) {
         try {
           client.sendPacketLine(line);
+          _upForwarded++;
+          _health.record('toInternet');
         } catch (_) {
           _gateSendErrors++;
+          _health.record('failures');
+          _health.record('dropped');
+          unawaited(_onSessionClosed(_generation));
         }
+      } else if (line != null) {
+        _health.record('dropped');
       }
     }
     _broker.dispatch(
@@ -132,8 +180,28 @@ class AprsIsManager {
       data: {
         ..._upGateBudget.metrics,
         ..._upQueue.metrics,
+        'forwarded': _upForwarded,
         'sendErrors': _gateSendErrors,
+        'connectionFailures': _connectionFailures,
+        'disconnects': _disconnects,
+        'reconnectAttempts': _reconnectAttempts,
+        'nextRetryAt': _nextRetryAt?.toUtc().toIso8601String(),
+        'failureReason': _failureReason,
+        'rfForwarded': _downForwarded,
+        'rfDuplicateDrops': _downBudget.duplicates,
+        'rfRateDrops': _downBudget.limited,
+        'rfUnavailableDrops': _downUnavailable,
+        'policyDrops': _policyDrops,
+        'toInternet': GatewayPolicy.current.toInternet,
+        'toRf': _readGateToRf(),
+        'rfPath': GatewayPolicy.current.rfPath,
+        'rfPerMinute': GatewayPolicy.current.rfPerMinute,
       },
+    );
+    _broker.dispatch(
+      deviceId: aprsIsDeviceId,
+      name: 'GateHealth',
+      data: _health.snapshot,
     );
   }
 
@@ -152,7 +220,7 @@ class AprsIsManager {
 
   /// Subscribes to settings + RF frames and opens the client when enabled.
   void init() {
-    if (_initialized) return;
+    if (_initialized || _disposed) return;
     _initialized = true;
     _gateTimer = Timer.periodic(
       const Duration(seconds: 1),
@@ -165,6 +233,20 @@ class AprsIsManager {
     _broker.subscribeMultiple(
       deviceId: 0,
       names: const [
+        'AprsIsGateToInternet',
+        'AprsIsRfPath',
+        'AprsIsRfPerMinute',
+        'AllowTransmit',
+        'AprsIsGateToRf',
+      ],
+      callback: (_, name, _) {
+        if (name == 'AprsIsGateToInternet') _clearUpQueue();
+        _cancelGateFrames();
+      },
+    );
+    _broker.subscribeMultiple(
+      deviceId: 0,
+      names: const [
         'CallSign',
         'StationId',
         'AprsIsEnabled',
@@ -173,7 +255,17 @@ class AprsIsManager {
         'AprsIsGateToRf',
       ],
       callback: (_, name, _) {
-        if (name != 'AprsIsGateToRf') _upQueue.clear();
+        if (name != 'AprsIsGateToRf') _clearUpQueue();
+        if (name != 'AprsIsGateToRf') _cancelGateFrames();
+        // Invalidate synchronously, including a TCP connect still in flight.
+        // Reconciliation will then apply the most recent settings.
+        if (_client != null &&
+            (!_readEnabled() ||
+                _readCallsignWithId() != _connectedCallsign ||
+                _readServer() != _connectedServer ||
+                _readPort() != _connectedPort)) {
+          unawaited(_closeClient());
+        }
         unawaited(_reconcile());
       },
     );
@@ -565,8 +657,9 @@ class AprsIsManager {
     final callsign = (_broker.getValue<String>(0, 'CallSign', '') ?? '')
         .trim()
         .toUpperCase();
-    if (callsign.isEmpty) return '';
+    if (!RegExp(r'^[A-Z0-9]{1,6}$').hasMatch(callsign)) return '';
     final stationId = _broker.getValue<int>(0, 'StationId', 0) ?? 0;
+    if (stationId < 0 || stationId > 15) return '';
     return stationId > 0 ? '$callsign-$stationId' : callsign;
   }
 
@@ -596,50 +689,63 @@ class AprsIsManager {
   /// when the feature is turned on and a callsign is configured; otherwise any
   /// live client is closed.
   Future<void> _reconcile() async {
+    if (_disposed) return;
+    _reconcileAgain = true;
     if (_reconciling) return;
     _reconciling = true;
     try {
-      final callsign = _readCallsignWithId();
-      final shouldEnable = _readEnabled() && callsign.isNotEmpty;
-
-      if (!shouldEnable) {
-        if (_client != null || _opened) {
-          await _closeClient();
-          _broker.logInfo('[APRS-IS] Disabled');
-        }
-        _publishAvailable(false);
-        return;
+      while (_reconcileAgain && !_disposed) {
+        _reconcileAgain = false;
+        await _reconcileOnce();
       }
-
-      // Already connected with the same connection parameters: nothing to do.
-      // This avoids resetting a healthy connection when settings are
-      // re-dispatched without any change that affects it (e.g. pressing OK in
-      // the settings dialog). The range filter is applied live elsewhere and
-      // gating settings are read on demand, so neither requires a reconnect.
-      final server = _readServer();
-      final port = _readPort();
-      if (_opened &&
-          callsign == _connectedCallsign &&
-          server == _connectedServer &&
-          port == _connectedPort) {
-        _publishAvailable(true);
-        return;
-      }
-
-      // Connection parameters changed while enabled -> reconnect so the new
-      // server/port/callsign take effect.
-      if (_opened) {
-        await _closeClient();
-      }
-
-      await _openClient(callsign);
     } finally {
       _reconciling = false;
     }
   }
 
+  Future<void> _reconcileOnce() async {
+    final callsign = _readCallsignWithId();
+    final shouldEnable = _readEnabled() && callsign.isNotEmpty;
+
+    if (!shouldEnable) {
+      _retryTimer?.cancel();
+      _nextRetryAt = null;
+      if (_client != null || _opened) {
+        await _closeClient();
+        _broker.logInfo('[APRS-IS] Disabled');
+      }
+      _publishAvailable(false);
+      return;
+    }
+
+    // Already connected with the same connection parameters: nothing to do.
+    // This avoids resetting a healthy connection when settings are
+    // re-dispatched without any change that affects it (e.g. pressing OK in
+    // the settings dialog). The range filter is applied live elsewhere and
+    // gating settings are read on demand, so neither requires a reconnect.
+    final server = _readServer();
+    final port = _readPort();
+    if (_opened &&
+        callsign == _connectedCallsign &&
+        server == _connectedServer &&
+        port == _connectedPort) {
+      _publishAvailable(true);
+      return;
+    }
+
+    // Connection parameters changed while enabled -> reconnect so the new
+    // server/port/callsign take effect.
+    if (_opened) {
+      await _closeClient();
+    }
+
+    await _openClient(callsign);
+  }
+
   Future<void> _openClient(String callsign) async {
+    if (_disposed) return;
     _retryTimer?.cancel();
+    _nextRetryAt = null;
     final passcode = AprsUtil.aprsValidationCode(callsign);
     final gen = ++_generation;
 
@@ -650,10 +756,14 @@ class AprsIsManager {
             softwareName: _softwareName,
             softwareVersion: _appVersion.isEmpty ? '0' : _appVersion,
             filter: _readFilter(),
-            network: DartIoAprsIsNetwork(),
+            network: _networkFactory(),
           )
-          ..onPacketLine = _onServerPacketLine
-          ..onLogin = _onLogin
+          ..onPacketLine = (line) {
+            if (!_disposed && gen == _generation) _onServerPacketLine(line);
+          }
+          ..onLogin = (verified) {
+            if (!_disposed && gen == _generation) _onLogin(verified);
+          }
           ..onDiagnostic = _broker.logInfo;
 
     _client = client;
@@ -662,15 +772,57 @@ class AprsIsManager {
 
     final server = _readServer();
     final port = _readPort();
+    _connectedCallsign = callsign;
+    _connectedServer = server;
+    _connectedPort = port;
+    var ended = false;
+    unawaited(
+      client.network.done.then(
+        (_) {
+          ended = true;
+          return _onSessionClosed(gen);
+        },
+        onError: (Object _, StackTrace _) {
+          ended = true;
+          return _onSessionClosed(gen);
+        },
+      ),
+    );
     try {
       await client.open(server, port);
+      if (_disposed || gen != _generation) {
+        await client.close();
+        return;
+      }
       _opened = true;
       _connectedCallsign = callsign;
       _connectedServer = server;
       _connectedPort = port;
       // Schedule a reconnect if this session drops while still enabled.
-      unawaited(client.network.done.then((_) => _onSessionClosed(gen)));
+      if (ended) {
+        await _onSessionClosed(gen);
+        return;
+      }
+      if (client.state != AprsIsConnectionState.connected) {
+        _loginTimer = Timer(const Duration(seconds: 20), () async {
+          if (_disposed || gen != _generation) return;
+          _connectionFailures++;
+          _health.record('failures');
+          _failureReason = 'loginTimeout';
+          final closing = _closeClient();
+          final closedGeneration = _generation;
+          await closing;
+          _scheduleReconnect(closedGeneration);
+        });
+      }
     } catch (e) {
+      try {
+        await client.close();
+      } catch (_) {}
+      if (_disposed || gen != _generation) return;
+      _connectionFailures++;
+      _health.record('failures');
+      _failureReason = 'connectFailed';
       _broker.logError('[APRS-IS] Connection to $server:$port failed: $e');
       _client = null;
       _opened = false;
@@ -683,7 +835,10 @@ class AprsIsManager {
   }
 
   Future<void> _closeClient() async {
+    _cancelGateFrames();
+    _loginTimer?.cancel();
     _retryTimer?.cancel();
+    _nextRetryAt = null;
     _generation++; // Invalidate any pending reconnect for the old session.
     final client = _client;
     _client = null;
@@ -692,6 +847,12 @@ class AprsIsManager {
     _connectedServer = null;
     _connectedPort = null;
     _publishState('Disconnected');
+    _broker.dispatch(
+      deviceId: aprsIsDeviceId,
+      name: 'AprsIsVerified',
+      data: false,
+      store: false,
+    );
     if (client != null) {
       try {
         await client.close();
@@ -701,27 +862,30 @@ class AprsIsManager {
     }
   }
 
-  void _onSessionClosed(int gen) {
+  Future<void> _onSessionClosed(int gen) async {
+    if (_disposed) return;
     if (gen != _generation) return; // Superseded by a newer session.
     if (!_opened) return;
     _broker.logInfo('[APRS-IS] Connection closed');
-    _opened = false;
-    _connectedCallsign = null;
-    _connectedServer = null;
-    _connectedPort = null;
-    _client = null;
-    _publishState('Disconnected');
-    _scheduleReconnect(gen);
+    _disconnects++;
+    _health.record('failures');
+    _failureReason = 'connectionClosed';
+    final closing = _closeClient();
+    final closedGeneration = _generation;
+    await closing;
+    // Settings may have changed while the old transport was closing.
+    if (!_disposed && _client == null) _scheduleReconnect(closedGeneration);
   }
 
   void _scheduleReconnect(int gen) {
+    if (_disposed || gen != _generation) return;
     if (!_readEnabled()) return;
     if (_readCallsignWithId().isEmpty) return;
     _retryTimer?.cancel();
     final delay = Duration(
       milliseconds:
           (_retryDelay.inMilliseconds *
-                  (0.8 + math.Random().nextDouble() * 0.4))
+                  (0.8 + _retryRandom().clamp(0.0, 1.0) * 0.4))
               .round(),
     );
     _retryDelay = Duration(
@@ -731,13 +895,17 @@ class AprsIsManager {
       ),
     );
     _broker.logInfo('[APRS-IS] Reconnecting in ${delay.inSeconds}s');
+    _nextRetryAt = _clock().add(delay);
     _retryTimer = Timer(delay, () {
-      if (gen != _generation) return;
+      if (_disposed || gen != _generation) return;
+      _reconnectAttempts++;
       unawaited(_reconcile());
     });
   }
 
   void _onLogin(bool verified) {
+    _loginTimer?.cancel();
+    _failureReason = '';
     _retryDelay = _minRetry; // Reset backoff on a successful login.
     _publishState(verified ? 'Connected (verified)' : 'Connected (read-only)');
     _broker.dispatch(
@@ -753,6 +921,7 @@ class AprsIsManager {
   // ---------------------------------------------------------------------------
 
   void _onServerPacketLine(String tnc2Line) {
+    _health.record('receivedIs');
     final ax25 = Tnc2Codec.decode(tnc2Line);
     if (ax25 == null) return;
     final aprs = AprsPacket.parse(ax25);
@@ -769,6 +938,7 @@ class AprsIsManager {
         messageData.msgType != MessageType.mtRej &&
         messageData.msgText.isNotEmpty &&
         _isLiveMessageDuplicate(aprs, ax25)) {
+      _maybeGateToRf(aprs);
       _maybeAckOverAprsIs(aprs, ax25);
       return;
     }
@@ -861,38 +1031,82 @@ class AprsIsManager {
   }
 
   void _maybeGateToRf(AprsPacket aprs) {
-    if (!_readGateToRf()) return;
+    if (!_readGateToRf() || !_readEnabled()) return;
+    final client = _client;
+    if (_broker.getValue<int>(0, 'AllowTransmit', 0) != 1 ||
+        client == null ||
+        !client.isVerified ||
+        client.state != AprsIsConnectionState.connected) {
+      _downUnavailable++;
+      _health.record('dropped');
+      return;
+    }
     _pruneHeard();
     if (!AprsIsClient.shouldGateToRf(aprs, _heardStations.keys.toSet())) {
+      _policyDrops++;
+      _health.record('dropped');
       return;
     }
     final packet = aprs.packet;
     if (packet == null || packet.addresses.length < 2) return;
 
     final radioDeviceId = _firstRadioWithAprsChannel();
-    if (radioDeviceId == null) return;
+    if (radioDeviceId == null) {
+      _downUnavailable++;
+      _health.record('dropped');
+      return;
+    }
     final aprsChannelId = _aprsChannelId(radioDeviceId);
     if (aprsChannelId < 0) return;
+    final status = _broker.getValueDynamic(radioDeviceId, 'HtStatus');
+    final lock = _broker.getValueDynamic(radioDeviceId, 'LockState');
+    if (status is! Map ||
+        status['isPowerOn'] != true ||
+        status['isInTx'] == true ||
+        status['isInRx'] == true ||
+        (lock is Map && lock['isLocked'] == true)) {
+      _downUnavailable++;
+      _health.record('dropped');
+      return;
+    }
 
-    // Transmit the message on RF with the original source callsign and a
-    // minimal WIDE1-1 path, per IGate convention.
-    final src = packet.addresses[1];
+    // Standard third-party encapsulation preserves the original message
+    // source while explicitly marking its internet origin, preventing RF->IS
+    // feedback. The outer AX.25 source is this IGate, not the remote station.
+    final local = _readCallsignWithId();
+    final src = AX25Address.parse(local);
     final dest = AX25Address.parse('APRS');
-    final wide = AX25Address.parse('WIDE1-1');
-    if (dest == null || wide == null) return;
+    if (dest == null || src == null) return;
+    final info = packet.dataStr;
+    if (info == null ||
+        info.length > 220 ||
+        info.contains('\r') ||
+        info.contains('\n')) {
+      return;
+    }
+    final key = '${packet.addresses[1]}>${packet.addresses[0]}:$info';
+    final policy = GatewayPolicy.current;
+    _downBudget.limitPerMinute = policy.rfPerMinute;
+    if (!_downBudget.accept(key)) {
+      _health.record('dropped');
+      return;
+    }
 
     final txPacket = AX25Packet(
-      addresses: [dest, src, wide],
-      dataStr: packet.dataStr,
+      addresses: [dest, src, ...policy.addresses],
+      dataStr:
+          '}${packet.addresses[1]}>${packet.addresses[0]},TCPIP,$local*:$info',
       type: FrameType.uFrameUi,
       command: true,
-      time: DateTime.now(),
+      time: _clock(),
     );
     txPacket.pid = 240;
     txPacket.incoming = false;
     txPacket.sent = false;
     txPacket.channelId = aprsChannelId;
     txPacket.channelName = 'APRS';
+    txPacket.tag = gateFrameTag;
+    txPacket.deadline = _clock().add(const Duration(seconds: 15));
 
     _broker.dispatch(
       deviceId: radioDeviceId,
@@ -904,6 +1118,8 @@ class AprsIsManager {
       ),
       store: false,
     );
+    _downForwarded++;
+    _health.record('toRfRequested');
     _broker.logInfo(
       '[APRS-IS] Gated message to RF for ${aprs.messageData.addressee}',
     );
@@ -918,16 +1134,27 @@ class AprsIsManager {
     final aprs = data.aprsPacket;
     // Ignore the internet packets we ourselves re-dispatched.
     if (aprs.fromAprsIs) return;
+    if (aprs.packet?.incoming == true) _health.record('receivedRf');
 
-    _recordHeard(aprs);
+    // Only genuinely received RF UI frames may qualify a station for RF
+    // delivery. Locally sent and third-party internet echoes never do.
+    final genuine = AprsIsClient.shouldGateToInternet(aprs);
+    if (aprs.packet?.incoming == true && genuine) _recordHeard(aprs);
 
-    if (!_readEnabled() || !AprsIsClient.shouldGateToInternet(aprs)) return;
+    if (!_readEnabled() || !GatewayPolicy.current.toInternet) return;
+    if (!genuine || aprs.packet?.incoming != true) {
+      _policyDrops++;
+      _health.record('dropped');
+      return;
+    }
 
     final igateCall = _readCallsignWithId();
     if (igateCall.isEmpty) return;
     final line = AprsIsClient.buildGateUpLine(aprs, igateCall);
     if (line == null) return;
-    _upQueue.add(line);
+    final expiredBefore = _upQueue.expired;
+    if (!_upQueue.add(line)) _health.record('dropped');
+    _health.record('dropped', _upQueue.expired - expiredBefore);
   }
 
   void _recordHeard(AprsPacket aprs) {
@@ -939,15 +1166,15 @@ class AprsIsManager {
     while (_heardStations.length >= 2048) {
       _heardStations.remove(_heardStations.keys.first);
     }
-    _heardStations[call] = DateTime.now();
+    _heardStations[call] = _clock();
     // Also index by base callsign so a message to "CALL" (no SSID) matches a
     // station heard as "CALL-7".
     final base = packet.addresses[1].address.toUpperCase();
-    if (base.isNotEmpty) _heardStations[base] = DateTime.now();
+    if (base.isNotEmpty) _heardStations[base] = _clock();
   }
 
   void _pruneHeard() {
-    final cutoff = DateTime.now().subtract(_heardWindow);
+    final cutoff = _clock().subtract(_heardWindow);
     _heardStations.removeWhere((_, time) => time.isBefore(cutoff));
   }
 
@@ -1055,7 +1282,9 @@ class AprsIsManager {
     );
     if (channels == null) return -1;
     for (final channel in channels) {
-      if (channel.name == 'APRS') return channel.channelId;
+      if (channel.name == 'APRS' && !channel.txDisable) {
+        return channel.channelId;
+      }
     }
     return -1;
   }
@@ -1083,8 +1312,10 @@ class AprsIsManager {
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     _gateTimer?.cancel();
-    _upQueue.clear();
+    _clearUpQueue();
     _retryTimer?.cancel();
     await _closeClient();
     _broker.dispose();
