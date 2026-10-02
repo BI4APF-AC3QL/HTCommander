@@ -32,7 +32,7 @@ void main() {
         name: 'TransmitDataFrame',
         callback: (_, _, value) => frames.add(value as TransmitDataFrameData),
       );
-      final remote = RemoteRadioController(target: () => 2);
+      final remote = RemoteRadioController(target: () => 2)..grantControl(1);
       try {
         expect(
           remote.command(1, {

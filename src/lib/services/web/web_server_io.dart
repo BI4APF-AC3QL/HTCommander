@@ -164,7 +164,13 @@ class WebServer {
     if (!message.startsWith('remote:')) return false;
     try {
       final value = jsonDecode(message.substring(7));
-      return value is Map && const ['state', 'pttStop'].contains(value['op']);
+      return value is Map &&
+          const [
+            'state',
+            'pttStop',
+            'requestControl',
+            'releaseControl',
+          ].contains(value['op']);
     } catch (_) {
       return false;
     }
@@ -172,6 +178,7 @@ class WebServer {
 
   /// Raised when a text message is received from a WebSocket client.
   WebSocketTextCallback? onTextMessage;
+  WebSocketClientCallback? onWriteDenied;
 
   /// Raised when a binary message is received from a WebSocket client.
   WebSocketBinaryCallback? onBinaryMessage;
@@ -185,6 +192,7 @@ class WebServer {
 
   /// Number of currently connected WebSocket clients.
   int get clientCount => _clients.length;
+  WebSocketClient? clientById(int id) => _clients[id];
 
   /// Starts the web server. Returns `true` on success.
   Future<bool> start() async {
@@ -397,6 +405,7 @@ class WebServer {
                         1)) &&
             (message is! String || !readOnlyMessageAllowed(message))) {
           client.sendText('remote:{"error":"This client is read-only."}');
+          onWriteDenied?.call(client);
           return;
         }
         if (message is String) {

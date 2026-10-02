@@ -6,12 +6,96 @@ import '../../aprs/aprs_events.dart';
 import '../../aprs/remote_position.dart';
 import 'remote_access_config.dart';
 import '../../utils/map_source.dart';
+import 'control_lease.dart';
+import 'remote_audit.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
-  RemoteRadioController({required this.target, DateTime Function()? clock})
-    : _clock = clock ?? DateTime.now;
+  RemoteRadioController({
+    required this.target,
+    DateTime Function()? clock,
+    bool Function(int)? clientCanControl,
+    this.onControlChanged,
+  }) : _clock = clock ?? DateTime.now,
+       _clientCanControl = clientCanControl ?? ((_) => false),
+       _audit = RemoteAudit(clock: clock),
+       _control = ControlLease(clock: clock ?? DateTime.now);
   final int Function() target;
+  final bool Function(int) _clientCanControl;
+  final void Function()? onControlChanged;
+  final ControlLease _control;
+  final RemoteAudit _audit;
+  List<Map<String, Object>> get auditEvents => _audit.events;
+  void audit(
+    int clientId,
+    String action,
+    String result, {
+    int? affectedClient,
+    int? radioId,
+  }) {
+    if (!_audit.record(
+      clientId: clientId,
+      radioId: radioId ?? target(),
+      action: action,
+      result: result,
+      affectedClient: affectedClient,
+    )) {
+      return;
+    }
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'RemoteAudit',
+      data: auditEvents,
+      store: true,
+    );
+  }
+
+  int? get controlOwner => _control.owner;
+  List<int> get controlRequests {
+    if (_control.prune()) _publishControl();
+    return _control.requests;
+  }
+
+  /// Called only by the Windows host or a validated holder handoff.
+  void grantControl(int id, {int actor = 0}) {
+    if (id <= 0) throw ArgumentError.value(id);
+    if (_control.owner == id) return;
+    final previous = _control.owner;
+    release();
+    if (previous != null) _cancelAprs(previous);
+    _control.grant(id);
+    audit(actor, 'grantControl', 'accepted', affectedClient: id);
+    _publishControl();
+  }
+
+  void recallControl() {
+    final previous = _control.owner;
+    final hadRequests = _control.requests.isNotEmpty;
+    release();
+    if (previous != null) _cancelAprs(previous);
+    _control.recall();
+    if (previous != null || hadRequests) {
+      audit(0, 'recallControl', 'accepted', affectedClient: previous);
+    }
+    _publishControl();
+  }
+
+  void _cancelAprs(int id) => DataBroker.dispatch(
+    deviceId: 0,
+    name: 'CancelRemoteAprs',
+    data: id,
+    store: false,
+  );
+
+  void _publishControl() {
+    DataBroker.dispatch(
+      deviceId: 1,
+      name: 'RemoteControlOwner',
+      data: _control.owner ?? -1,
+    );
+    onControlChanged?.call();
+  }
+
   final DateTime Function() _clock;
   int? _owner;
   int _txRadio = -1;
@@ -48,6 +132,12 @@ class RemoteRadioController {
             .take(256)
             .toList();
     return {
+      'controlOwner': _control.owner,
+      'auditEvents': auditEvents.reversed.take(20).toList(),
+      'controlRequests': controlRequests,
+      'controlRequested': _control.requests.contains(clientId),
+      'controlApprovalRequired':
+          RemoteAccessConfig.current.requireControlApproval,
       'emergencyStopped':
           DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1,
       'mapStations': stations,
@@ -111,6 +201,19 @@ class RemoteRadioController {
           .toList();
 
   String? command(int clientId, Map message) {
+    final result = _command(clientId, message);
+    final op = message['op'];
+    if (op != 'state') {
+      audit(
+        clientId,
+        RemoteAudit.actions.contains(op) ? op as String : 'invalidCommand',
+        result == null ? 'accepted' : 'denied',
+      );
+    }
+    return result;
+  }
+
+  String? _command(int clientId, Map message) {
     final op = message['op'];
     if (op == 'state') {
       final bounds = message['mapBounds'];
@@ -134,8 +237,33 @@ class RemoteRadioController {
       if (_owner == clientId) release(cancel: false);
       return null;
     }
+    if (op == 'releaseControl') {
+      disconnected(clientId);
+      return null;
+    }
     if (DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
       return 'Remote control is stopped on the Windows host.';
+    }
+    if (op == 'requestControl') {
+      if (!_control.request(clientId)) return 'Control request queue is full.';
+      _publishControl();
+      return null;
+    }
+    if (_control.owner != clientId) {
+      return 'Request exclusive control before operating the radio.';
+    }
+    if (op == 'handoffControl') {
+      final next = message['clientId'];
+      if (RemoteAccessConfig.current.requireControlApproval) {
+        return 'The Windows host must approve control handoff.';
+      }
+      if (next is! int ||
+          !controlRequests.contains(next) ||
+          !_clientCanControl(next)) {
+        return 'Select a waiting client with control permission.';
+      }
+      grantControl(next, actor: clientId);
+      return null;
     }
     final id = target();
     if (id <= 0) return 'Connect the radio on the Windows host first.';
@@ -328,7 +456,7 @@ class RemoteRadioController {
   }
 
   bool microphone(int clientId, Uint8List frame) {
-    if (_owner != clientId) return false;
+    if (_owner != clientId || _control.owner != clientId) return false;
     final settings = DataBroker.getValueDynamic(_txRadio, 'Settings', null);
     final lock = DataBroker.getValueDynamic(_txRadio, 'LockState', null);
     if (!_txAllowed ||
@@ -376,10 +504,15 @@ class RemoteRadioController {
   void disconnected(int id) {
     _viewports.remove(id);
     if (_owner == id) release();
+    final previous = _control.owner;
+    _control.remove(id);
+    if (previous == id) _cancelAprs(id);
+    _publishControl();
   }
 
   void release({bool cancel = true}) {
     final id = _txRadio;
+    final clientId = _owner;
     _owner = null;
     DataBroker.dispatch(deviceId: 1, name: 'RemotePttOwner', data: -1);
     _txRadio = -1;
@@ -388,6 +521,9 @@ class RemoteRadioController {
     if (id > 0) {
       _dispatch(id, 'TransmitVoicePCM', {'hold': false});
       if (cancel) _dispatch(id, 'CancelVoiceTransmit', true);
+      if (clientId != null) {
+        audit(clientId, 'pttRelease', 'released', radioId: id);
+      }
     }
   }
 
@@ -413,7 +549,6 @@ class RemoteRadioController {
       RadioBasicCommand.getInScan,
       RadioBasicCommand.getHtStatus,
       RadioBasicCommand.getVolume,
-      RadioBasicCommand.setVolume,
       RadioBasicCommand.radioGetStatus,
       RadioBasicCommand.readAdvancedSettings,
       RadioBasicCommand.readBssSettings,

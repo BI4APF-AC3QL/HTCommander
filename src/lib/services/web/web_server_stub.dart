@@ -48,6 +48,7 @@ class WebServer {
   void setClientReadOnly(int id, bool readOnly) {}
   void revokeClient(int id) {}
   WebSocketTextCallback? onTextMessage;
+  WebSocketClientCallback? onWriteDenied;
   WebSocketBinaryCallback? onBinaryMessage;
 
   bool get isRunning => false;
@@ -55,6 +56,7 @@ class WebServer {
   int? get boundPort => null;
 
   int get clientCount => 0;
+  WebSocketClient? clientById(int id) => null;
 
   Future<bool> start() async => false;
 

@@ -29,11 +29,13 @@ const remoteMobilePage = r'''<!doctype html>
 <label for="playback">手机播放音量</label><input id="playback" type="range" min="0" max="1" value="0.8" step="0.05">
 <label for="audioBuffer">音频起始缓冲（毫秒）</label><input id="audioBuffer" type="range" min="80" max="300" value="120" step="20"><p class="muted">较小缓冲延迟低，较大缓冲适合网络抖动；积压超过半秒会清理旧音频。</p>
 </section>
+<section class="card"><h2>操作权</h2><p id="controlStatus" class="muted">查看和收听无需操作权。</p><div class="row"><button id="controlRequest">申请操作权</button><button id="controlRelease" disabled>释放操作权</button></div><div id="controlHandoff" class="row"></div><p class="muted">同一时间只允许一端操作。Windows 可随时收回；重连后重新申请。</p></section>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
 <section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
+<section class="card"><h2>近期操作审计</h2><div id="auditEvents"></div><p class="muted">最近 20 条，时间为 UTC；Windows 可复制本次运行最近 200 条脱敏 JSON。“请求接受”不表示已发射或对方收到；不记录密码、地址、消息正文、定位或音频。连续同类拒绝每秒合并一次。</p></section>
 <section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
 <section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p></section>
 <section class="card"><h2>一次性 APRS 位置发送</h2><div class="row"><button id="positionAcquire">获取手机位置</button><button id="positionRadio">预览电台位置</button></div><p id="positionPreview" class="muted">先选择位置来源。获取定位不会发送。</p><button id="positionSend" disabled>确认并发送此位置</button><p id="positionResult" class="muted"></p><p class="muted">位置发送需 Windows 单独授权及总允许发射。定位有效期 2 分钟，精度须在 100 米以内；电台未报告精度时显示未知。位置报文没有消息 ACK，提交不代表已发射或收到。</p></section>
@@ -135,25 +137,37 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onclose=async()=>{stopPtt();stopPlayback();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
  socket.onerror=()=>socket.close();
 }
+$('controlRequest').onclick=()=>send({op:'requestControl'});
+$('controlRelease').onclick=()=>{stopPtt();send({op:'releaseControl'});};
 function render(){
- positionPreview();$('positionSend').disabled=!positionReady()||!state.connected||!state.positionAllowed||state.readOnly||state.emergencyStopped||state.txOwner!=null;
+ const control=state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped;
+ $('controlRequest').disabled=!socket||socket.readyState!==WebSocket.OPEN||state.emergencyStopped||control||state.controlRequested;
+ $('controlRelease').disabled=!control&&!state.controlRequested;
+ const queue=state.controlRequests||[],place=queue.indexOf(clientId)+1;
+ $('controlStatus').textContent=state.emergencyStopped?'Windows 已停止远程控制。':control?'你持有操作权。':state.controlRequested?'申请已排队（第 '+place+' 位）'+(state.controlApprovalRequired||state.readOnly?'，等待 Windows 批准。':'，可由当前操作者移交。'):state.controlOwner!=null?'客户端 #'+state.controlOwner+' 正在操作；你可以查看、收听或申请排队。':'操作权空闲，点击申请。';
+ $('controlHandoff').replaceChildren(...(control&&!state.controlApprovalRequired?queue:[]).filter(id=>id!==clientId).map(id=>{const button=document.createElement('button');button.textContent='移交给 #'+id;button.onclick=()=>{if(window.confirm('移交操作权并停止当前发射/待发 APRS？')){stopPtt();send({op:'handoffControl',clientId:id});}};return button;}));
+ if(pressed&&!control)stopPtt();
+ positionPreview();$('positionSend').disabled=!positionReady()||!state.connected||!state.positionAllowed||!control||state.txOwner!=null;
  const ps=state.positionStatus;if(ps&&ps.clientId===clientId)$('positionResult').textContent=ps.status==='submitted'?'电脑已提交位置报文，尚无射频发送或接收确认。':'电脑拒绝位置发送，请检查权限、定位时间与电台状态。';
  updateMapState();
  const g=state.gatewayMetrics||{};$('gatewayMetrics').textContent='排队 '+(g.queueDepth||0)+' · 过期 '+(g.queueExpired||0)+' · 队列溢出 '+(g.queueOverflow||0)+' · 重复 '+((g.queueDuplicates||0)+(g.duplicateDrops||0))+' · 限速丢弃 '+(g.rateDrops||0)+' · 写入错误 '+(g.sendErrors||0);
+ const auditLabels={requestControl:'申请操作权',releaseControl:'释放操作权',handoffControl:'移交操作权',grantControl:'授予操作权',recallControl:'主机收回',disconnect:'断开连接',revokeLogin:'撤销登录',readOnlyRole:'设置只读角色',channel:'换信道',volume:'调电台音量',scan:'扫描',aprsMessage:'APRS 消息请求',aprsPosition:'位置发送请求',pttStart:'PTT 请求',pttStop:'停止 PTT 请求',pttRelease:'释放 PTT',invalidCommand:'未知命令',rawWrite:'原始写入',writeDenied:'权限边界拒绝'};
+ const auditResults={accepted:'请求接受',denied:'拒绝',released:'释放'};
+ $('auditEvents').replaceChildren(...(state.auditEvents||[]).slice(0,20).map(e=>{const row=document.createElement('p');row.textContent=e.time+' · '+(e.clientId===0?'Windows':'客户端 #'+e.clientId)+' · '+(auditLabels[e.action]||'操作')+' · '+(auditResults[e.result]||'未知结果')+(e.affectedClient!=null?' · 目标 #'+e.affectedClient:'');return row;}));
  renderMessages();
  const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
  $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
- $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null||state.readOnly||state.emergencyStopped;
+ $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null||!control;
  const connected=state.connected===true;const s=state.settings||{};channels=state.channels||[];
  const sig=JSON.stringify(channels);if(sig!==listSignature){listSignature=sig;$('channel').replaceChildren(...channels.map(c=>{const o=document.createElement('option');o.value=c.channelId;o.textContent=(c.channelId+1)+' · '+(c.name||'未命名')+' · '+((c.rxFreq||0)/1e6).toFixed(5);return o;}));}
- selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null||state.readOnly||state.emergencyStopped;
+ selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null||!control;
  const c=channels.find(c=>c.channelId===selected);$('frequency').textContent=c?((c.rxFreq||0)/1e6).toFixed(5)+' MHz':'— MHz';
  $('status').textContent=!connected?'请先在 Windows 连接电台':(state.audio?'音频通道已连接':'电脑尚未启用电台音频')+(s.scan?' · 扫描中':'');
- $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null||state.readOnly||state.emergencyStopped;
- $('volume').disabled=!connected||state.txOwner!=null||state.readOnly||state.emergencyStopped;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
- const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext&&!state.readOnly&&!state.emergencyStopped;
+ $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null||!control;
+ $('volume').disabled=!connected||state.txOwner!=null||!control;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
+ const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext&&control;
  $('ptt').disabled=!ready||(state.txOwner!=null&&!own);
- $('txHint').textContent=state.emergencyStopped?'Windows 已紧急停止远程控制。':state.readOnly?'此客户端为只读；由 Windows 主机授予控制权。':!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
+ $('txHint').textContent=state.emergencyStopped?'Windows 已紧急停止远程控制。':!control?'请先申请操作权；Windows 可批准或收回。':!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
  if(pressed&&own){transmitting=true;$('ptt').classList.add('active');$('ptt').textContent='正在发射 · 松手停止';}else if(transmitting&&!own){stopPtt();notice('发射已停止。');}
 }
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}

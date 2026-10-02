@@ -77,6 +77,9 @@ class DataBroker {
     'AllStarNodePassword',
     'webServerPassword',
   };
+  // Connection-scoped telemetry is cached for dialogs but is never a saved
+  // setting. Avoid disk writes on requests/polls and stale clients on restart.
+  static const Set<String> _runtimeKeys = {'RemoteClients', 'RemoteAudit'};
   final Map<String, Future<void>> _secretWrites = {};
 
   /// Singleton instance
@@ -422,6 +425,7 @@ class DataBroker {
       // standalone window) owns persistence; clients rely on the host, and a
       // hosted web client proxies device 0 to the desktop host.
       if (deviceId == 0 &&
+          !_runtimeKeys.contains(name) &&
           _role != DataBrokerRole.client &&
           (!_device0RemoteMode || HostBridge.isLocalOnlySetting(name))) {
         if (_secretKeys.contains(name) && SecretStore.isSupported) {
@@ -535,6 +539,7 @@ class DataBroker {
 
   /// Loads a value from SharedPreferences.
   T? _loadPersistedValue<T>(String name, T? defaultValue) {
+    if (_runtimeKeys.contains(name)) return defaultValue;
     if (_prefs == null) return defaultValue;
 
     final prefKey = 'databroker_$name';
@@ -590,6 +595,7 @@ class DataBroker {
   /// Used by [getValueDynamic]. Returns the raw stored primitive, or a decoded
   /// object/collection for values serialized with the `~~JSON:` marker.
   Object? _loadPersistedValueDynamic(String name) {
+    if (_runtimeKeys.contains(name)) return null;
     if (_prefs == null) return null;
 
     final prefKey = 'databroker_$name';

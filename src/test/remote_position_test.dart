@@ -93,7 +93,8 @@ void main() {
         name: 'TransmitDataFrame',
         callback: (_, _, data) => frames.add(data as TransmitDataFrameData),
       );
-      final controls = RemoteRadioController(target: () => 2, clock: () => now);
+      final controls = RemoteRadioController(target: () => 2, clock: () => now)
+        ..grantControl(1);
       final position = {
         'latitude': 31.2,
         'longitude': 121.5,
@@ -183,7 +184,8 @@ void main() {
           'locked': true,
         },
       );
-      final controls = RemoteRadioController(target: () => 2, clock: () => now);
+      final controls = RemoteRadioController(target: () => 2, clock: () => now)
+        ..grantControl(1);
       expect(
         controls.command(1, {
           'op': 'aprsPosition',

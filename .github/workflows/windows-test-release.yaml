@@ -86,6 +86,7 @@ jobs:
           Copy-Item docs/phone-remote-control.md "$buildDir/PHONE-REMOTE-CONTROL.md"
           Copy-Item docs/remote-suite-v2-plan.md "$buildDir/REMOTE-SUITE-ACCEPTANCE.md"
           Copy-Item docs/windows-hang-audit.md "$buildDir/windows-hang-audit.md"
+          Copy-Item docs/remote-control-audit.md "$buildDir/remote-control-audit.md"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH

@@ -9,6 +9,7 @@ class RemoteAccessConfig {
     this.allowAprs = false,
     this.allowPosition = false,
     this.defaultReadOnly = false,
+    this.requireControlApproval = false,
   });
 
   final bool enabled;
@@ -18,8 +19,11 @@ class RemoteAccessConfig {
   final bool allowAprs;
   final bool allowPosition;
   final bool defaultReadOnly;
+  final bool requireControlApproval;
 
   static RemoteAccessConfig get current => RemoteAccessConfig(
+    requireControlApproval:
+        DataBroker.getValue<int>(0, 'webServerRequireControlApproval', 0) == 1,
     defaultReadOnly:
         DataBroker.getValue<int>(0, 'webServerDefaultReadOnly', 0) == 1,
     enabled: DataBroker.getValue<int>(0, 'webServerRemoteEnabled', 0) == 1,

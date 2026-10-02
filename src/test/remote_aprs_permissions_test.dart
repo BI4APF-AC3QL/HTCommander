@@ -10,7 +10,8 @@ void main() {
     'remote APRS permissions independent of voice, validation and host rate limit',
     () {
       var now = DateTime(2026);
-      final controls = RemoteRadioController(target: () => 2, clock: () => now);
+      final controls = RemoteRadioController(target: () => 2, clock: () => now)
+        ..grantControl(1);
       final broker = DataBrokerClient();
       final sent = <AprsSendMessageData>[];
       broker.subscribe(
@@ -64,6 +65,7 @@ void main() {
       expect(controls.snapshot()['txAllowed'], false);
       expect(controls.command(2, command), isNotNull);
       now = now.add(const Duration(seconds: 10));
+      controls.grantControl(2);
       expect(controls.command(2, command), isNull);
       host('webServerAllowAprs', 0);
       now = now.add(const Duration(seconds: 10));

@@ -49,7 +49,7 @@ const context = { document, WebSocket, ArrayBuffer, DataView, Float32Array,
 };
 vm.runInNewContext(script, context);
 const socket = WebSocket.sockets[0];
-const state = { connected: true, audio: true, txAllowed: true, txOwner: null,
+const state = { connected: true, audio: true, txAllowed: true, txOwner: null, controlOwner: 1, controlRequests: [],
   settings: { channelA: 0 }, channels: [{ channelId: 0, name: 'Test', rxFreq: 145000000 }] };
 function update(owner = null) { socket.onmessage({ data: 'remote:' + JSON.stringify({ clientId: 1, state: { ...state, txOwner: owner } }) }); }
 const press = () => element('ptt').handlers.pointerdown({ preventDefault() {}, pointerId: 1 });
@@ -64,6 +64,13 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
   assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
+  state.auditEvents=[{time:'2026-10-02T12:00:00Z',clientId:1,action:'aprsMessage',result:'accepted',text:'private-message'}];update();
+  assert.ok(element('auditEvents').children[0].textContent.includes('客户端 #1'));
+  assert.ok(element('auditEvents').children[0].textContent.includes('请求接受'));
+  assert.ok(!element('auditEvents').children[0].textContent.includes('private-message'));
+  state.controlOwner=null;update();assert.equal(element('channel').disabled,true);element('controlRequest').onclick();assert.equal(commands().at(-1),'requestControl');
+  state.controlRequested=true;state.controlRequests=[1];update();assert.ok(element('controlStatus').textContent.includes('第 1 位'));assert.equal(element('controlRequest').disabled,true);
+  state.controlRequested=false;state.controlRequests=[2];state.controlOwner=1;update();assert.equal(element('controlHandoff').children.length,1);context.window.confirm=()=>false;element('controlHandoff').children[0].onclick();assert.notEqual(commands().at(-1),'handoffControl');context.window.confirm=()=>true;element('controlHandoff').children[0].onclick();assert.equal(commands().at(-1),'handoffControl');state.controlRequests=[];
   state.readOnly=true;update();assert.equal(element('ptt').disabled,true);assert.equal(element('channel').disabled,true);assert.equal(element('scan').disabled,true);
   state.readOnly=false;state.emergencyStopped=true;update();assert.equal(element('ptt').disabled,true);
   state.emergencyStopped=false;update();

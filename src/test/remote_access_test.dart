@@ -266,7 +266,7 @@ void main() {
   test(
     'PTT requires both permissions and valid radio; ownership is exclusive',
     () {
-      final controls = RemoteRadioController(target: () => 2);
+      final controls = RemoteRadioController(target: () => 2)..grantControl(1);
       expect(controls.command(1, {'op': 'pttStart'}), isNotNull);
       readyRadio();
       expect(controls.command(1, {'op': 'pttStart'}), isNull);
@@ -286,7 +286,7 @@ void main() {
       final controls = RemoteRadioController(
         target: () => 2,
         clock: () => time.getClock(DateTime(2026)).now(),
-      );
+      )..grantControl(1);
       final broker = DataBrokerClient();
       var cancelled = 0;
       broker.subscribe(
@@ -311,7 +311,7 @@ void main() {
   });
   test('permissions revoked or malformed/oversized PCM releases owner', () {
     readyRadio();
-    final controls = RemoteRadioController(target: () => 2);
+    final controls = RemoteRadioController(target: () => 2)..grantControl(1);
     controls.command(1, {'op': 'pttStart'});
     expect(controls.microphone(1, Uint8List(9000)), false);
     expect(controls.snapshot()['txOwner'], isNull);
