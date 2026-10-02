@@ -26,6 +26,8 @@ class AudioContext {
   createGain() { return audioNode(); }
   createMediaStreamSource() { return audioNode(); }
   createScriptProcessor() { processor = audioNode(); return processor; }
+  createBuffer(channels,frames){const data=Array.from({length:channels},()=>new Float32Array(frames));return {getChannelData:i=>data[i]};}
+  createBufferSource(){return {...audioNode(),start(){},stop(){if(this.onended)this.onended();}};}
 }
 class WebSocket {
   static OPEN = 1;
@@ -52,6 +54,12 @@ const wait = () => new Promise(r => setImmediate(r));
 const commands = () => socket.sent.filter(v => typeof v === 'string' && v.startsWith('remote:')).map(v => JSON.parse(v.slice(7)).op);
 
 (async () => {
+  const fft=vm.runInNewContext('spectrumDb',context);
+  const tone=new Float32Array(1024);for(let i=0;i<1024;i++)tone[i]=.5*Math.sin(2*Math.PI*32*i/1024);
+  const bins=fft(tone);const peak=Array.from(bins).indexOf(Math.max(...bins));
+  assert.equal(peak,32);assert.ok(Math.abs(bins[32]+6.0206)<.05);
+  assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
+  assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
   state.aprsMessages=[{id:1,peer:'BI4APF',source:'BI4APF',destination:'AC3QL',incoming:true,text:'<script>hello</script>',sequence:'1',time:'2026-10-02T12:00:00'}];
   update();
@@ -89,5 +97,15 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.equal(commands().at(-1), 'pttStop');
   assert.equal(stopped, 2);
   assert.equal(element('ptt').textContent, '按住讲话');
-  console.log('Mobile page tests passed: permission cancellation, ownership gating, PCM resampling and background stop.');
+  document.hidden=false;await element('listen').onclick();
+  const received=new ArrayBuffer(4+2048*2),rx=new DataView(received);
+  rx.setUint8(0,241);rx.setUint8(1,1);rx.setUint16(2,32000,true);
+  for(let i=0;i<2048;i++)rx.setInt16(4+i*2,16384,true);
+  for(let i=0;i<100;i++)socket.onmessage({data:received});
+  assert.ok(vm.runInNewContext('scheduledAudio.size',context)<=32);
+  assert.ok(vm.runInNewContext('audioResets',context)>0);
+  await element('listen').onclick();
+  assert.equal(vm.runInNewContext('scheduledAudio.size',context),0);
+  element('spectrumPause').onclick();assert.equal(element('spectrumPause').textContent,'继续图形');
+  console.log('Mobile page tests passed: APRS search/reply/unread, FFT tone/silence, bounded playback recovery, microphone cancellation/ownership/resampling and background stop.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

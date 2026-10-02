@@ -21,12 +21,14 @@ const remoteMobilePage = r'''<!doctype html>
 <div class="row"><button id="scan" disabled>开启扫描</button><button id="listen">开启收听</button></div>
 <label for="volume">电台音量 <span id="volumeValue">0</span></label><input id="volume" type="range" min="0" max="15" step="1" disabled>
 <label for="playback">手机播放音量</label><input id="playback" type="range" min="0" max="1" value="0.8" step="0.05">
+<label for="audioBuffer">音频起始缓冲（毫秒）</label><input id="audioBuffer" type="range" min="80" max="300" value="120" step="20"><p class="muted">较小缓冲延迟低，较大缓冲适合网络抖动；积压超过半秒会清理旧音频。</p>
 </section>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
 <section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
+<section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
@@ -35,6 +37,32 @@ let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
 let aprsReadThrough=0,aprsMessageSignature='';
+const spectrumSamples=new Float32Array(1024),scheduledAudio=new Set();
+let spectrumCursor=0,spectrumRate=32000,spectrumCount=0,spectrumPaused=false,audioResets=0,audioClips=0,audioPeak=0,spectrumDirty=false;
+// Hann-windowed radix-2 FFT. All storage and canvas dimensions are bounded.
+function spectrumDb(samples){
+ const n=samples.length;if(n<2||(n&(n-1)))throw Error('FFT requires power-of-two samples');
+ const real=new Float64Array(n),imag=new Float64Array(n);let windowSum=0;
+ for(let i=0;i<n;i++){const w=.5-.5*Math.cos(2*Math.PI*i/(n-1));real[i]=samples[i]*w;windowSum+=w;}
+ for(let i=1,j=0;i<n;i++){let bit=n>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;if(i<j){const t=real[i];real[i]=real[j];real[j]=t;}}
+ for(let length=2;length<=n;length*=2){const angle=-2*Math.PI/length;for(let start=0;start<n;start+=length){for(let j=0;j<length/2;j++){const c=Math.cos(angle*j),s=Math.sin(angle*j),a=start+j,b=a+length/2,tr=real[b]*c-imag[b]*s,ti=real[b]*s+imag[b]*c;real[b]=real[a]-tr;imag[b]=imag[a]-ti;real[a]+=tr;imag[a]+=ti;}}}
+ const db=new Float32Array(n/2);for(let i=0;i<db.length;i++)db[i]=20*Math.log10(Math.max(1e-6,Math.hypot(real[i],imag[i])*(i===0?1:2)/windowSum));return db;
+}
+function feedSpectrum(buffer,rate){
+ if(rate!==spectrumRate){spectrumSamples.fill(0);spectrumCursor=0;spectrumCount=0;spectrumRate=rate;}
+ const samples=buffer.getChannelData(0);audioPeak=0;
+ for(const x of samples){spectrumSamples[spectrumCursor]=x;spectrumCursor=(spectrumCursor+1)%1024;spectrumCount=Math.min(1024,spectrumCount+1);audioPeak=Math.max(audioPeak,Math.abs(x));if(Math.abs(x)>=.999)audioClips++;}spectrumDirty=true;
+}
+function stopPlayback(){for(const source of scheduledAudio){try{source.stop();}catch(_){}}scheduledAudio.clear();nextAudio=0;}
+function drawSpectrum(){
+ if(document.hidden||spectrumPaused||!listening||!spectrumDirty||spectrumCount<1024)return;spectrumDirty=false;
+ const samples=new Float32Array(1024);for(let i=0;i<1024;i++)samples[i]=spectrumSamples[(spectrumCursor+i)%1024];const db=spectrumDb(samples);
+ const canvas=$('spectrum'),waterfall=$('waterfall'),ctx=canvas.getContext('2d'),wc=waterfall.getContext('2d');if(!ctx||!wc)return;
+ const maxHz=Math.min(spectrumRate/2,Number($('spectrumRange').value)||8000),boost=Number($('spectrumGain').value)||0;
+ ctx.fillStyle='#101827';ctx.fillRect(0,0,512,128);ctx.strokeStyle='#79ddc7';ctx.beginPath();wc.drawImage(waterfall,0,0,512,127,0,1,512,127);
+ for(let x=0;x<512;x++){const bin=Math.min(db.length-1,Math.floor(x/512*maxHz*1024/spectrumRate));const level=Math.max(0,Math.min(1,(db[bin]+boost+100)/100));const y=128-level*118;if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);wc.fillStyle='hsl('+(240-level*240)+',85%,'+(10+level*55)+'%)';wc.fillRect(x,0,1,1);}ctx.stroke();ctx.fillStyle='#adbed5';ctx.fillText('0 Hz',4,125);ctx.fillText((maxHz/1000)+' kHz',455,125);
+ $('audioMetrics').textContent='峰值 '+(audioPeak?20*Math.log10(audioPeak):-120).toFixed(1)+' dBFS · 削波样本 '+audioClips+' · 缓冲恢复 '+audioResets+' · 排队 '+scheduledAudio.size+' · 图形 10 Hz';
+}
 function renderMessages(){
  const messages=state.aprsMessages||[];const query=$('aprsSearch').value.trim().toUpperCase();
  const unread=messages.filter(e=>e.incoming&&e.id>aprsReadThrough).length;
@@ -55,7 +83,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onmessage=event=>{if(typeof event.data!=='string'){playAudio(event.data);return;}
   if(event.data.startsWith('remote:')){const msg=JSON.parse(event.data.slice(7));if(msg.clientId!==undefined)clientId=msg.clientId;if(msg.error){notice(msg.error);stopPtt();}if(msg.state){state=msg.state;render();}}
  };
- socket.onclose=async()=>{stopPtt();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
+ socket.onclose=async()=>{stopPtt();stopPlayback();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
  socket.onerror=()=>socket.close();
 }
 function render(){
@@ -78,7 +106,7 @@ function render(){
 }
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}
 function playAudio(data){if(!listening||!audio||audio.state!=='running')return;const v=new DataView(data);if(v.byteLength<6||v.getUint8(0)!==241)return;const n=v.getUint8(1),rate=v.getUint16(2,true);if(n<1||n>2||rate<8000||rate>48000)return;const frames=Math.floor((v.byteLength-4)/(2*n));if(!frames)return;const b=audio.createBuffer(n,frames,rate);for(let ch=0;ch<n;ch++){const a=b.getChannelData(ch);for(let i=0;i<frames;i++)a[i]=v.getInt16(4+(i*n+ch)*2,true)/32768;}
- const now=audio.currentTime;if(nextAudio<now||nextAudio>now+.5)nextAudio=now+.12;const source=audio.createBufferSource();source.buffer=b;source.connect(gain);source.start(nextAudio);nextAudio+=frames/rate;
+ feedSpectrum(b,rate);const now=audio.currentTime;if(nextAudio<now||nextAudio>now+.5||scheduledAudio.size>=32){if(scheduledAudio.size){audioResets++;stopPlayback();}nextAudio=now+Math.max(.08,Math.min(.3,(Number($('audioBuffer').value)||120)/1000));}const source=audio.createBufferSource();source.buffer=b;source.connect(gain);scheduledAudio.add(source);source.onended=()=>{scheduledAudio.delete(source);source.disconnect();};source.start(nextAudio);nextAudio+=frames/rate;
 }
 async function prepareMic(){const ctx=await context();if(!pressed)return false;if(micStream)return true;if(!window.isSecureContext||!navigator.mediaDevices)throw Error('麦克风需要 HTTPS');const generation=++micGeneration;
  const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});if(!pressed||generation!==micGeneration){stream.getTracks().forEach(t=>t.stop());return false;}micStream=stream;micSource=ctx.createMediaStreamSource(micStream);micNode=ctx.createScriptProcessor(2048,1,1);micMute=ctx.createGain();micMute.gain.value=0;micSource.connect(micNode);micNode.connect(micMute);micMute.connect(ctx.destination);
@@ -91,7 +119,10 @@ $('channel').onchange=()=>send({op:'channel',value:Number($('channel').value),vf
 $('scan').onclick=()=>send({op:'scan',value:!state.settings?.scan});
 $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});
 $('playback').oninput=()=>{if(gain)gain.gain.value=Number($('playback').value);};
-$('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio)gain.gain.value=0;else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
+$('spectrumPause').onclick=()=>{spectrumPaused=!spectrumPaused;$('spectrumPause').textContent=spectrumPaused?'继续图形':'暂停图形';};
+$('spectrumRange').onchange=()=>{spectrumDirty=true;};$('spectrumGain').oninput=()=>{spectrumDirty=true;};
+setInterval(drawSpectrum,100);
+$('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio){gain.gain.value=0;stopPlayback();}else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
 $('aprsSearch').oninput=renderMessages;
 $('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.aprsMessages||[]).map(e=>e.id));renderMessages();};

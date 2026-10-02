@@ -13,8 +13,8 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 | 7 | Radio/consented-phone position packets with freshness/accuracy | Validation, independent permission and browser consent path | Pending |
 | 8 | Lightweight remote map, stations/tracks/source/search/message action | Browser interaction and map-state tests | Pending |
 | 9 | Map clustering, viewport limits, throttling/cache limits/staleness | Load/update/cap tests and browser verification | Pending |
-| 10 | Audio spectrum/waterfall with bounded remote traffic | Known-tone DSP test and live simulated PCM browser visualization | Pending |
-| 11 | Audio buffers/recovery/input meters/clipping/mic test | DSP/buffer tests and browser verification | Pending |
+| 10 | Audio spectrum/waterfall with bounded remote traffic | Known-tone DSP test and live simulated PCM browser visualization | Partial: client FFT, bounded 10 Hz plot, waterfall/range/gain/pause reuse PCM stream. Known-tone/silence tests passed; real-browser canvas verification remains. |
+| 11 | Audio buffers/recovery/input meters/clipping/mic test | DSP/buffer tests and browser verification | Partial: bounded playback sources, backlog recovery, configurable buffer, RX peak/clipping. Simulated burst/stop tests passed; microphone test and browser verification remain. |
 | 12 | Client list, targeted revocation and read-only/control roles | Authentication/authorization/revocation isolation tests | Pending |
 | 13 | Remote radio/gateway/activity dashboard | Verified server telemetry and phone layout | Pending |
 | 14 | Host-configured beacon tasks, pause and explicit resume authorization | Scheduler/time/permission/cancellation tests and UI | Pending |
