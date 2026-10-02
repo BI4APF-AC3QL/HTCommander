@@ -8,6 +8,7 @@ import '../services/data_broker_client.dart';
 import '../services/secret_store.dart';
 import '../services/web/remote_access_config.dart';
 import '../services/web/remote_audit.dart';
+import 'aprs_shortcuts_dialog.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
   const RemoteAccessDialog({super.key});
@@ -406,6 +407,16 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               ),
             ),
             const Divider(),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.star_outline),
+              label: Text(
+                _text('常用呼号与消息模板', 'Favorite callsigns and message templates'),
+              ),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const AprsShortcutsDialog(),
+              ),
+            ),
             OutlinedButton.icon(
               icon: const Icon(Icons.copy),
               label: Text(

@@ -31,7 +31,7 @@ const remoteMobilePage = r'''<!doctype html>
 </section>
 <section class="card"><h2>操作权</h2><p id="controlStatus" class="muted">查看和收听无需操作权。</p><div class="row"><button id="controlRequest">申请操作权</button><button id="controlRelease" disabled>释放操作权</button></div><div id="controlHandoff" class="row"></div><p class="muted">同一时间只允许一端操作。Windows 可随时收回；重连后重新申请。</p></section>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
-<section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
+<section class="card"><h2>APRS 消息</h2><label for="aprsFavorite">常用呼号</label><select id="aprsFavorite"></select><label for="aprsTemplate">消息模板</label><select id="aprsTemplate"></select><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>预览 APRS 消息</button><div id="aprsConfirmation" hidden><p id="aprsPreview" style="white-space:pre-wrap"></p><div class="row"><button id="aprsConfirm" disabled>确认发送此消息</button><button id="aprsCancel">取消发送</button></div></div><p class="muted">常用项由 Windows 配置。选取只填写草稿，需预览后确认发送。需电脑端授权 APRS 发送和允许发射；提交不等于对方收到。</p></section>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
@@ -50,6 +50,7 @@ $('installApp').onclick=async()=>{if(!installPrompt){notice('请使用浏览器�
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('此浏览器不支持全屏，可添加到主屏幕。');}catch(error){notice(error.message);}};
 if(window.isSecureContext&&'serviceWorker' in navigator)navigator.serviceWorker.register('/remote-worker.js',{scope:'/remote.html'}).catch(()=>notice('应用安装组件未注册，可继续通过浏览器使用。'));
 let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0;
+let pendingAprs=null,pendingHandoff=null,shortcutsSignature='';
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
 let aprsReadThrough=0,aprsMessageSignature='';
@@ -145,7 +146,9 @@ function render(){
  $('controlRelease').disabled=!control&&!state.controlRequested;
  const queue=state.controlRequests||[],place=queue.indexOf(clientId)+1;
  $('controlStatus').textContent=state.emergencyStopped?'Windows 已停止远程控制。':control?'你持有操作权。':state.controlRequested?'申请已排队（第 '+place+' 位）'+(state.controlApprovalRequired||state.readOnly?'，等待 Windows 批准。':'，可由当前操作者移交。'):state.controlOwner!=null?'客户端 #'+state.controlOwner+' 正在操作；你可以查看、收听或申请排队。':'操作权空闲，点击申请。';
- $('controlHandoff').replaceChildren(...(control&&!state.controlApprovalRequired?queue:[]).filter(id=>id!==clientId).map(id=>{const button=document.createElement('button');button.textContent='移交给 #'+id;button.onclick=()=>{if(window.confirm('移交操作权并停止当前发射/待发 APRS？')){stopPtt();send({op:'handoffControl',clientId:id});}};return button;}));
+ if(pendingHandoff&&(!control||state.controlApprovalRequired||!queue.includes(pendingHandoff.id)||Date.now()>pendingHandoff.expires))pendingHandoff=null;
+ const handoffButtons=(control&&!state.controlApprovalRequired?queue:[]).filter(id=>id!==clientId).map(id=>{const button=document.createElement('button');button.textContent='移交给 #'+id;button.onclick=()=>{pendingHandoff={id,expires:Date.now()+30000};render();};return button;});
+ if(pendingHandoff){const draft=pendingHandoff,warning=document.createElement('p'),yes=document.createElement('button'),no=document.createElement('button');warning.textContent='移交会停止当前讲话并取消原端待发/重试 APRS。';yes.textContent='确认移交给 #'+draft.id;yes.onclick=()=>{if(pendingHandoff!==draft||Date.now()>draft.expires||state.controlOwner!==clientId||state.readOnly||state.emergencyStopped||state.controlApprovalRequired||!(state.controlRequests||[]).includes(draft.id))return;pendingHandoff=null;stopPtt();send({op:'handoffControl',clientId:draft.id});render();};no.textContent='取消移交';no.onclick=()=>{pendingHandoff=null;render();};handoffButtons.push(warning,yes,no);} $('controlHandoff').replaceChildren(...handoffButtons);
  if(pressed&&!control)stopPtt();
  positionPreview();$('positionSend').disabled=!positionReady()||!state.connected||!state.positionAllowed||!control||state.txOwner!=null;
  const ps=state.positionStatus;if(ps&&ps.clientId===clientId)$('positionResult').textContent=ps.status==='submitted'?'电脑已提交位置报文，尚无射频发送或接收确认。':'电脑拒绝位置发送，请检查权限、定位时间与电台状态。';
@@ -158,6 +161,7 @@ function render(){
  const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
  $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
  $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null||!control;
+ renderShortcuts();if(pendingAprs&&($('aprsSend').disabled||Date.now()>pendingAprs.expires))cancelAprsPreview();$('aprsConfirm').disabled=!pendingAprs||$('aprsSend').disabled;
  const connected=state.connected===true;const s=state.settings||{};channels=state.channels||[];
  const sig=JSON.stringify(channels);if(sig!==listSignature){listSignature=sig;$('channel').replaceChildren(...channels.map(c=>{const o=document.createElement('option');o.value=c.channelId;o.textContent=(c.channelId+1)+' · '+(c.name||'未命名')+' · '+((c.rxFreq||0)/1e6).toFixed(5);return o;}));}
  selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null||!control;
@@ -202,6 +206,19 @@ $('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.ap
 $('positionAcquire').onclick=()=>{if(!window.isSecureContext||!navigator.geolocation){notice('手机定位需要 HTTPS 和浏览器定位权限。');return;}const generation=++positionGeneration;$('positionPreview').textContent='等待定位授权…';navigator.geolocation.getCurrentPosition(p=>{if(generation!==positionGeneration||document.hidden)return;positionDraft={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,capturedAt:new Date(p.timestamp).toISOString(),radio:false};render();},error=>{if(generation===positionGeneration){positionDraft=null;notice('定位失败：'+error.message);render();}},{enableHighAccuracy:true,timeout:15000,maximumAge:0});};
 $('positionRadio').onclick=()=>{positionGeneration++;const p=state.radioPosition;if(!p||!p.locked){positionDraft=null;notice('电台尚无锁定位置。');render();return;}positionDraft={latitude:p.latitude,longitude:p.longitude,accuracy:p.accuracy>0?p.accuracy:null,capturedAt:p.receivedTime,radio:true};render();};
 $('positionSend').onclick=()=>{if($('positionSend').disabled||!positionReady())return;positionPreview();if(!window.confirm('将通过电台发送当前位置：'+positionDraft.latitude.toFixed(5)+', '+positionDraft.longitude.toFixed(5)+'。确认发射？'))return;send({op:'aprsPosition',source:positionDraft.radio?'radio':'phone',position:positionDraft,confirmed:true});notice('已提交位置发送请求，请查看电脑处理结果。');};
-$('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;send({op:'aprsMessage',destination:$('aprsDestination').value.trim().toUpperCase(),text:$('aprsText').value});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');});
+function renderShortcuts(){const value=state.aprsShortcuts||{},signature=JSON.stringify(value);if(signature===shortcutsSignature)return;shortcutsSignature=signature;
+ const options=(entries,placeholder)=>{const start=document.createElement('option');start.value='';start.textContent=placeholder;return [start,...entries];};
+ $('aprsFavorite').replaceChildren(...options((value.favorites||[]).slice(0,20).map(call=>{const option=document.createElement('option');option.value=call;option.textContent=call;return option;}),'选择呼号（仅填写草稿）'));
+ $('aprsTemplate').replaceChildren(...options((value.templates||[]).slice(0,16).map((t,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=t.name;return option;}),'选择模板（仅填写草稿）'));
+}
+function cancelAprsPreview(){pendingAprs=null;$('aprsConfirmation').hidden=true;$('aprsConfirm').disabled=true;}
+$('aprsFavorite').onchange=()=>{const call=$('aprsFavorite').value;if((state.aprsShortcuts?.favorites||[]).includes(call)){$('aprsDestination').value=call;cancelAprsPreview();}};
+$('aprsTemplate').onchange=()=>{const index=$('aprsTemplate').value;if(index==='')return;const item=(state.aprsShortcuts?.templates||[])[Number(index)];if(item){$('aprsText').value=item.text;cancelAprsPreview();}};
+$('aprsDestination').oninput=cancelAprsPreview;$('aprsText').oninput=cancelAprsPreview;$('aprsCancel').onclick=cancelAprsPreview;
+$('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;const destination=$('aprsDestination').value.trim().toUpperCase(),text=$('aprsText').value;
+ if(!/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(destination)||destination.length>9||!text.trim()||text.length>67||!(/^[\x20-\x7e]+$/).test(text)||/[{|~]/.test(text)){cancelAprsPreview();notice('请检查目标呼号与 1–67 个 ASCII 字符消息，不能含 { | ~。');return;}
+ pendingAprs={destination,text,expires:Date.now()+30000};$('aprsPreview').textContent='将通过电台提交给 '+destination+'：\n'+text+'\n确认前不会发送；预览 30 秒后失效。';$('aprsConfirmation').hidden=false;$('aprsConfirm').disabled=false;
+});
+$('aprsConfirm').onclick=()=>{if($('aprsConfirm').disabled||!pendingAprs)return;const draft=pendingAprs;if(Date.now()>draft.expires||state.controlOwner!==clientId||state.readOnly||state.emergencyStopped||!state.connected||!state.aprsAllowed||state.txOwner!=null||draft.destination!==$('aprsDestination').value.trim().toUpperCase()||draft.text!==$('aprsText').value){cancelAprsPreview();notice('草稿或权限已变化，请重新预览。');return;}cancelAprsPreview();send({op:'aprsMessage',destination:draft.destination,text:draft.text});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');};
 setInterval(()=>{if(!document.hidden)requestMap();},2000);open();
 </script></body></html>''';

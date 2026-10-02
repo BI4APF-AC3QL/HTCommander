@@ -8,6 +8,7 @@ import 'remote_access_config.dart';
 import '../../utils/map_source.dart';
 import 'control_lease.dart';
 import 'remote_audit.dart';
+import 'aprs_shortcuts.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
@@ -134,6 +135,7 @@ class RemoteRadioController {
     return {
       'controlOwner': _control.owner,
       'auditEvents': auditEvents.reversed.take(20).toList(),
+      'aprsShortcuts': AprsShortcuts.current.toJson(),
       'controlRequests': controlRequests,
       'controlRequested': _control.requests.contains(clientId),
       'controlApprovalRequired':
