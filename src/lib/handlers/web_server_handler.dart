@@ -102,6 +102,8 @@ class WebServerHandler {
         'webServerPassword',
         'webServerPublicOrigin',
         'webServerAllowTransmit',
+        'webServerAllowAprs',
+        'webServerAllowPosition',
       ],
       callback: _onSettingChanged,
     );

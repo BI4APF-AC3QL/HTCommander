@@ -23,6 +23,7 @@ const remoteMobilePage = r'''<!doctype html>
 <label for="playback">手机播放音量</label><input id="playback" type="range" min="0" max="1" value="0.8" step="0.05">
 </section>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
+<section class="card"><h2>APRS 消息</h2><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>提交 APRS 消息</button><p class="muted">需电脑端授权 APRS 发送和允许发射。提交不等于对方收到；请勿重复点击。</p></section>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
@@ -42,6 +43,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onerror=()=>socket.close();
 }
 function render(){
+ $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null;
  const connected=state.connected===true;const s=state.settings||{};channels=state.channels||[];
  const sig=JSON.stringify(channels);if(sig!==listSignature){listSignature=sig;$('channel').replaceChildren(...channels.map(c=>{const o=document.createElement('option');o.value=c.channelId;o.textContent=(c.channelId+1)+' · '+(c.name||'未命名')+' · '+((c.rxFreq||0)/1e6).toFixed(5);return o;}));}
  selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null;
@@ -71,5 +73,6 @@ $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});
 $('playback').oninput=()=>{if(gain)gain.gain.value=Number($('playback').value);};
 $('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio)gain.gain.value=0;else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
+$('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;send({op:'aprsMessage',destination:$('aprsDestination').value.trim().toUpperCase(),text:$('aprsText').value});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');});
 setInterval(()=>{if(!document.hidden)send({op:'state'});},2000);open();
 </script></body></html>''';

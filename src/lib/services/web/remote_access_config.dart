@@ -6,12 +6,16 @@ class RemoteAccessConfig {
     this.password = '',
     this.publicOrigin = '',
     this.allowTransmit = false,
+    this.allowAprs = false,
+    this.allowPosition = false,
   });
 
   final bool enabled;
   final String password;
   final String publicOrigin;
   final bool allowTransmit;
+  final bool allowAprs;
+  final bool allowPosition;
 
   static RemoteAccessConfig get current => RemoteAccessConfig(
     enabled: DataBroker.getValue<int>(0, 'webServerRemoteEnabled', 0) == 1,
@@ -20,6 +24,9 @@ class RemoteAccessConfig {
         DataBroker.getValue<String>(0, 'webServerPublicOrigin', '') ?? '',
     allowTransmit:
         DataBroker.getValue<int>(0, 'webServerAllowTransmit', 0) == 1,
+    allowAprs: DataBroker.getValue<int>(0, 'webServerAllowAprs', 0) == 1,
+    allowPosition:
+        DataBroker.getValue<int>(0, 'webServerAllowPosition', 0) == 1,
   );
 
   static String? validateOrigin(String value) {

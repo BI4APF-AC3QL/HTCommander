@@ -22,6 +22,8 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
   late bool _enabled;
   late bool _remote;
   late bool _tx;
+  late bool _aprs;
+  late bool _position;
   bool _showPassword = false;
   bool _saving = false;
   String? _error;
@@ -37,6 +39,8 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
     _enabled = DataBroker.getValue<int>(0, 'webServerEnabled', 0) == 1;
     _remote = config.enabled;
     _tx = config.allowTransmit;
+    _aprs = config.allowAprs;
+    _position = config.allowPosition;
     _password = TextEditingController(text: config.password);
     _origin = TextEditingController(text: config.publicOrigin);
     _port = TextEditingController(
@@ -102,6 +106,8 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
         'webServerPassword': _password.text,
         'webServerPublicOrigin': config.externalOrigin ?? '',
         'webServerAllowTransmit': _tx ? 1 : 0,
+        'webServerAllowAprs': _aprs ? 1 : 0,
+        'webServerAllowPosition': _position ? 1 : 0,
         'webServerRemoteEnabled': _remote ? 1 : 0,
         'webServerPort': port,
         'webServerEnabled': _enabled ? 1 : 0,
@@ -223,6 +229,26 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               ),
               value: _tx,
               onChanged: _saving ? null : (v) => setState(() => _tx = v),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _text('允许远程 APRS 消息发送', 'Allow remote APRS messages'),
+              ),
+              subtitle: Text(
+                _text(
+                  '仍须电脑总允许发射；与语音权限独立。',
+                  'Requires host transmit permission, independent of voice.',
+                ),
+              ),
+              value: _aprs,
+              onChanged: _saving ? null : (v) => setState(() => _aprs = v),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_text('允许远程位置发送', 'Allow remote position packets')),
+              value: _position,
+              onChanged: _saving ? null : (v) => setState(() => _position = v),
             ),
             const Divider(),
             Text(

@@ -51,6 +51,7 @@ import 'aprsis_client.dart';
 import 'aprsis_history_store.dart';
 import 'aprsis_network_io.dart';
 import 'tnc2_codec.dart';
+import 'gate_budget.dart';
 
 /// Owns the [AprsIsClient] and bridges it to the app's Data Broker. Registered
 /// as a Data Broker handler in `main()` on platforms with a dart:io socket
@@ -102,6 +103,7 @@ class AprsIsManager {
 
   /// Callsigns heard on RF recently, mapped to the last time they were heard.
   final Map<String, DateTime> _heardStations = {};
+  final GateBudget _upGateBudget = GateBudget();
 
   /// Append-only on-disk store that lets internet APRS history survive restarts.
   final AprsIsHistoryStore _history = AprsIsHistoryStore();
@@ -281,8 +283,8 @@ class AprsIsManager {
         (_broker.getValue<int>(0, 'AprsCloudNotifications', 0) ?? 0) == 1) {
       return;
     }
-    final apiKey =
-        (_broker.getValue<String>(0, 'AprsFiApiKey', '') ?? '').trim();
+    final apiKey = (_broker.getValue<String>(0, 'AprsFiApiKey', '') ?? '')
+        .trim();
     final self = _readCallsignWithId();
     if (apiKey.isEmpty || self.isEmpty) return;
     final selfUpper = self.toUpperCase();
@@ -375,7 +377,8 @@ class AprsIsManager {
     // as live APRS-IS traffic. The APRS message info field is a 9-character
     // padded addressee followed by ':' and the message text.
     final paddedAddressee = addressee.padRight(9);
-    final tnc2Line = '$src>APRS,TCPIP*,qAC,APRSFI::$paddedAddressee:'
+    final tnc2Line =
+        '$src>APRS,TCPIP*,qAC,APRSFI::$paddedAddressee:'
         '${msg.message}';
     final ax25 = Tnc2Codec.decode(tnc2Line, time: msg.time);
     if (ax25 == null) return false;
@@ -794,9 +797,11 @@ class AprsIsManager {
     // Only acknowledge messages actually addressed to us (with or without SSID).
     final addressee = messageData.addressee.trim().toUpperCase();
     if (addressee.isEmpty) return;
-    final callsignOnly =
-        (_broker.getValue<String>(0, 'CallSign', '') ?? '').trim().toUpperCase();
-    final isForUs = addressee == localCallsign.toUpperCase() ||
+    final callsignOnly = (_broker.getValue<String>(0, 'CallSign', '') ?? '')
+        .trim()
+        .toUpperCase();
+    final isForUs =
+        addressee == localCallsign.toUpperCase() ||
         (callsignOnly.isNotEmpty && addressee == callsignOnly);
     if (!isForUs) return;
 
@@ -882,6 +887,13 @@ class AprsIsManager {
     if (igateCall.isEmpty) return;
     final line = AprsIsClient.buildGateUpLine(aprs, igateCall);
     if (line == null) return;
+    final accepted = _upGateBudget.accept(line);
+    _broker.dispatch(
+      deviceId: aprsIsDeviceId,
+      name: 'GateMetrics',
+      data: _upGateBudget.metrics,
+    );
+    if (!accepted) return;
     client.sendPacketLine(line);
   }
 
@@ -890,6 +902,10 @@ class AprsIsManager {
     if (packet == null || packet.addresses.length < 2) return;
     final call = packet.addresses[1].callSignWithId.toUpperCase();
     if (call.isEmpty) return;
+    _pruneHeard();
+    while (_heardStations.length >= 2048) {
+      _heardStations.remove(_heardStations.keys.first);
+    }
     _heardStations[call] = DateTime.now();
     // Also index by base callsign so a message to "CALL" (no SSID) matches a
     // station heard as "CALL-7".

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import '../data_broker.dart';
 import '../../radio/gaia_protocol.dart';
+import '../../aprs/aprs_events.dart';
 import 'remote_access_config.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
@@ -17,6 +18,7 @@ class RemoteRadioController {
   Timer? _maximumTimer;
   DateTime? _rateWindow;
   int _bytesInWindow = 0;
+  DateTime? _lastAprsSubmission;
   static const int microphoneFrameMagic = 0xf2;
 
   bool get _txAllowed =>
@@ -30,6 +32,12 @@ class RemoteRadioController {
       'connected': id > 0,
       'audio': DataBroker.getValue<bool>(id, 'AudioState', false) ?? false,
       'txAllowed': _txAllowed,
+      'aprsAllowed':
+          RemoteAccessConfig.current.allowAprs &&
+          DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1,
+      'positionAllowed':
+          RemoteAccessConfig.current.allowPosition &&
+          DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1,
       'txOwner': _owner,
       'settings': DataBroker.getValueDynamic(id, 'Settings', null),
       'status': DataBroker.getValueDynamic(id, 'HtStatus', null),
@@ -60,6 +68,7 @@ class RemoteRadioController {
     }
     final id = target();
     if (id <= 0) return 'Connect the radio on the Windows host first.';
+    if (op == 'aprsMessage') return _sendAprs(id, message);
     if (op == 'pttStart') {
       if (!_txAllowed) {
         return 'Enable remote TX and Allow transmit on the host.';
@@ -125,6 +134,63 @@ class RemoteRadioController {
       default:
         return 'Unsupported remote command.';
     }
+  }
+
+  String? _sendAprs(int id, Map message) {
+    if (!RemoteAccessConfig.current.allowAprs ||
+        DataBroker.getValue<int>(0, 'AllowTransmit', 0) != 1) {
+      return 'Enable remote APRS messages and Allow transmit on Windows.';
+    }
+    final destination = message['destination'];
+    final text = message['text'];
+    if (destination is! String ||
+        !RegExp(
+          r'^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$',
+        ).hasMatch(destination) ||
+        destination.length > 9) {
+      return 'Invalid destination callsign/SSID.';
+    }
+    if (text is! String ||
+        text.trim().isEmpty ||
+        text.length > 67 ||
+        !RegExp(r'^[\x20-\x7e]+$').hasMatch(text) ||
+        text.contains('{') ||
+        text.contains('|') ||
+        text.contains('~')) {
+      return 'APRS text must be 1–67 printable ASCII characters without { | ~.';
+    }
+    if ((DataBroker.getValue<String>(0, 'CallSign', '') ?? '').isEmpty) {
+      return 'Configure the station callsign on Windows.';
+    }
+    final status = DataBroker.getValueDynamic(id, 'HtStatus', null);
+    final lock = DataBroker.getValueDynamic(id, 'LockState', null);
+    if (_owner != null ||
+        status is! Map ||
+        status['isPowerOn'] != true ||
+        status['isInTx'] == true ||
+        (lock is Map && lock['isLocked'] == true)) {
+      return 'Radio is busy or not ready for APRS.';
+    }
+    final aprs = _channels(id).where((c) => c['name'] == 'APRS');
+    if (aprs.isEmpty || aprs.first['txDisable'] != false) {
+      return 'Configure a transmit-enabled APRS channel on Windows.';
+    }
+    final now = _clock();
+    if (_lastAprsSubmission != null &&
+        now.difference(_lastAprsSubmission!) < const Duration(seconds: 10)) {
+      return 'Wait 10 seconds between APRS submissions.';
+    }
+    _lastAprsSubmission = now;
+    _dispatch(
+      1,
+      'SendAprsMessage',
+      AprsSendMessageData(
+        destination: destination,
+        message: text,
+        radioDeviceId: id,
+      ),
+    );
+    return null;
   }
 
   bool microphone(int clientId, Uint8List frame) {
