@@ -13,6 +13,8 @@ function element(id) {
     handlers: {}, classList: { add() {}, remove() {} },
     addEventListener(name, handler) { this.handlers[name] = handler; },
     replaceChildren(...children) { this.children = children; }, setPointerCapture() {},
+    getBoundingClientRect(){return {left:0,top:0,width:512,height:320};},
+    getContext(){return {fillRect(){},drawImage(){},beginPath(){},arc(){},fill(){},fillText(){},moveTo(){},lineTo(){},stroke(){}};},
   });
   return elements.get(id);
 }
@@ -39,6 +41,7 @@ class WebSocket {
 const document = { hidden: false, getElementById: element, createElement: () => ({}),
   addEventListener: (name, f) => documentEvents[name] = f };
 const context = { document, WebSocket, ArrayBuffer, DataView, Float32Array,
+  Image: class {static all=[];constructor(){this.constructor.all.push(this);}},
   window: { isSecureContext: true, AudioContext, addEventListener: (name, f) => windowEvents[name] = f },
   location: { protocol: 'https:', host: 'radio.example' },
   navigator: { mediaDevices: { getUserMedia: () => new Promise(r => resolvePermission = r) } },
@@ -61,6 +64,18 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
   assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
+  const project=vm.runInNewContext('mapProject',context),unproject=vm.runInNewContext('mapUnproject',context);
+  const point=project(31.2,121.5,8),reverse=unproject(...point,8);
+  assert.ok(Math.abs(reverse[0]-31.2)<1e-6&&Math.abs(reverse[1]-121.5)<1e-6);
+  state.mapSources=[{id:'test',name:'Test tiles',url:'https://example.invalid/{z}/{x}/{y}',attribution:'Test'}];state.mapSource='test';
+  state.mapStations=[{call:'BI4APF-7',lat:31.2,lon:121.5,time:'2026-10-02T12:00:00',track:[]}];update();
+  vm.runInNewContext('drawMap()',context);
+  assert.ok(vm.runInNewContext('mapLoads',context)<=8);
+  assert.ok(vm.runInNewContext('mapTiles.size',context)<=64);
+  element('mapStationList').children[0].onclick();
+  assert.equal(element('aprsDestination').value,'BI4APF-7');
+  for(const image of context.Image.all)if(image.onload)image.onload();
+  vm.runInNewContext('mapDirty=true;drawMap()',context);
   state.aprsMessages=[{id:1,peer:'BI4APF',source:'BI4APF',destination:'AC3QL',incoming:true,text:'<script>hello</script>',sequence:'1',time:'2026-10-02T12:00:00'}];
   update();
   assert.equal(element('aprsUnread').textContent,'（1 条未读）');

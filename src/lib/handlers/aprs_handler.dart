@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:convert';
 import '../aprs/message_delivery.dart';
 import '../aprs/conversation_history.dart';
+import '../aprs/station_index.dart';
 import '../services/web/remote_access_config.dart';
 import '../aprs/aprs_auth.dart';
 import '../aprs/aprs_events.dart';
@@ -44,6 +45,7 @@ class AprsHandler {
   final AprsAuth _auth = AprsAuth();
   final _delivery = MessageDeliveryTracker(clock: DateTime.now);
   final _conversations = ConversationHistory();
+  final _stationIndex = StationIndex(clock: DateTime.now);
   final Map<String, (int, AX25Packet)> _retryFrames = {};
   Timer? _deliveryTimer;
   String? _lastDeliverySnapshot;
@@ -116,6 +118,14 @@ class AprsHandler {
         deviceId: _aprsDeviceId,
         name: 'RemoteAprsMessages',
         data: _conversations.messages,
+        store: true,
+      );
+    }
+    if (_stationIndex.add(data)) {
+      _broker.dispatch(
+        deviceId: _aprsDeviceId,
+        name: 'RemoteMapStations',
+        data: _stationIndex.stations,
         store: true,
       );
     }

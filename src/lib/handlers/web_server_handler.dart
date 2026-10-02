@@ -646,7 +646,7 @@ class WebServerHandler {
         if (command is! Map) return;
         final error = _remote.command(client.id, command);
         client.sendText(
-          'remote:${jsonEncode({'clientId': client.id, 'state': _remote.snapshot(), 'error': error})}',
+          'remote:${jsonEncode({'clientId': client.id, 'state': _remote.snapshot(client.id), 'error': error})}',
         );
       } catch (_) {
         client.sendText('remote:{"error":"Invalid remote control message."}');

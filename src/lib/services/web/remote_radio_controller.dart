@@ -4,6 +4,7 @@ import '../data_broker.dart';
 import '../../radio/gaia_protocol.dart';
 import '../../aprs/aprs_events.dart';
 import 'remote_access_config.dart';
+import '../../utils/map_source.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
@@ -20,15 +21,47 @@ class RemoteRadioController {
   int _bytesInWindow = 0;
   DateTime? _lastAprsSubmission;
   int _aprsRequestCounter = 0;
+  final Map<int, List<double>> _viewports = {};
   static const int microphoneFrameMagic = 0xf2;
 
   bool get _txAllowed =>
       RemoteAccessConfig.current.allowTransmit &&
       DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1;
 
-  Map<String, Object?> snapshot() {
+  Map<String, Object?> snapshot([int? clientId]) {
     final id = target();
+    final bounds = _viewports[clientId];
+    final stations =
+        (DataBroker.getValueDynamic(1, 'RemoteMapStations', []) as List)
+            .whereType<Map>()
+            .where((s) {
+              if (bounds == null) return true;
+              final lat = s['lat'] as num, lon = s['lon'] as num;
+              return lat >= bounds[0] &&
+                  lat <= bounds[2] &&
+                  (bounds[1] <= bounds[3]
+                      ? lon >= bounds[1] && lon <= bounds[3]
+                      : lon >= bounds[1] || lon <= bounds[3]);
+            })
+            .take(256)
+            .toList();
     return {
+      'mapStations': stations,
+      'mapSources':
+          {
+                ...{for (final s in MapSource.builtIn) s.id: s},
+                MapSource.current.id: MapSource.current,
+              }.values
+              .map(
+                (s) => {
+                  'id': s.id,
+                  'name': s.name,
+                  'url': s.urlTemplate,
+                  'attribution': s.attribution,
+                },
+              )
+              .toList(),
+      'mapSource': MapSource.current.id,
       'radioId': id,
       'connected': id > 0,
       'audio': DataBroker.getValue<bool>(id, 'AudioState', false) ?? false,
@@ -69,7 +102,24 @@ class RemoteRadioController {
 
   String? command(int clientId, Map message) {
     final op = message['op'];
-    if (op == 'state') return null;
+    if (op == 'state') {
+      final bounds = message['mapBounds'];
+      if (bounds is List &&
+          bounds.length == 4 &&
+          bounds.every((e) => e is num && e.isFinite)) {
+        final values = bounds.map((e) => (e as num).toDouble()).toList();
+        if (values[0] >= -90 &&
+            values[2] <= 90 &&
+            values[0] <= values[2] &&
+            values[1].abs() <= 180 &&
+            values[3].abs() <= 180) {
+          if (_viewports.length < 8 || _viewports.containsKey(clientId)) {
+            _viewports[clientId] = values;
+          }
+        }
+      }
+      return null;
+    }
     if (op == 'pttStop') {
       if (_owner == clientId) release(cancel: false);
       return null;
@@ -250,6 +300,7 @@ class RemoteRadioController {
   }
 
   void disconnected(int id) {
+    _viewports.remove(id);
     if (_owner == id) release();
   }
 

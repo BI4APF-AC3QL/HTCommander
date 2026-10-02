@@ -29,6 +29,7 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
 <section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
+<section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p></section>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
@@ -37,6 +38,34 @@ let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
 let aprsReadThrough=0,aprsMessageSignature='';
+let mapLat=31.2,mapLon=121.5,mapZoom=6,mapDirty=true,mapSelected='',mapSourceId='',mapSourceSignature='',mapHits=[],mapDrag=null,mapDragged=false,mapTileErrors=0;
+const mapTiles=new Map();let mapLoads=0,mapTileGeneration=0;
+function mapProject(lat,lon,z){const scale=256*2**z,s=Math.sin(Math.max(-85.051129,Math.min(85.051129,lat))*Math.PI/180);return [(lon+180)/360*scale,(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale];}
+function mapUnproject(x,y,z){const scale=256*2**z;return [Math.atan(Math.sinh(Math.PI*(1-2*y/scale)))*180/Math.PI,((x/scale*360)%360+360)%360-180];}
+function mapBounds(){const c=mapProject(mapLat,mapLon,mapZoom),sw=mapUnproject(c[0]-256,c[1]+160,mapZoom),ne=mapUnproject(c[0]+256,c[1]-160,mapZoom);return [sw[0],sw[1],ne[0],ne[1]];}
+function updateMapState(){
+ const sources=state.mapSources||[],signature=JSON.stringify(sources);if(signature!==mapSourceSignature){mapSourceSignature=signature;const selected=mapSourceId||state.mapSource;if(!sources.some(s=>s.id===selected))mapSourceId=state.mapSource||'';else mapSourceId=selected;$('mapSource').replaceChildren(...sources.map(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;return o;}));$('mapSource').value=mapSourceId;mapTiles.clear();mapTileGeneration++;mapDirty=true;}
+ mapDirty=true;const query=$('mapSearch').value.trim().toUpperCase();const rows=(state.mapStations||[]).filter(s=>!query||s.call.includes(query)).slice(0,20).map(s=>{const b=document.createElement('button');b.textContent=s.call+' · '+s.lat.toFixed(3)+', '+s.lon.toFixed(3);b.onclick=()=>{mapSelected=s.call;mapLat=s.lat;mapLon=s.lon;mapDirty=true;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已定位 '+s.call+' 并填写消息目标。');requestMap();};return b;});$('mapStationList').replaceChildren(...rows);
+}
+function requestMap(){send({op:'state',mapBounds:mapBounds()});}
+function tileImage(source,z,x,y){
+ const limit=2**z;if(y<0||y>=limit)return null;x=((x%limit)+limit)%limit;const key=source.id+'/'+z+'/'+x+'/'+y;
+ if(mapTiles.has(key))return mapTiles.get(key);if(mapLoads>=8)return null;
+ const image=new Image(),generation=mapTileGeneration;image.loaded=false;mapLoads++;
+ image.onload=()=>{mapLoads--;if(generation!==mapTileGeneration)return;image.loaded=true;mapDirty=true;};image.onerror=()=>{mapLoads--;if(generation!==mapTileGeneration)return;mapTileErrors++;mapDirty=true;};
+ mapTiles.set(key,image);while(mapTiles.size>64)mapTiles.delete(mapTiles.keys().next().value);
+ const url=source.url.replaceAll('{z}',z).replaceAll('{x}',x).replaceAll('{y}',y).replaceAll('{s}','a');
+ if(!/^https:\/\//i.test(url)){mapLoads--;mapTileErrors++;return image;}image.src=url;return image;
+}
+function drawMap(){
+ if(document.hidden||!mapDirty)return;mapDirty=false;const canvas=$('stationMap'),ctx=canvas.getContext('2d');if(!ctx)return;
+ const source=(state.mapSources||[]).find(s=>s.id===mapSourceId);ctx.fillStyle='#101827';ctx.fillRect(0,0,512,320);const center=mapProject(mapLat,mapLon,mapZoom),left=center[0]-256,top=center[1]-160;
+ if(source){$('mapAttribution').textContent=source.attribution;for(let x=Math.floor(left/256);x<=Math.floor((left+512)/256);x++)for(let y=Math.floor(top/256);y<=Math.floor((top+320)/256);y++){const tile=tileImage(source,mapZoom,x,y);if(tile&&tile.loaded)ctx.drawImage(tile,x*256-left,y*256-top,256,256);}}
+ const clusters=new Map();mapHits=[];for(const station of state.mapStations||[]){const p=mapProject(station.lat,station.lon,mapZoom),world=256*2**mapZoom;let x=p[0]-left;if(x>world/2+256)x-=world;if(x<-world/2+256)x+=world;const y=p[1]-top;if(x<0||x>512||y<0||y>320)continue;const key=Math.floor(x/40)+','+Math.floor(y/40);if(!clusters.has(key))clusters.set(key,[]);clusters.get(key).push({station,x,y});}
+ for(const items of clusters.values()){const {station,x,y}=items[0];const stale=Date.now()-Date.parse(station.time)>1800000;ctx.fillStyle=stale?'#929da9':'#79ddc7';ctx.beginPath();ctx.arc(x,y,items.length>1?14:7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#eef4ff';ctx.fillText(items.length>1?String(items.length):station.call,x+9,y-8);mapHits.push({x,y,items});
+  if(station.call===mapSelected){ctx.strokeStyle='#ffcea0';ctx.beginPath();for(let i=0;i<(station.track||[]).length;i++){const p=mapProject(station.track[i][0],station.track[i][1],mapZoom);if(i===0)ctx.moveTo(p[0]-left,p[1]-top);else ctx.lineTo(p[0]-left,p[1]-top);}ctx.stroke();}}
+ $('mapInfo').textContent='视野内 '+(state.mapStations||[]).length+' 台 · 缩放 '+mapZoom+' · 瓦片缓存 '+mapTiles.size+'/64 · 瓦片失败 '+mapTileErrors+'。灰色表示位置超过 30 分钟。';if(mapLoads)mapDirty=true;
+}
 const spectrumSamples=new Float32Array(1024),scheduledAudio=new Set();
 let spectrumCursor=0,spectrumRate=32000,spectrumCount=0,spectrumPaused=false,audioResets=0,audioClips=0,audioPeak=0,spectrumDirty=false;
 // Hann-windowed radix-2 FFT. All storage and canvas dimensions are bounded.
@@ -79,7 +108,7 @@ function notice(text){$('notice').textContent=text||'';}
 function send(op){if(socket&&socket.readyState===WebSocket.OPEN){socket.send(typeof op==='string'?op:'remote:'+JSON.stringify(op));return true;}return false;}
 function stopPtt(){pressed=false;transmitting=false;micGeneration++;send({op:'pttStop'});if(micStream)micStream.getTracks().forEach(t=>t.stop());if(micNode)micNode.disconnect();if(micSource)micSource.disconnect();if(micMute)micMute.disconnect();micStream=micNode=micSource=micMute=null;$('ptt').classList.remove('active');$('ptt').textContent='按住讲话';}
 function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket.aspx');socket.binaryType='arraybuffer';
- socket.onopen=()=>{failed=0;$('connection').textContent='已连接电脑';send({op:'state'});if(listening)send('audioon');};
+ socket.onopen=()=>{failed=0;$('connection').textContent='已连接电脑';requestMap();if(listening)send('audioon');};
  socket.onmessage=event=>{if(typeof event.data!=='string'){playAudio(event.data);return;}
   if(event.data.startsWith('remote:')){const msg=JSON.parse(event.data.slice(7));if(msg.clientId!==undefined)clientId=msg.clientId;if(msg.error){notice(msg.error);stopPtt();}if(msg.state){state=msg.state;render();}}
  };
@@ -87,6 +116,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onerror=()=>socket.close();
 }
 function render(){
+ updateMapState();
  const g=state.gatewayMetrics||{};$('gatewayMetrics').textContent='排队 '+(g.queueDepth||0)+' · 过期 '+(g.queueExpired||0)+' · 队列溢出 '+(g.queueOverflow||0)+' · 重复 '+((g.queueDuplicates||0)+(g.duplicateDrops||0))+' · 限速丢弃 '+(g.rateDrops||0)+' · 写入错误 '+(g.sendErrors||0);
  renderMessages();
  const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
@@ -121,11 +151,18 @@ $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});
 $('playback').oninput=()=>{if(gain)gain.gain.value=Number($('playback').value);};
 $('spectrumPause').onclick=()=>{spectrumPaused=!spectrumPaused;$('spectrumPause').textContent=spectrumPaused?'继续图形':'暂停图形';};
 $('spectrumRange').onchange=()=>{spectrumDirty=true;};$('spectrumGain').oninput=()=>{spectrumDirty=true;};
+function mapZoomBy(delta){mapZoom=Math.max(2,Math.min(18,mapZoom+delta));mapDirty=true;requestMap();}
+$('mapZoomIn').onclick=()=>mapZoomBy(1);$('mapZoomOut').onclick=()=>mapZoomBy(-1);
+$('mapSource').onchange=()=>{mapSourceId=$('mapSource').value;mapTiles.clear();mapTileGeneration++;mapDirty=true;};$('mapSearch').oninput=updateMapState;
+$('stationMap').addEventListener('pointerdown',e=>{mapDrag={x:e.clientX,y:e.clientY,c:mapProject(mapLat,mapLon,mapZoom)};mapDragged=false;$('stationMap').setPointerCapture(e.pointerId);});
+$('stationMap').addEventListener('pointermove',e=>{if(!mapDrag)return;const r=$('stationMap').getBoundingClientRect(),dx=(e.clientX-mapDrag.x)*512/r.width,dy=(e.clientY-mapDrag.y)*320/r.height;if(Math.abs(dx)+Math.abs(dy)>5)mapDragged=true;[mapLat,mapLon]=mapUnproject(mapDrag.c[0]-dx,mapDrag.c[1]-dy,mapZoom);mapDirty=true;});
+$('stationMap').addEventListener('pointerup',e=>{mapDrag=null;if(!mapDragged){const r=$('stationMap').getBoundingClientRect(),x=(e.clientX-r.left)*512/r.width,y=(e.clientY-r.top)*320/r.height;const hit=mapHits.find(h=>Math.hypot(h.x-x,h.y-y)<20);if(hit){const s=hit.items[0].station;mapLat=s.lat;mapLon=s.lon;if(hit.items.length>1)mapZoomBy(1);else{mapSelected=s.call;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已选择 '+s.call+'，可发送 APRS 消息。');}}}mapDirty=true;requestMap();});
+$('stationMap').addEventListener('pointercancel',()=>{mapDrag=null;});setInterval(drawMap,500);
 setInterval(drawSpectrum,100);
 $('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio){gain.gain.value=0;stopPlayback();}else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
 $('aprsSearch').oninput=renderMessages;
 $('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.aprsMessages||[]).map(e=>e.id));renderMessages();};
 $('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;send({op:'aprsMessage',destination:$('aprsDestination').value.trim().toUpperCase(),text:$('aprsText').value});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');});
-setInterval(()=>{if(!document.hidden)send({op:'state'});},2000);open();
+setInterval(()=>{if(!document.hidden)requestMap();},2000);open();
 </script></body></html>''';
