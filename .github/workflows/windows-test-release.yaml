@@ -61,6 +61,21 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Copy-Item -Recurse build/web/* $dest
 
+      - name: Stress native Bluetooth queue and platform handler
+        working-directory: src
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vsPath = & $vswhere -latest -property installationPath
+          $cmakeDir = Join-Path $vsPath 'Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin'
+          $ephemeral = (Resolve-Path 'windows/flutter/ephemeral').Path
+          $wrapper = (Resolve-Path 'build/windows/x64/flutter/Release/flutter_wrapper_app.lib').Path
+          & (Join-Path $cmakeDir 'cmake.exe') -S windows/tests -B build/native-tests "-DFLUTTER_EPHEMERAL_DIR=$ephemeral" "-DFLUTTER_WRAPPER_LIBRARY=$wrapper"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $cmakeDir 'cmake.exe') --build build/native-tests --config Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $cmakeDir 'ctest.exe') --test-dir build/native-tests -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Bundle runtime and portable package
         id: package
         env:
@@ -86,6 +101,7 @@ jobs:
           Copy-Item docs/phone-remote-control.md "$buildDir/PHONE-REMOTE-CONTROL.md"
           Copy-Item docs/remote-suite-v2-plan.md "$buildDir/REMOTE-SUITE-ACCEPTANCE.md"
           Copy-Item docs/windows-hang-audit.md "$buildDir/windows-hang-audit.md"
+          Copy-Item docs/windows-native-receive-hardening.md "$buildDir/windows-native-receive-hardening.md"
           Copy-Item docs/remote-control-audit.md "$buildDir/remote-control-audit.md"
           Copy-Item docs/aprs-gateway-hardening.md "$buildDir/aprs-gateway-hardening.md"
           Copy-Item docs/aprs-history-and-map.md "$buildDir/aprs-history-and-map.md"
