@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:fake_async/fake_async.dart';
@@ -133,6 +134,18 @@ void main() {
       final page = await get('/remote.html', cookie: session);
       expect(page.statusCode, 200);
       await page.drain<void>();
+      final manifest = await get('/remote.webmanifest', cookie: session);
+      expect(manifest.statusCode, 200);
+      final data = jsonDecode(await utf8.decoder.bind(manifest).join()) as Map;
+      expect(data['start_url'], '/remote.html');
+      expect(data['display'], 'standalone');
+      final worker = await get('/remote-worker.js', cookie: session);
+      final workerText = await utf8.decoder.bind(worker).join();
+      expect(workerText, contains('activate'));
+      expect(workerText, isNot(contains('fetch')));
+      final protectedManifest = await get('/remote.webmanifest');
+      expect(protectedManifest.statusCode, 303);
+      await protectedManifest.drain<void>();
       final ws = '${base.replaceFirst('http:', 'ws:')}/websocket.aspx';
       await expectLater(
         WebSocket.connect(ws, headers: {'Origin': base}),

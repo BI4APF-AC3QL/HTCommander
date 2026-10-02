@@ -64,6 +64,10 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
   assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
+  state.readOnly=true;update();assert.equal(element('ptt').disabled,true);assert.equal(element('channel').disabled,true);assert.equal(element('scan').disabled,true);
+  state.readOnly=false;state.emergencyStopped=true;update();assert.equal(element('ptt').disabled,true);
+  state.emergencyStopped=false;update();
+  await element('installApp').onclick();assert.ok(element('notice').textContent.includes('添加到主屏幕'));
   const project=vm.runInNewContext('mapProject',context),unproject=vm.runInNewContext('mapUnproject',context);
   const point=project(31.2,121.5,8),reverse=unproject(...point,8);
   assert.ok(Math.abs(reverse[0]-31.2)<1e-6&&Math.abs(reverse[1]-121.5)<1e-6);

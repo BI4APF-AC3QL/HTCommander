@@ -21,8 +21,13 @@ Goal: implement every item in the agreed feature list and publish a reviewable P
 | 15 | Address QR and DNS/certificate/backend diagnostics | QR decoding and diagnostic failure tests | Pending |
 | 16 | Configuration export/import excluding secrets/private keys, preview | Roundtrip/validation/redaction tests and UI | Pending |
 | 17 | Redacted logs and disconnected simulation mode | Sensitive-data tests, simulated ACK/disconnect/RX and visible UI | Pending |
-| 18 | Phone home-screen app and responsive/full-screen controls | Manifest/install assets, browser layout; background limitation documented | Pending |
+| 18 | Phone home-screen app and responsive/full-screen controls | Manifest/install assets, browser layout; background limitation documented | Partial: authenticated remote manifest/worker, install/fullscreen entry, platform instructions and background limit. HTTP/DOM tests passed; real browser installation and icon packaging verification remain. |
 | 19 | GitHub PR, build/release and simple usage docs | Actual PR state, passing CI and verified release contents | Pending |
+| 20 | Control ownership request and host handoff | Multiple-client request/grant/release/host-recall tests and UI | Pending |
+| 21 | Favorite callsigns and message templates | Bounded persisted favorites/templates, selection and send confirmation tests | Pending |
+| 22 | Hourly gateway health report | Timestamped receive/forward/drop/failure aggregates and clock/retention tests | Pending |
+| 23 | Low-bandwidth mode | Lower audio bandwidth and plot/map rates with measured traffic and tests | Pending |
+| 24 | Operation audit log | Bounded client-attributed channel/message/TX events, redaction and export tests | Pending |
 
 Spectrum means received **audio** spectrum. RF-wide spectrum needs hardware/SDR data not supplied by N7500 and is not claimed. No development test performs real RF transmission. These boundaries preserve the original feature list.
 

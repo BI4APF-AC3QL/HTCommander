@@ -2,7 +2,7 @@ name: Windows test release
 
 on:
   push:
-    branches: [main, 'improve/**', 'feature/portable-phone-remote-suite']
+    branches: [main, 'improve/**', 'feature/portable-phone-remote-suite', 'feature/remote-aprs-dashboard']
     paths:
       - 'src/**'
       - 'tools/https-gateway/**'
@@ -84,6 +84,7 @@ jobs:
           Copy-Item (Join-Path $crtDir.FullName '*.dll') $buildDir
           Copy-Item LICENSE $buildDir
           Copy-Item docs/phone-remote-control.md "$buildDir/PHONE-REMOTE-CONTROL.md"
+          Copy-Item docs/remote-suite-v2-plan.md "$buildDir/REMOTE-SUITE-ACCEPTANCE.md"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH
@@ -136,6 +137,7 @@ jobs:
           支持局域网/VPN与HTTPS反向代理；手机麦克风需要HTTPS。远程访问/PTT默认关闭。
           详细步骤见包内 PHONE-REMOTE-CONTROL.md；尚未进行N7500实机远程语音验收。
           包含可配置域名及后端端口的 HTCommander-HTTPS-Gateway.exe；入门见包内 简单配置方法.md。
+          当前功能的验收进度见 REMOTE-SUITE-ACCEPTANCE.md；测试版不代表全部规划功能已完成。
           "@ | Set-Content release-notes.md -Encoding utf8
           gh release create $env:BUILD_TAG $env:BUILD_FILE SHA256SUMS.txt --target $env:BUILD_SHA --title "Windows 测试版 $($env:BUILD_SHA.Substring(0, 8))" --notes-file release-notes.md --prerelease --latest=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

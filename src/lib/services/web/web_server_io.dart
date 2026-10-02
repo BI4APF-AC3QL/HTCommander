@@ -427,6 +427,22 @@ class WebServer {
     final response = request.response;
     try {
       if (remoteConfig.enabled &&
+          const [
+            '/remote.webmanifest',
+            '/remote-worker.js',
+          ].contains(request.uri.path)) {
+        final manifest = request.uri.path.endsWith('.webmanifest');
+        response.headers.contentType = ContentType(
+          'application',
+          manifest ? 'manifest+json' : 'javascript',
+          charset: 'utf-8',
+        );
+        response.headers.set('Cache-Control', 'no-store');
+        response.write(manifest ? remotePwaManifest : remotePwaWorker);
+        await response.close();
+        return;
+      }
+      if (remoteConfig.enabled &&
           (request.uri.path == '/' || request.uri.path == '/remote.html')) {
         response.headers.contentType = ContentType.html;
         response.headers.set('Cache-Control', 'no-store');

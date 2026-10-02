@@ -9,9 +9,15 @@ ${failed ? '<p role="alert">密码错误，请重试 / Incorrect password</p>' :
 <input id="password" name="password" type="password" required autocomplete="current-password" maxlength="1024">
 <button>登录 / Sign in</button></form><small>密码在电脑的远程操控设置中配置。</small></main></html>''';
 
+const remotePwaManifest =
+    r'''{"id":"/remote.html","name":"HTCommander 远程电台","short_name":"远程电台","start_url":"/remote.html","scope":"/","display":"standalone","background_color":"#101827","theme_color":"#101827","description":"连接 Windows 主机查看、收听和控制电台","icons":[{"src":"/icons/Icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icons/Icon-512.png","sizes":"512x512","type":"image/png"}]}''';
+// No fetch handler or offline cache: authenticated content always uses network.
+const remotePwaWorker =
+    "self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));";
+
 const remoteMobilePage = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>HTCommander 远程操控</title><style>
+<title>HTCommander 远程操控</title><link rel="manifest" href="/remote.webmanifest"><link rel="apple-touch-icon" href="/icons/Icon-192.png"><meta name="theme-color" content="#101827"><meta name="apple-mobile-web-app-capable" content="yes"><style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101827;color:#eef4ff;font:16px system-ui}main{max-width:680px;margin:auto;padding:24px 18px 40px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px}h2{font-size:17px;margin:0 0 14px}.card{background:#1c293d;border:1px solid #33445e;border-radius:16px;padding:18px;margin:16px 0}.muted{color:#adbed5;font-size:14px;line-height:1.6}button,select,input{font:inherit}button,select{border:1px solid #40536f;background:#253752;color:inherit;border-radius:10px;padding:12px;min-height:48px}select{width:100%;margin:8px 0 12px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}a{color:#7fe3cf}label{display:block;margin:8px 0}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.row>*{flex:1}input[type=range]{width:100%;min-height:40px;accent-color:#79ddc7}#ptt{width:100%;min-height:112px;font-size:23px;background:#234c48;border:2px solid #70d7bc;touch-action:none;user-select:none;-webkit-user-select:none}#ptt.active{background:#963849;border-color:#ff849d}#notice{white-space:pre-wrap;color:#ffcea0;min-height:24px}#connection{font-size:14px;color:#79ddc7}#frequency{font:28px ui-monospace,monospace;margin:8px 0}footer{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:24px}
 </style></head><body><main>
 <header><h1>远程电台</h1><span id="connection" role="status">正在连接…</span></header>
@@ -30,10 +36,16 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
 <section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
 <section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p></section>
+<div class="row"><button id="installApp">添加到主屏幕</button><button id="fullscreen">全屏</button></div><p class="muted">Android 可使用浏览器“安装应用 / 添加到主屏幕”；iPhone 使用 Safari“分享 → 添加到主屏幕”。切到后台可能暂停连接与收听，讲话会停止；返回页面后检查连接状态。</p>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
 const $=id=>document.getElementById(id);
+let installPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;});
+$('installApp').onclick=async()=>{if(!installPrompt){notice('请使用浏览器菜单“安装应用 / 添加到主屏幕”；iPhone 在 Safari 分享菜单中添加。');return;}try{await installPrompt.prompt();await installPrompt.userChoice;}catch(error){notice(error.message);}finally{installPrompt=null;}};
+$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('此浏览器不支持全屏，可添加到主屏幕。');}catch(error){notice(error.message);}};
+if(window.isSecureContext&&'serviceWorker' in navigator)navigator.serviceWorker.register('/remote-worker.js',{scope:'/remote.html'}).catch(()=>notice('应用安装组件未注册，可继续通过浏览器使用。'));
 let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0;
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
