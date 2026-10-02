@@ -19,7 +19,7 @@ function element(id) {
   return elements.get(id);
 }
 const documentEvents = {}, windowEvents = {};
-let resolvePermission, stopped = 0, processor;
+let resolvePermission, resolveLocation, stopped = 0, processor;
 const stream = { getTracks: () => [{ stop() { stopped++; } }] };
 const audioNode = () => ({ connect() {}, disconnect() {}, gain: { value: 1 } });
 class AudioContext {
@@ -42,9 +42,9 @@ const document = { hidden: false, getElementById: element, createElement: () => 
   addEventListener: (name, f) => documentEvents[name] = f };
 const context = { document, WebSocket, ArrayBuffer, DataView, Float32Array,
   Image: class {static all=[];constructor(){this.constructor.all.push(this);}},
-  window: { isSecureContext: true, AudioContext, addEventListener: (name, f) => windowEvents[name] = f },
+  window: { isSecureContext: true, AudioContext, confirm:()=>true, addEventListener: (name, f) => windowEvents[name] = f },
   location: { protocol: 'https:', host: 'radio.example' },
-  navigator: { mediaDevices: { getUserMedia: () => new Promise(r => resolvePermission = r) } },
+  navigator: { mediaDevices: { getUserMedia: () => new Promise(r => resolvePermission = r) },geolocation:{getCurrentPosition:callback=>resolveLocation=callback} },
   setInterval() {}, setTimeout() {}, clearTimeout() {}, fetch: async () => ({ redirected: false }),
 };
 vm.runInNewContext(script, context);
@@ -67,6 +67,16 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   state.readOnly=true;update();assert.equal(element('ptt').disabled,true);assert.equal(element('channel').disabled,true);assert.equal(element('scan').disabled,true);
   state.readOnly=false;state.emergencyStopped=true;update();assert.equal(element('ptt').disabled,true);
   state.emergencyStopped=false;update();
+  state.positionAllowed=true;update();
+  const beforePosition=commands().filter(x=>x==='aprsPosition').length;
+  element('positionAcquire').onclick();
+  resolveLocation({coords:{latitude:31.2,longitude:121.5,accuracy:15},timestamp:Date.now()});
+  assert.equal(commands().filter(x=>x==='aprsPosition').length,beforePosition);
+  assert.equal(element('positionSend').disabled,false);
+  context.window.confirm=()=>false;element('positionSend').onclick();
+  assert.equal(commands().filter(x=>x==='aprsPosition').length,beforePosition);
+  context.window.confirm=()=>true;element('positionSend').onclick();
+  assert.equal(commands().filter(x=>x==='aprsPosition').length,beforePosition+1);
   await element('installApp').onclick();assert.ok(element('notice').textContent.includes('添加到主屏幕'));
   const project=vm.runInNewContext('mapProject',context),unproject=vm.runInNewContext('mapUnproject',context);
   const point=project(31.2,121.5,8),reverse=unproject(...point,8);

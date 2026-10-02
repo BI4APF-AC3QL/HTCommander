@@ -36,6 +36,7 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
 <section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
 <section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p></section>
+<section class="card"><h2>一次性 APRS 位置发送</h2><div class="row"><button id="positionAcquire">获取手机位置</button><button id="positionRadio">预览电台位置</button></div><p id="positionPreview" class="muted">先选择位置来源。获取定位不会发送。</p><button id="positionSend" disabled>确认并发送此位置</button><p id="positionResult" class="muted"></p><p class="muted">位置发送需 Windows 单独授权及总允许发射。定位有效期 2 分钟，精度须在 100 米以内；电台未报告精度时显示未知。位置报文没有消息 ACK，提交不代表已发射或收到。</p></section>
 <div class="row"><button id="installApp">添加到主屏幕</button><button id="fullscreen">全屏</button></div><p class="muted">Android 可使用浏览器“安装应用 / 添加到主屏幕”；iPhone 使用 Safari“分享 → 添加到主屏幕”。切到后台可能暂停连接与收听，讲话会停止；返回页面后检查连接状态。</p>
 <footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
@@ -50,6 +51,13 @@ let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
 let aprsReadThrough=0,aprsMessageSignature='';
+let positionDraft=null,positionGeneration=0;
+function positionPreview(){
+ const p=positionDraft;if(!p){$('positionPreview').textContent='先选择位置来源。获取定位不会发送。';return;}
+ const age=(Date.now()-Date.parse(p.capturedAt))/1000;
+ $('positionPreview').textContent=(p.radio?'电台':'手机')+' · '+p.latitude.toFixed(5)+', '+p.longitude.toFixed(5)+' · 精度 '+(p.accuracy==null?'未知':p.accuracy.toFixed(1)+' 米')+' · '+Math.max(0,Math.round(age))+' 秒前'+(age>120?'（已过期，请重新获取）':'');
+}
+function positionReady(){const p=positionDraft;if(!p)return false;const age=Date.now()-Date.parse(p.capturedAt);return Number.isFinite(age)&&age>=-5000&&age<=120000&&(p.radio&&p.accuracy==null||p.accuracy>0&&p.accuracy<=100);}
 let mapLat=31.2,mapLon=121.5,mapZoom=6,mapDirty=true,mapSelected='',mapSourceId='',mapSourceSignature='',mapHits=[],mapDrag=null,mapDragged=false,mapTileErrors=0;
 const mapTiles=new Map();let mapLoads=0,mapTileGeneration=0;
 function mapProject(lat,lon,z){const scale=256*2**z,s=Math.sin(Math.max(-85.051129,Math.min(85.051129,lat))*Math.PI/180);return [(lon+180)/360*scale,(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale];}
@@ -128,6 +136,8 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onerror=()=>socket.close();
 }
 function render(){
+ positionPreview();$('positionSend').disabled=!positionReady()||!state.connected||!state.positionAllowed||state.readOnly||state.emergencyStopped||state.txOwner!=null;
+ const ps=state.positionStatus;if(ps&&ps.clientId===clientId)$('positionResult').textContent=ps.status==='submitted'?'电脑已提交位置报文，尚无射频发送或接收确认。':'电脑拒绝位置发送，请检查权限、定位时间与电台状态。';
  updateMapState();
  const g=state.gatewayMetrics||{};$('gatewayMetrics').textContent='排队 '+(g.queueDepth||0)+' · 过期 '+(g.queueExpired||0)+' · 队列溢出 '+(g.queueOverflow||0)+' · 重复 '+((g.queueDuplicates||0)+(g.duplicateDrops||0))+' · 限速丢弃 '+(g.rateDrops||0)+' · 写入错误 '+(g.sendErrors||0);
  renderMessages();
@@ -175,6 +185,9 @@ $('listen').onclick=async()=>{try{await context();listening=!listening;send(list
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
 $('aprsSearch').oninput=renderMessages;
 $('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.aprsMessages||[]).map(e=>e.id));renderMessages();};
+$('positionAcquire').onclick=()=>{if(!window.isSecureContext||!navigator.geolocation){notice('手机定位需要 HTTPS 和浏览器定位权限。');return;}const generation=++positionGeneration;$('positionPreview').textContent='等待定位授权…';navigator.geolocation.getCurrentPosition(p=>{if(generation!==positionGeneration||document.hidden)return;positionDraft={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,capturedAt:new Date(p.timestamp).toISOString(),radio:false};render();},error=>{if(generation===positionGeneration){positionDraft=null;notice('定位失败：'+error.message);render();}},{enableHighAccuracy:true,timeout:15000,maximumAge:0});};
+$('positionRadio').onclick=()=>{positionGeneration++;const p=state.radioPosition;if(!p||!p.locked){positionDraft=null;notice('电台尚无锁定位置。');render();return;}positionDraft={latitude:p.latitude,longitude:p.longitude,accuracy:p.accuracy>0?p.accuracy:null,capturedAt:p.receivedTime,radio:true};render();};
+$('positionSend').onclick=()=>{if($('positionSend').disabled||!positionReady())return;positionPreview();if(!window.confirm('将通过电台发送当前位置：'+positionDraft.latitude.toFixed(5)+', '+positionDraft.longitude.toFixed(5)+'。确认发射？'))return;send({op:'aprsPosition',source:positionDraft.radio?'radio':'phone',position:positionDraft,confirmed:true});notice('已提交位置发送请求，请查看电脑处理结果。');};
 $('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;send({op:'aprsMessage',destination:$('aprsDestination').value.trim().toUpperCase(),text:$('aprsText').value});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');});
 setInterval(()=>{if(!document.hidden)requestMap();},2000);open();
 </script></body></html>''';

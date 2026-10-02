@@ -258,6 +258,12 @@ class WebServerHandler {
   /// disconnect/reconnect cycle makes the client re-fetch the radio's device
   /// info, channels, settings and status.
   void _repointBrowsers() {
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: null,
+      store: false,
+    );
     final server = _server;
     if (server == null || server.clientCount == 0) return;
     _remote.release();

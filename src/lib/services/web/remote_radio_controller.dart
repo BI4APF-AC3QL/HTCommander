@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../data_broker.dart';
 import '../../radio/gaia_protocol.dart';
 import '../../aprs/aprs_events.dart';
+import '../../aprs/remote_position.dart';
 import 'remote_access_config.dart';
 import '../../utils/map_source.dart';
 
@@ -76,6 +77,12 @@ class RemoteRadioController {
           RemoteAccessConfig.current.allowPosition &&
           DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1,
       'txOwner': _owner,
+      'radioPosition': DataBroker.getValueDynamic(id, 'Position', null),
+      'positionStatus': DataBroker.getValueDynamic(
+        1,
+        'RemotePositionStatus',
+        null,
+      ),
       'gatewayMetrics': DataBroker.getValueDynamic(201, 'GateMetrics', {}),
       'aprsMessages': DataBroker.getValueDynamic(1, 'RemoteAprsMessages', []),
       'aprsDeliveries': DataBroker.getValueDynamic(
@@ -133,6 +140,7 @@ class RemoteRadioController {
     final id = target();
     if (id <= 0) return 'Connect the radio on the Windows host first.';
     if (op == 'aprsMessage') return _sendAprs(id, message, clientId);
+    if (op == 'aprsPosition') return _sendPosition(id, clientId, message);
     if (op == 'pttStart') {
       if (!_txAllowed) {
         return 'Enable remote TX and Allow transmit on the host.';
@@ -257,6 +265,64 @@ class RemoteRadioController {
         remoteRequestId:
             '${now.microsecondsSinceEpoch}-${++_aprsRequestCounter}',
       ),
+    );
+    return null;
+  }
+
+  String? _sendPosition(int id, int clientId, Map message) {
+    if (!RemoteAccessConfig.current.allowPosition ||
+        DataBroker.getValue<int>(0, 'AllowTransmit', 0) != 1) {
+      return 'Enable remote position packets and Allow transmit on Windows.';
+    }
+    if (message['confirmed'] != true) {
+      return 'Confirm position transmission first.';
+    }
+    final radio = message['source'] == 'radio';
+    if (!radio && message['source'] != 'phone') {
+      return 'Invalid position source.';
+    }
+    final value = radio
+        ? DataBroker.getValueDynamic(id, 'Position', null)
+        : message['position'];
+    if (radio) {
+      final preview = message['position'];
+      if (preview is! Map ||
+          value is! Map ||
+          preview['latitude'] != value['latitude'] ||
+          preview['longitude'] != value['longitude'] ||
+          preview['capturedAt'] != value['receivedTime']) {
+        return 'Radio position changed; preview it again before confirming.';
+      }
+    }
+    final fix = value is Map
+        ? RemotePositionFix.parse(value, _clock(), radio: radio)
+        : null;
+    if (fix == null) {
+      return 'Position must be fresh (2 minutes), fixed, and accurate within 100 m.';
+    }
+    final status = DataBroker.getValueDynamic(id, 'HtStatus', null);
+    final lock = DataBroker.getValueDynamic(id, 'LockState', null);
+    final aprs = _channels(id).where((c) => c['name'] == 'APRS');
+    if (_owner != null ||
+        status is! Map ||
+        status['isPowerOn'] != true ||
+        status['isInTx'] == true ||
+        (lock is Map && lock['isLocked'] == true) ||
+        aprs.isEmpty ||
+        aprs.first['txDisable'] != false ||
+        (DataBroker.getValue<String>(0, 'CallSign', '') ?? '').isEmpty) {
+      return 'Configure callsign and a transmit-enabled APRS channel; radio must be idle.';
+    }
+    final now = _clock();
+    if (_lastAprsSubmission != null &&
+        now.difference(_lastAprsSubmission!) < const Duration(seconds: 10)) {
+      return 'Wait 10 seconds between APRS submissions.';
+    }
+    _lastAprsSubmission = now;
+    _dispatch(
+      1,
+      'SendRemoteAprsPosition',
+      RemotePositionRequest(id, clientId, fix),
     );
     return null;
   }

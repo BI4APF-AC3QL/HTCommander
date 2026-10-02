@@ -11,6 +11,7 @@ import 'dart:convert';
 import '../aprs/message_delivery.dart';
 import '../aprs/conversation_history.dart';
 import '../aprs/station_index.dart';
+import '../aprs/remote_position.dart';
 import '../services/web/remote_access_config.dart';
 import '../aprs/aprs_auth.dart';
 import '../aprs/aprs_events.dart';
@@ -48,6 +49,7 @@ class AprsHandler {
   final _stationIndex = StationIndex(clock: DateTime.now);
   final Map<String, (int, AX25Packet)> _retryFrames = {};
   final Map<String, int> _deliveryClients = {};
+  final Map<int, Set<int>> _positionRadios = {};
   Timer? _deliveryTimer;
   String? _lastDeliverySnapshot;
 
@@ -91,6 +93,17 @@ class AprsHandler {
 
   void _tickDelivery() {
     if (_disposed) return;
+    _updateLocalCallsignWithId();
+    for (final client in _positionRadios.keys.toList()) {
+      if (!RemoteAccessConfig.current.allowPosition ||
+          _broker.getValue<int>(0, 'AllowTransmit', 0) != 1 ||
+          _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1 ||
+          _positionRadios[client]!.any(
+            (id) => _broker.getValue<String>(id, 'State', '') != 'Connected',
+          )) {
+        _cancelPositionPackets(client);
+      }
+    }
     for (final entry in _delivery.tick(
       allowed: _retryAllowed,
       ready: (e) {
@@ -192,12 +205,18 @@ class AprsHandler {
   /// state. Safe to call once at startup.
   void init() {
     _broker.subscribe(
+      deviceId: _aprsDeviceId,
+      name: 'SendRemoteAprsPosition',
+      callback: _onRemotePosition,
+    );
+    _broker.subscribe(
       deviceId: 0,
       name: 'CancelRemoteAprs',
       callback: (_, _, client) {
         _delivery.cancelWhere(
           (e) => client == null || _deliveryClients[e.id] == client,
         );
+        _cancelPositionPackets(client is int ? client : null);
         _tickDelivery();
       },
     );
@@ -212,6 +231,7 @@ class AprsHandler {
         'Channels',
         'LockState',
         'webServerEmergencyStopped',
+        'webServerAllowPosition',
       ],
       callback: (_, _, _) => _tickDelivery(),
     );
@@ -383,6 +403,111 @@ class AprsHandler {
     while (_aprsFrames.length > _maxFrameHistory) {
       _aprsFrames.removeAt(0);
     }
+  }
+
+  void _cancelPositionPackets(int? client) {
+    for (final id in _positionRadios.keys.toList()) {
+      if (client != null && client != id) continue;
+      for (final radio in _positionRadios.remove(id)!) {
+        _broker.dispatch(
+          deviceId: radio,
+          name: 'CancelRemoteAprsFrame',
+          data: 'remote-aprs:position:$id',
+          store: false,
+        );
+      }
+    }
+  }
+
+  void _onRemotePosition(int deviceId, String name, Object? data) {
+    if (_disposed || data is! RemotePositionRequest) return;
+    final id = data.radioDeviceId, fix = data.fix;
+    void result(String status) => _broker.dispatch(
+      deviceId: _aprsDeviceId,
+      name: 'RemotePositionStatus',
+      data: {
+        'clientId': data.clientId,
+        'status': status,
+        'time': DateTime.now().toIso8601String(),
+      },
+      store: true,
+    );
+    final config = RemoteAccessConfig.current;
+    final status = _broker.getValueDynamic(id, 'HtStatus', null);
+    final lock = _broker.getValueDynamic(id, 'LockState', null);
+    final channels = _broker.getValueDynamic(id, 'Channels', null);
+    final channel = channels is List
+        ? channels
+              .whereType<Map>()
+              .where((c) => c['name'] == 'APRS')
+              .firstOrNull
+        : null;
+    final valid = RemotePositionFix.parse(
+      {
+        ...fix.toJson(),
+        'receivedTime': fix.capturedAt.toIso8601String(),
+        'locked': true,
+        'accuracy': fix.accuracy ?? 0,
+      },
+      DateTime.now(),
+      radio: fix.radio,
+    );
+    _updateLocalCallsignWithId();
+    final source = AX25Address.parse(_localCallsignWithId ?? '');
+    if (!config.allowPosition ||
+        _broker.getValue<int>(0, 'AllowTransmit', 0) != 1 ||
+        _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1 ||
+        _broker.getValue<String>(id, 'State', '') != 'Connected' ||
+        _broker.getValue<int>(1, 'RemotePttOwner', -1) != -1 ||
+        valid == null ||
+        source == null ||
+        status is! Map ||
+        status['isPowerOn'] != true ||
+        status['isInTx'] == true ||
+        (lock is Map && lock['isLocked'] == true) ||
+        channel == null ||
+        channel['txDisable'] != false ||
+        channel['channelId'] is! int) {
+      result('rejected');
+      return;
+    }
+    final packet = AX25Packet(
+      addresses: [AX25Address.parse('APRS')!, source],
+      dataStr: valid.information,
+      type: FrameType.uFrameUi,
+      command: true,
+      time: DateTime.now(),
+    );
+    packet.pid = 240;
+    packet.incoming = false;
+    packet.sent = false;
+    packet.channelId = channel['channelId'];
+    packet.channelName = 'APRS';
+    packet.tag = 'remote-aprs:position:${data.clientId}';
+    packet.deadline = DateTime.now().add(const Duration(seconds: 15));
+    (_positionRadios[data.clientId] ??= {}).add(id);
+    _broker.dispatch(
+      deviceId: id,
+      name: 'TransmitDataFrame',
+      data: TransmitDataFrameData(
+        packet: packet,
+        channelId: packet.channelId,
+        regionId: -1,
+      ),
+      store: false,
+    );
+    final parsed = AprsPacket.parse(packet);
+    if (parsed != null) {
+      _aprsFrames.add(parsed);
+      _trimFrames();
+      _broker.dispatch(
+        deviceId: _aprsDeviceId,
+        name: 'AprsFrame',
+        data: AprsFrameEventArgs(parsed, packet, null),
+        store: false,
+      );
+    }
+    result('submitted');
   }
 
   void _onSendAprsMessage(int deviceId, String name, Object? data) {
@@ -860,9 +985,11 @@ class AprsHandler {
   /// Disposes the handler, unsubscribing from the broker.
   void dispose() {
     if (_disposed) return;
-    _disposed = true;
     _deliveryTimer?.cancel();
     _delivery.cancelAll();
+    _tickDelivery();
+    _cancelPositionPackets(null);
+    _disposed = true;
     _retryFrames.clear();
     _broker.dispose();
     _aprsFrames.clear();
