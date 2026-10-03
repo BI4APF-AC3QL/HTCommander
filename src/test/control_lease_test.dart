@@ -369,4 +369,47 @@ void main() {
       expect(prefs.getString('databroker_RemoteClients'), 'stale-client');
     },
   );
+  test(
+    'authenticated dashboard carries observed radio telemetry and clears on disconnect',
+    () async {
+      final host = _Host();
+      try {
+        await host.start();
+        final phone = await host.phone();
+        final before =
+            (await phone.command({'op': 'state'}))['state']['dashboard'] as Map;
+        expect(before['radio']['reportAt'], isNull);
+        expect(before['clientCount'], 1);
+        set(2, 'Channels', [
+          {'channelId': 0, 'name': 'A', 'rxFreq': 145000000},
+          {'channelId': 1, 'name': 'Scanning', 'rxFreq': 144390000},
+        ]);
+        set(2, 'HtStatus', {
+          'currChId': 1,
+          'isInRx': true,
+          'isInTx': false,
+          'isScan': true,
+          'rssi': 7,
+        });
+        final seen =
+            (await phone.command({'op': 'state'}))['state']['dashboard'] as Map;
+        expect(seen['radio']['reportAt'], isNotNull);
+        expect(seen['radio']['reportAgeSeconds'], lessThan(3));
+        expect(seen['radio']['channel'], 'Scanning');
+        expect(seen['radio']['rxFrequency'], 144390000);
+        expect(seen['radio']['receiving'], true);
+        set(2, 'State', 'Disconnected');
+        final down =
+            (await phone.command({'op': 'state'}))['state']['dashboard'] as Map;
+        expect(down['radio']['receiving'], isNull);
+        expect(down['radio']['reportAt'], isNull);
+        set(2, 'State', 'Connected');
+        final reconnected =
+            (await phone.command({'op': 'state'}))['state']['dashboard'] as Map;
+        expect(reconnected['radio']['reportAt'], isNull);
+      } finally {
+        await host.close();
+      }
+    },
+  );
 }

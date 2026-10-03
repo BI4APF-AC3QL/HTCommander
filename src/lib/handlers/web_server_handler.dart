@@ -228,6 +228,13 @@ class WebServerHandler {
       name: 'State',
       callback: _onRadioState,
     );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'HtStatus',
+      callback: (id, _, value) {
+        if (!_disposed) _remote.observeRadioReport(id, value);
+      },
+    );
     // Raw radio response frames are relayed to browsers as binary messages.
     _broker.subscribe(
       deviceId: DataBroker.allDevices,
@@ -369,6 +376,7 @@ class WebServerHandler {
 
   void _onRadioState(int deviceId, String name, Object? data) {
     if (_disposed) return;
+    if (data != 'Connected') _remote.observeRadioReport(deviceId, null);
     if (deviceId != _targetRadioDeviceId) return;
     final state = data is String ? data : 'Disconnected';
     if (state != 'Connected') _remote.recallControl();

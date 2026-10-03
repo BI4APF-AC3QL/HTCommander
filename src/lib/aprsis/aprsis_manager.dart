@@ -1320,7 +1320,7 @@ class AprsIsManager {
       deviceId: aprsIsDeviceId,
       name: 'AprsIsAvailable',
       data: available,
-      store: false,
+      store: true,
     );
   }
 
@@ -1329,7 +1329,7 @@ class AprsIsManager {
       deviceId: aprsIsDeviceId,
       name: 'AprsIsState',
       data: label,
-      store: false,
+      store: true,
     );
   }
 

@@ -9,6 +9,7 @@ import '../../utils/map_source.dart';
 import 'control_lease.dart';
 import 'remote_audit.dart';
 import 'aprs_shortcuts.dart';
+import 'remote_dashboard.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
@@ -108,6 +109,19 @@ class RemoteRadioController {
   DateTime? _lastAprsSubmission;
   int _aprsRequestCounter = 0;
   final Map<int, List<double>> _viewports = {};
+  final Map<int, DateTime> _radioReports = {};
+  void observeRadioReport(int id, Object? status) {
+    if (id <= 1 || id == 201) return;
+    _radioReports.remove(id);
+    if (status is Map &&
+        ['isInRx', 'isInTx', 'isScan'].any((key) => status[key] is bool)) {
+      _radioReports[id] = _clock().toUtc();
+    }
+    while (_radioReports.length > 32) {
+      _radioReports.remove(_radioReports.keys.first);
+    }
+  }
+
   static const int microphoneFrameMagic = 0xf2;
 
   bool get _txAllowed =>
@@ -150,6 +164,12 @@ class RemoteRadioController {
             .take(256)
             .toList();
     return {
+      'dashboard': RemoteDashboard.build(
+        radioId: id,
+        now: _clock(),
+        radioReportAt: _radioReports[id],
+        audit: auditEvents,
+      ),
       'controlOwner': _control.owner,
       'auditEvents': auditEvents.reversed.take(20).toList(),
       'aprsShortcuts': AprsShortcuts.current.toJson(),

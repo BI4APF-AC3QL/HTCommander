@@ -22,6 +22,7 @@ const remoteMobilePage = r'''<!doctype html>
 </style></head><body><main>
 <header><h1>远程电台</h1><span id="connection" role="status">正在连接…</span></header>
 <div id="notice" role="alert"></div>
+<section class="card"><h2>运行仪表盘</h2><div id="dashboardRadio" class="muted">等待电脑数据</div><p id="dashboardReport" class="muted"></p><p id="dashboardChannel"></p><p id="dashboardGateway"></p><p id="dashboardTotals" class="muted"></p><p id="dashboardMessages" class="muted"></p><p id="dashboardClients" class="muted"></p><details><summary>最近 5 条活动（UTC）</summary><div id="dashboardActivity"></div></details><p class="muted">收发与扫描是电台上次报告的状态，报告时间未知时会明确标注。统计表示本次运行的软件事件，不代表射频交付。</p></section>
 <section class="card"><h2 id="radio">Windows 电台</h2><div id="frequency">— MHz</div><div id="status" class="muted">等待电脑连接电台</div>
 <label for="channel">信道 A</label><select id="channel" disabled></select>
 <div class="row"><button id="scan" disabled>开启扫描</button><button id="listen">开启收听</button></div>
@@ -143,6 +144,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
 $('controlRequest').onclick=()=>send({op:'requestControl'});
 $('controlRelease').onclick=()=>{stopPtt();send({op:'releaseControl'});};
 function render(){
+ renderDashboard();
  const control=state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped;
  $('controlRequest').disabled=!socket||socket.readyState!==WebSocket.OPEN||state.emergencyStopped||control||state.controlRequested;
  $('controlRelease').disabled=!control&&!state.controlRequested;
@@ -180,6 +182,22 @@ function render(){
  $('ptt').disabled=!ready||(state.txOwner!=null&&!own);
  $('txHint').textContent=state.emergencyStopped?'Windows 已紧急停止远程控制。':!control?'请先申请操作权；Windows 可批准或收回。':!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
  if(pressed&&own){transmitting=true;$('ptt').classList.add('active');$('ptt').textContent='正在发射 · 松手停止';}else if(transmitting&&!own){stopPtt();notice('发射已停止。');}
+}
+function renderDashboard(){
+ const d=state.dashboard||{},r=d.radio||{},g=d.gateway||{},h=g.health||{},m=d.messages||{};
+ const count=v=>Number.isSafeInteger(v)&&v>=0?String(v):'未知';
+ const flag=(v,yes,no)=>v===true?yes:v===false?no:'未知';
+ const links={Connected:'已连接',Connecting:'连接中',Disconnected:'未连接','Connected (verified)':'已验证连接','Connected (read-only)':'只读连接'};
+ $('dashboardRadio').textContent='电台 '+(links[r.link]||'未知')+' · 接收 '+flag(r.receiving,'中','空闲')+' · 发射 '+flag(r.transmitting,'中','空闲')+' · 扫描 '+flag(r.scan,'开启','关闭')+' · 信号 '+count(r.signalLevel)+'/15';
+ $('dashboardReport').textContent=typeof r.reportAt==='string'&&Number.isSafeInteger(r.reportAgeSeconds)&&r.reportAgeSeconds>=0?'上次状态报告 '+r.reportAt+' · '+r.reportAgeSeconds+' 秒前':'上次状态报告时间未知';
+ const frequency=typeof r.rxFrequency==='number'&&Number.isFinite(r.rxFrequency)&&r.rxFrequency>0?(r.rxFrequency/1e6).toFixed(5)+' MHz':'频率未知';
+ $('dashboardChannel').textContent=(typeof r.channel==='string'?r.channel:'信道未知')+' · '+frequency+(r.channelSource==='settingsA'?'（配置的 A 信道）':r.channelSource==='report'?'（上次报告的信道）':'');
+ $('dashboardGateway').textContent='APRS-IS '+flag(g.enabled,'已启用','已关闭')+' · '+(links[g.link]||'状态未知');
+ $('dashboardTotals').textContent='最近 24 小时 · RF 收到 '+count(h.receivedRf)+' · IS 收到 '+count(h.receivedIs)+' · 上行 '+count(h.toInternet)+' · 下行请求 '+count(h.toRfRequested)+' · 丢弃 '+count(h.dropped)+' · 故障 '+count(h.failures);
+ $('dashboardMessages').textContent='消息 · 等待 ACK '+count(m.waiting)+' · 已确认 '+count(m.acknowledged)+' · 拒收 '+count(m.rejected)+' · 超时 '+count(m.timedOut)+' · 取消 '+count(m.cancelled);
+ $('dashboardClients').textContent='远程连接 '+count(d.clientCount)+'（同一登录可包含多条连接）';
+ const labels={requestControl:'申请操作权',releaseControl:'释放操作权',handoffControl:'移交操作权',grantControl:'授予操作权',recallControl:'主机收回',disconnect:'断开连接',revokeLogin:'撤销登录',readOnlyRole:'设置只读角色',channel:'换信道',volume:'调音量',scan:'扫描',aprsMessage:'APRS 消息请求',aprsPosition:'位置发送请求',pttStart:'PTT 请求',pttStop:'停止 PTT',pttRelease:'释放 PTT',invalidCommand:'未知命令',rawWrite:'原始写入',writeDenied:'权限拒绝'},results={accepted:'请求接受',denied:'拒绝',released:'释放'};
+ $('dashboardActivity').replaceChildren(...(Array.isArray(d.activity)?d.activity:[]).slice(0,5).map(e=>{const row=document.createElement('p');row.textContent=e.time+' · '+(e.clientId===0?'Windows':'客户端 #'+e.clientId)+' · '+(labels[e.action]||'操作')+' · '+(results[e.result]||'未知结果');return row;}));
 }
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}
 function playAudio(data){if(!listening||!audio||audio.state!=='running')return;const v=new DataView(data);if(v.byteLength<6||v.getUint8(0)!==241)return;const n=v.getUint8(1),rate=v.getUint16(2,true);if(n<1||n>2||rate<8000||rate>48000)return;const frames=Math.floor((v.byteLength-4)/(2*n));if(!frames)return;const b=audio.createBuffer(n,frames,rate);for(let ch=0;ch<n;ch++){const a=b.getChannelData(ch);for(let i=0;i<frames;i++)a[i]=v.getInt16(4+(i*n+ch)*2,true)/32768;}

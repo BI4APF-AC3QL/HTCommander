@@ -124,6 +124,28 @@ void main() {
       time.flushMicrotasks();
     });
   });
+  test('gateway link telemetry stays queryable through login and disable', () {
+    fakeAsync((time) {
+      final network = FakeNetwork();
+      final manager = AprsIsManager(networkFactory: () => network)..init();
+      time.flushMicrotasks();
+      expect(DataBroker.getValueDynamic(201, 'AprsIsState'), 'Connecting');
+      network.ready();
+      time.flushMicrotasks();
+      network.login();
+      expect(
+        DataBroker.getValueDynamic(201, 'AprsIsState'),
+        'Connected (verified)',
+      );
+      expect(DataBroker.getValueDynamic(201, 'AprsIsAvailable'), true);
+      set('AprsIsEnabled', 0);
+      time.flushMicrotasks();
+      expect(DataBroker.getValueDynamic(201, 'AprsIsState'), 'Disconnected');
+      expect(DataBroker.getValueDynamic(201, 'AprsIsAvailable'), false);
+      unawaited(manager.dispose());
+      time.flushMicrotasks();
+    });
+  });
 
   test('dispose during connect cannot resurrect client or retry timers', () {
     fakeAsync((time) {
