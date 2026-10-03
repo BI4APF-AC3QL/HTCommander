@@ -77,7 +77,12 @@ void main() {
       addTearDown(observer.dispose);
       observer.subscribeMultiple(
         deviceId: 0,
-        names: ['RemoteControlGrant', 'RemoteControlRecall'],
+        names: [
+          'RemoteControlGrant',
+          'RemoteControlRecall',
+          'RemoteClientRole',
+          'RemoteClientRevoke',
+        ],
         callback: (_, name, value) => commands[name] = value,
       );
       await tester.pumpWidget(
@@ -89,6 +94,16 @@ void main() {
       await tester.tap(grant);
       await tester.pump();
       expect(commands['RemoteControlGrant'], 2);
+      final role = find.byTooltip('Toggle read-only / control').last;
+      await tester.ensureVisible(role);
+      await tester.tap(role);
+      await tester.pump();
+      expect(commands['RemoteClientRole'], {'id': 2, 'readOnly': false});
+      final revoke = find.byTooltip('Revoke login and disconnect').last;
+      await tester.ensureVisible(revoke);
+      await tester.tap(revoke);
+      await tester.pump();
+      expect(commands['RemoteClientRevoke'], 2);
       expect(find.text('Operating · May request control'), findsOneWidget);
       expect(find.text('Waiting #1 · Read-only'), findsOneWidget);
       final recall = find.text('Recall all remote control');
