@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'tools/https-gateway/**'
+      - 'tools/browser-acceptance/**'
       - '简单配置方法.md'
       - 'docs/phone-remote-control.md'
       - '.github/workflows/windows-test-release.yaml'
@@ -49,6 +50,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node test/remote_mobile_page_test.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify real browser permissions and installed PWA window
+        env:
+          HTC_BROWSER_OUTPUT: ${{ runner.temp }}/remote-browser-acceptance
+        run: |
+          npm ci --prefix tools/browser-acceptance --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/browser-acceptance/run.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Save isolated browser acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: remote-browser-acceptance
+          path: |
+            ${{ runner.temp }}/remote-browser-acceptance/**/evidence.json
+            ${{ runner.temp }}/remote-browser-acceptance/**/failure.json
+            ${{ runner.temp }}/remote-browser-acceptance/**/microphone.png
+            ${{ runner.temp }}/remote-browser-acceptance/**/standalone.png
+            ${{ runner.temp }}/remote-browser-acceptance/**/fixture.log
+          if-no-files-found: ignore
 
       - name: Build Windows and hosted web UI
         working-directory: src
