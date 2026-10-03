@@ -38,7 +38,7 @@ async function exercise(){
  const page=await context.newPage();const errors=[],frames=[];
  page.on('pageerror',e=>errors.push(e.message));
  page.on('websocket',ws=>ws.on('framesent',e=>frames.push(e.payload)));
- const base=state().url,evidence={realBrowser:headless?'Edge Chromium headless':'Edge Chromium headed',width:390,productionHttpWebSocket:true,physicalRadio:false,physicalMicrophone:false,syntheticBrowserMicrophone:true};
+ const base=state().url,evidence={realBrowser:headless?'Edge Chromium headless':'Edge Chromium headed',width:390,browserVersion:browser.version(),productionHttpWebSocket:true,physicalRadio:false,physicalMicrophone:false,syntheticBrowserMicrophone:true};
  try{
   await page.goto(base+'/login');await page.locator('input[type=password]').fill('synthetic-test-password');await page.locator('form button').click();
   await until(()=>state().clients.length===1);await page.waitForFunction(()=>state.readOnly===true);
@@ -81,7 +81,11 @@ async function exercise(){
   try{evidence.pwa.installability=await session.send('Page.getInstallabilityErrors');}catch(e){evidence.pwa.installabilityUnsupported=true;}
   const manifestId=base+'/remote.html';let installed=false;
   try{
-   await browserCDP.send('PWA.install',{manifestId,installUrlOrBundleUrl:manifestId});installed=true;
+   // Install from the authenticated visible page, as the user install path does.
+   // The URL-based DevTools install path can register without a launchable
+   // application window in Edge; installed-state lookup alone missed that.
+   await bounded(session.send('PWA.install',{manifestId}),30000);installed=true;
+   evidence.pwa.installSource='Authenticated current-page native manifest';
    evidence.pwa.installedState=await browserCDP.send('PWA.getOsAppState',{manifestId});
    if(!headless){
     // Register a caught listener before launch. A failed launch must not leave
@@ -110,7 +114,6 @@ async function exercise(){
   evidence.scrollWidth=await page.evaluate(()=>document.documentElement.scrollWidth);assert.ok(evidence.scrollWidth<=390);
   evidence.consoleErrors=errors;assert.deepEqual(errors,[]);
   fs.writeFileSync(path.join(outputRoot,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence));
- }catch(e){evidence.failure=e.message;evidence.visibleStatus=await page.locator('#notice').innerText();evidence.positionPreview=await page.locator('#positionPreview').innerText();fs.writeFileSync(path.join(outputRoot,'failure.json'),JSON.stringify(evidence,null,2));throw e;}finally{await context.close();const target=path.resolve(profileDir),root=path.resolve(profileRoot)+path.sep;if(!target.startsWith(root))throw Error('Unsafe profile cleanup');fs.rmSync(target,{recursive:true,force:true});}
+ }catch(e){evidence.failure=e.message;evidence.consoleErrors=errors;evidence.visibleStatus=await page.locator('#notice').innerText();evidence.positionPreview=await page.locator('#positionPreview').innerText();fs.writeFileSync(path.join(outputRoot,'failure.json'),JSON.stringify(evidence,null,2));throw e;}finally{await context.close();const target=path.resolve(profileDir),root=path.resolve(profileRoot)+path.sep;if(!target.startsWith(root))throw Error('Unsafe profile cleanup');fs.rmSync(target,{recursive:true,force:true});}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
-

@@ -29,3 +29,10 @@ command with `HTC_FLUTTER_BINARY` and optional evidence parent directory with
 No user preferences are loaded; input and simulated operations never reach a
 hardware transport. Real phone GPS accuracy/audio and mobile-browser behavior
 are separate physical compatibility checks.
+
+The native installation command is sent to the authenticated page and reads its
+manifest, matching the browser's user install path. The URL-based DevTools
+registration path returned an installed record in Edge but failed to launch
+an application in Windows CI (run 37116134651); this is not accepted as a
+passing installation. The harness keeps the standalone-window gate and records
+the actual browser version and install source in its evidence.
