@@ -41,3 +41,9 @@ standalone-window assertions; OS-bundled browser changes cannot silently alter
 the gate. The evidence records browser version, install source, launch result,
 standalone display mode and cleanup. An optional HTC_BROWSER_CHANNEL override
 can exercise an installed Edge/Chrome; it does not bypass failed assertions.
+
+DevTools installation defaults to a browser-tab user display preference even
+when the site manifest requests standalone. Before launching, the harness makes
+the native browser user choice “Open as window” via PWA.changeAppUserSettings.
+It then verifies the launched window reports standalone; no display-mode
+CSS emulation or URL-only shortcut substitutes for an installed PWA.

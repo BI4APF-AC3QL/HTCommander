@@ -87,6 +87,10 @@ async function exercise(){
    // must still observe a real standalone application window.
    await bounded(session.send('PWA.install',{manifestId}),30000);installed=true;
    evidence.pwa.installSource='Authenticated current-page native manifest';
+   // DevTools installation defaults to browser display mode. Make the native
+   // user choice "Open as window" before launching, rather than emulating CSS.
+   await bounded(browserCDP.send('PWA.changeAppUserSettings',{manifestId,displayMode:'standalone'}),20000);
+   evidence.pwa.nativeUserDisplayMode='standalone';
    evidence.pwa.installedState=await browserCDP.send('PWA.getOsAppState',{manifestId});
    if(!headless){
     // Register a caught listener before launch. A failed launch must not leave
@@ -97,9 +101,11 @@ async function exercise(){
     if(!appPage)throw Error('No installed application window was observed');
     await appPage.waitForLoadState('domcontentloaded');await appPage.waitForFunction(()=>clientId>0);
     evidence.pwa.launchTarget=launch.targetId;evidence.pwa.appUrl=appPage.url();
+    await appPage.screenshot({path:path.join(outputRoot,'standalone.png'),fullPage:true});
+    await appPage.waitForFunction(()=>matchMedia('(display-mode: standalone)').matches,{},{timeout:10000});
     evidence.pwa.standalone=await appPage.evaluate(()=>matchMedia('(display-mode: standalone)').matches);
     assert.equal(evidence.pwa.standalone,true);assert.equal(appPage.url(),manifestId);
-    await appPage.screenshot({path:path.join(outputRoot,'standalone.png'),fullPage:true});await appPage.close();
+    await appPage.close();
    }else{evidence.pwa.standaloneSkipped='Headless cannot prove an installed application window.';}
   }finally{
    if(installed){await bounded(browserCDP.send('PWA.uninstall',{manifestId}),20000);evidence.pwa.uninstalledAfterTest=true;}
