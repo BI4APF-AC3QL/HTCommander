@@ -37,6 +37,7 @@ const remoteMobilePage = r'''<!doctype html>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
 <section class="card"><h2>APRS 网关诊断</h2><p id="gatewayMetrics">等待电脑数据</p><p id="gatewayLink"></p><p id="gatewayRf"></p><details><summary>最近 24 小时统计（UTC）</summary><div id="gatewayHealth"></div></details><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。射频转发需电脑许可，排队帧 15 秒过期。统计仅保存在本次运行内，计数表示软件处理结果，不代表服务器或接收电台已确认。</p></section>
+<section class="card"><h2>电台与本机音频链路诊断</h2><div id="linkDiagnostics"></div><p class="muted">统计本次连接的软件观察。控制写入延迟包含主机排队；读取往返仅统计未重试的匹配响应。积压/丢弃是 Windows 播放缓冲估计，同步字节或超时不能换算为射频丢包率。低带宽模式每 8 秒刷新；未知不会显示成零。</p></section>
 <section class="card"><h2>近期操作审计</h2><div id="auditEvents"></div><p class="muted">最近 20 条，时间为 UTC；Windows 可复制本次运行最近 200 条脱敏 JSON。“请求接受”不表示已发射或对方收到；不记录密码、地址、消息正文、定位或音频。连续同类拒绝每秒合并一次。</p></section>
 <section class="card"><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
 <section class="card"><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button><button id="mapRetry">重试地图</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p><p class="muted">瓦片由 Windows 主机获取。若地图显示访问限制或授权提示，请换源，或在电脑配置可用的授权 XYZ 地址。</p></section>
@@ -146,7 +147,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
 $('controlRequest').onclick=()=>send({op:'requestControl'});
 $('controlRelease').onclick=()=>{stopPtt();send({op:'releaseControl'});};
 function render(){
- renderDashboard();renderMedia();
+ renderDashboard();renderMedia();renderLinkDiagnostics();
  const control=state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped;
  $('controlRequest').disabled=!socket||socket.readyState!==WebSocket.OPEN||state.emergencyStopped||control||state.controlRequested;
  $('controlRelease').disabled=!control&&!state.controlRequested;
@@ -200,6 +201,21 @@ function renderDashboard(){
  $('dashboardClients').textContent='远程连接 '+count(d.clientCount)+'（同一登录可包含多条连接）';
  const labels={requestControl:'申请操作权',releaseControl:'释放操作权',handoffControl:'移交操作权',grantControl:'授予操作权',recallControl:'主机收回',disconnect:'断开连接',revokeLogin:'撤销登录',readOnlyRole:'设置只读角色',channel:'换信道',volume:'调音量',scan:'扫描',aprsMessage:'APRS 消息请求',aprsPosition:'位置发送请求',pttStart:'PTT 请求',pttStop:'停止 PTT',pttRelease:'释放 PTT',invalidCommand:'未知命令',rawWrite:'原始写入',writeDenied:'权限拒绝'},results={accepted:'请求接受',denied:'拒绝',released:'释放'};
  $('dashboardActivity').replaceChildren(...(Array.isArray(d.activity)?d.activity:[]).slice(0,5).map(e=>{const row=document.createElement('p');row.textContent=e.time+' · '+(e.clientId===0?'Windows':'客户端 #'+e.clientId)+' · '+(labels[e.action]||'操作')+' · '+(results[e.result]||'未知结果');return row;}));
+}
+function renderLinkDiagnostics(){
+ const d=state.linkDiagnostics||{},c=d.control||{},a=d.audio||{};
+ const n=v=>Number.isSafeInteger(v)&&v>=0?String(v):'未知',delay=v=>v?n(v.lastMs)+' / '+n(v.medianMs)+' / '+n(v.maxMs)+' ms（'+n(v.samples)+' 个样本）':'未知';
+ const reasons={disconnected:'控制通道已断开',unableToConnect:'控制通道连接失败',disposed:'电台已释放',writeFailed:'控制写入失败',readTimeout:'读取响应超时',playbackBacklog:'本机播放积压',playbackFeedFailed:'本机播放写入失败',audioStreamError:'音频接收流错误',audioConnectFailed:'音频通道连接失败',audioStartFailed:'音频初始化失败',audioDisconnected:'音频通道已断开'};
+ const lines=['控制通道 '+(c.connected===true?'已连接':c.connected===false?'已断开':'未知')+' · RX '+n(c.rxBytes)+' 字节 · 命令 '+n(c.commandsReceived),
+  '写入 最近/中位/最大 '+delay(c.writeDelay),'读取 最近/中位/最大 '+delay(c.replyDelay),
+  '待写 '+n(c.pendingWrites)+' · 读取队列 '+n(c.queuedReads)+' · TNC 分片 '+n(c.queuedTncFragments),
+  '写入失败 '+n(c.writeFailures)+' · 读取超时/重试/放弃 '+n(c.readTimeouts)+'/'+n(c.readRetries)+'/'+n(c.abandonedReads),
+  '同步跳过 '+n(c.framingSkippedBytes)+' 字节 · 最近控制接收 '+(c.lastRxAt||'未知'),
+  '本机音频 '+({stopped:'停止',connecting:'连接中',running:'运行'}[a.state]||'未知')+' · 积压/峰值 '+n(a.bufferedMs)+'/'+n(a.peakBufferedMs)+' ms',
+  '播放丢弃块/帧 '+n(a.droppedBlocks)+'/'+n(a.droppedFrames)+' · 播放错误 '+n(a.feedErrors),
+  '音频接收 '+n(a.receivedBytes)+' 字节 · 最近音频接收 '+(a.lastRxAt||'未知'),
+  '最近故障 '+(reasons[a.failureReason]||reasons[c.failureReason]||'无已记录原因')];
+ $('linkDiagnostics').replaceChildren(...lines.map(line=>{const p=document.createElement('p');p.textContent=line;return p;}));
 }
 function renderMedia(){
  const media=state.media||{};const mode=typeof media.lowBandwidth==='boolean'?(media.lowBandwidth?'低带宽 · 8 kHz 单声道':'标准接收 · 原始采样率'):'等待电脑确认';

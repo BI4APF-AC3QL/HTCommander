@@ -10,6 +10,7 @@ import 'control_lease.dart';
 import 'remote_audit.dart';
 import 'aprs_shortcuts.dart';
 import 'remote_dashboard.dart';
+import 'remote_link_status.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
@@ -164,6 +165,7 @@ class RemoteRadioController {
             .take(256)
             .toList();
     return {
+      'linkDiagnostics': RemoteLinkStatus.snapshot(id),
       'dashboard': RemoteDashboard.build(
         radioId: id,
         now: _clock(),

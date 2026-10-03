@@ -108,6 +108,7 @@ jobs:
           Copy-Item docs/remote-dashboard.md "$buildDir/remote-dashboard.md"
           Copy-Item docs/remote-profile.md "$buildDir/remote-profile.md"
           Copy-Item docs/remote-low-bandwidth.md "$buildDir/remote-low-bandwidth.md"
+          Copy-Item docs/radio-link-diagnostics.md "$buildDir/radio-link-diagnostics.md"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH

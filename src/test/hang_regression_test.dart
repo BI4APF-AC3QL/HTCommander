@@ -129,6 +129,70 @@ void main() {
     },
   );
 
+  testWidgets(
+    'actual control RX/read/write diagnostics publish once a second and end safely',
+    (tester) async {
+      var now = DateTime.utc(2026, 10, 3);
+      final radio = _radio(clock: () => now),
+          transport = _Transport(),
+          observer = DataBrokerClient();
+      final reports = <Map>[];
+      observer.subscribe(
+        deviceId: 2,
+        name: 'RadioLinkDiagnostics',
+        callback: (_, _, value) => reports.add(value as Map),
+      );
+      await radio.connect(transport);
+      try {
+        radio.readRegionName(0);
+        await tester.pump();
+        now = now.add(const Duration(milliseconds: 120));
+        final reply = GaiaProtocol.encode(
+          Uint8List.fromList([
+            0,
+            2,
+            0x80,
+            RadioBasicCommand.readRegionName.value,
+            0,
+            0,
+          ]),
+        );
+        transport.bytes.add(Uint8List.fromList([0x12, 0x34, ...reply]));
+        for (var i = 0; i < 100; i++) {
+          transport.ack();
+        }
+        expect(reports, hasLength(1));
+        await tester.pump(const Duration(seconds: 1));
+        final snapshot = reports.last;
+        expect(snapshot['commandsReceived'], 101);
+        expect(snapshot['framingSkippedBytes'], 2);
+        expect(snapshot['rxBytes'], greaterThan(100));
+        expect((snapshot['replyDelay'] as Map)['lastMs'], 120);
+        expect(snapshot['readReplies'], 1);
+        transport.writeOk = false;
+        radio.getVolumeLevel();
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(reports.last['writeFailures'], 1);
+        radio.readRegionName(1);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 8));
+        expect(reports.last['readTimeouts'], greaterThan(0));
+        radio.disconnect();
+        expect(reports.last['connected'], false);
+        expect(reports.last['queuedReads'], 0);
+        expect(reports.last['pendingWrites'], 0);
+        final count = reports.length;
+        await tester.pump(const Duration(seconds: 3));
+        expect(reports, hasLength(count));
+        expect(transport.tncWrites, 0);
+      } finally {
+        radio.dispose();
+        observer.dispose();
+        await transport.dispose();
+      }
+    },
+  );
   testWidgets('1000 positions produce one latest bounded snapshot per window', (
     tester,
   ) async {

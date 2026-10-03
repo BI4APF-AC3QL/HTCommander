@@ -10,6 +10,7 @@ import '../services/web/remote_access_config.dart';
 import '../services/web/remote_audit.dart';
 import 'aprs_shortcuts_dialog.dart';
 import 'remote_profile_dialog.dart';
+import 'link_diagnostics_dialog.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
   const RemoteAccessDialog({super.key});
@@ -408,6 +409,14 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               ),
             ),
             const Divider(),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.monitor_heart_outlined),
+              label: Text(_text('链路诊断', 'Link diagnostics')),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const LinkDiagnosticsDialog(),
+              ),
+            ),
             OutlinedButton.icon(
               icon: const Icon(Icons.star_outline),
               label: Text(

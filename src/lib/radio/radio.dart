@@ -13,6 +13,7 @@ import '../services/data_broker.dart';
 import '../gps/gps_data.dart';
 import 'radio_models.dart';
 import 'radio_transport.dart';
+import 'link_diagnostics.dart';
 import 'tnc_data_fragment.dart';
 import 'tnc_fragment_assembler.dart';
 import 'read_timing.dart';
@@ -138,6 +139,8 @@ class Radio implements FirmwareRadio {
 
   final DataBrokerClient _broker;
   final DateTime Function() _queueClock;
+  late final RadioLinkDiagnostics _linkDiagnostics;
+  Timer? _diagnosticsTimer;
   RadioTransport? _transport;
   StreamSubscription<TransportState>? _transportStateSub;
   StreamSubscription<Uint8List>? _transportDataSub;
@@ -306,6 +309,7 @@ class Radio implements FirmwareRadio {
     DateTime Function()? queueClock,
   }) : _broker = DataBrokerClient(),
        _queueClock = queueClock ?? DateTime.now {
+    _linkDiagnostics = RadioLinkDiagnostics(clock: _queueClock);
     _setupSubscriptions();
   }
 
@@ -1289,6 +1293,13 @@ class Radio implements FirmwareRadio {
 
   void _onTransportConnected() {
     if (_disposedRadio || _state == RadioState.connected) return;
+    _linkDiagnostics.start();
+    _diagnosticsTimer?.cancel();
+    _publishLinkDiagnostics();
+    _diagnosticsTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _publishLinkDiagnostics(),
+    );
     _updateState(RadioState.connected);
     _receivedAnyData = false;
     _initRetryCount = 0;
@@ -1453,6 +1464,15 @@ class Radio implements FirmwareRadio {
     String? message,
     RadioState newState = RadioState.disconnected,
   ]) {
+    _diagnosticsTimer?.cancel();
+    _diagnosticsTimer = null;
+    _linkDiagnostics.stop(
+      _disposedRadio
+          ? 'disposed'
+          : newState == RadioState.unableToConnect
+          ? 'unableToConnect'
+          : 'disconnected',
+    );
     if (message != null) _debug(message);
 
     _updateState(newState);
@@ -1510,6 +1530,7 @@ class Radio implements FirmwareRadio {
     _trustedDeviceTimer = null;
     _trustedDeviceQueryActive = false;
     _trustedDevices.clear();
+    _publishLinkDiagnostics();
   }
 
   void _updateState(RadioState newState) {
@@ -2005,7 +2026,7 @@ class Radio implements FirmwareRadio {
     final r = _readInFlight;
     if (r == null) return;
     _readTimeoutTimer?.cancel();
-    _readSentAt = DateTime.now();
+    _readSentAt = _queueClock();
     final sent = await _sendCommand(
       RadioCommandGroup.basic,
       r.cmd,
@@ -2032,6 +2053,7 @@ class Radio implements FirmwareRadio {
       _readQueue.clear();
       return;
     }
+    _linkDiagnostics.timeout(retry: _readRetryCount < _maxReadRetries);
     if (_readRetryCount < _maxReadRetries) {
       _readRetryCount++;
       _debug(
@@ -2054,9 +2076,11 @@ class Radio implements FirmwareRadio {
     final r = _readInFlight;
     if (r == null) return;
     if (r.cmd != cmd || r.index != index) return;
-    if (_readRetryCount == 0 && _readSentAt != null) {
-      _readTiming.observe(DateTime.now().difference(_readSentAt!));
-    }
+    final elapsed = _readRetryCount == 0 && _readSentAt != null
+        ? _queueClock().difference(_readSentAt!)
+        : null;
+    _linkDiagnostics.readReply(elapsed);
+    if (elapsed != null) _readTiming.observe(elapsed);
     _readSentAt = null;
     _readTimeoutTimer?.cancel();
     _readTimeoutTimer = null;
@@ -2724,7 +2748,7 @@ class Radio implements FirmwareRadio {
       _debug('TX: ${RadioUtils.bytesToHex(gaiaFrame)}');
     }
 
-    return _transport!.send(gaiaFrame);
+    return _sendObserved(gaiaFrame);
   }
 
   /// Sends a GAIA extended command (command group [RadioCommandGroup.extended]).
@@ -2745,7 +2769,7 @@ class Radio implements FirmwareRadio {
     if (_packetTrace) {
       _debug('TX VM ${cmd.name}: ${RadioUtils.bytesToHex(frame)}');
     }
-    _transport!.send(frame);
+    _sendObserved(frame);
   }
 
   /// Sends a raw, un-framed GATT command frame to the radio. [data] is the
@@ -2758,7 +2782,7 @@ class Radio implements FirmwareRadio {
     if (_transport == null || _state != RadioState.connected) return;
     if (data is! Uint8List || data.length < 4) return;
     final framed = _useGattFraming ? data : GaiaProtocol.encode(data);
-    _transport!.send(framed);
+    _sendObserved(framed);
   }
 
   bool _tryHandleWebCompactResponse(Uint8List data) {
@@ -2902,6 +2926,7 @@ class Radio implements FirmwareRadio {
   }
 
   void _onDataReceived(Uint8List data) {
+    _linkDiagnostics.received(data.length);
     if (_tryHandleWebDirectResponse(data)) {
       return;
     }
@@ -2945,7 +2970,8 @@ class Radio implements FirmwareRadio {
       );
 
       if (result.consumed == -1) {
-        // Error, skip one byte
+        // A framing resync byte is not a lost RF packet.
+        _linkDiagnostics.framingSkippedBytes++;
         offset++;
       } else if (result.consumed == 0) {
         // Need more data
@@ -2969,6 +2995,7 @@ class Radio implements FirmwareRadio {
 
   void _handleCommand(Uint8List cmd) {
     if (cmd.length < 4) return;
+    _linkDiagnostics.commandsReceived++;
 
     // Bridge: forward the raw, un-framed GATT command frame
     // (`[group_hi, group_lo, cmd_hi, cmd_lo, payload...]`) to any listeners.
@@ -3636,6 +3663,35 @@ class Radio implements FirmwareRadio {
         break;
       default:
         break;
+    }
+  }
+
+  void _publishLinkDiagnostics() {
+    _dispatch(
+      'RadioLinkDiagnostics',
+      _linkDiagnostics.snapshot(
+        queuedReads: _readQueue.length + (_readInFlight == null ? 0 : 1),
+        queuedTncFragments: _tncFragmentQueue.length,
+      ),
+    );
+  }
+
+  Future<bool> _sendObserved(Uint8List bytes) async {
+    final transport = _transport;
+    if (transport == null) return false;
+    final ticket = _linkDiagnostics.beginWrite(), started = _queueClock();
+    try {
+      final ok = await transport.send(bytes);
+      _linkDiagnostics.endWrite(ticket, _queueClock().difference(started), ok);
+      return ok;
+    } catch (_) {
+      _linkDiagnostics.endWrite(
+        ticket,
+        _queueClock().difference(started),
+        false,
+      );
+      // Fire-and-forget controls must not surface unhandled writer errors.
+      return false;
     }
   }
 

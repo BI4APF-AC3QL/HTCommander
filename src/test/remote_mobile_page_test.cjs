@@ -83,7 +83,13 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.equal(element('dashboardReport').textContent,'上次状态报告时间未知');
   assert.ok(element('dashboardChannel').textContent.includes('频率未知'));
   assert.ok(element('dashboardGateway').textContent.includes('已关闭'));
-  state.dashboard={};update();
+  state.dashboard={};state.linkDiagnostics={control:{connected:true,rxBytes:1234,framingSkippedBytes:3,writeDelay:{samples:1,lastMs:120,medianMs:120,maxMs:120},failureReason:'readTimeout'},audio:{state:'running',bufferedMs:500,droppedFrames:16000,droppedBlocks:1,feedErrors:2,failureReason:'playbackBacklog',password:'secret'}};update();
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('RX 1234 字节')));
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('120 / 120 / 120 ms')));
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('本机播放积压')));
+  assert.ok(!element('linkDiagnostics').children.some(e=>e.textContent.includes('secret')));
+  state.linkDiagnostics={control:null,audio:null};update();
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('控制通道 未知')));
   state.gatewayMetrics={queueDepth:2,connectionFailures:3,disconnects:1,reconnectAttempts:4,failureReason:'loginTimeout',toInternet:true,toRf:false,rfForwarded:5};
   state.gatewayHealth=[{hour:'2026-10-02T00:00:00Z',receivedRf:6,receivedIs:7,toInternet:8,toRfRequested:2,dropped:3,failures:1}];update();
   assert.ok(element('gatewayLink').textContent.includes('APRS-IS 登录超时'));

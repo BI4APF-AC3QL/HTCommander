@@ -83,6 +83,8 @@ class DataBroker {
     'RemoteClients',
     'RemoteAudit',
     'RemoteProfileRevision',
+    'RadioLinkDiagnostics',
+    'RadioAudioDiagnostics',
   };
   final Map<String, Future<void>> _secretWrites = {};
 
