@@ -21,6 +21,7 @@ import '../echolink/echolink_credential_test.dart';
 import '../radio/repeaterbook_client.dart';
 import '../services/serial/serial_port.dart';
 import '../services/data_broker_client.dart';
+import '../services/data_broker.dart';
 import '../services/history_limiter.dart';
 import '../services/locale_controller.dart';
 import '../services/mqtt/mqtt_client_facade.dart';
@@ -2278,6 +2279,11 @@ class _SettingsDialogState extends State<SettingsDialog>
         ),
       );
     }
+    final current = _settings.aprsIsRangeKm;
+    if (current > 0 && !items.any((item) => item.value == current)) {
+      items.add(DropdownMenuItem<int>(value: current,
+        child: Text(l10n.settingsAprsIsRangeKm(current))));
+    }
     return items;
   }
 
@@ -3663,6 +3669,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                     label: Text(Localizations.localeOf(context).languageCode == 'zh'
                         ? '手机远程操控设置' : 'Phone remote control settings'),
                     onPressed: () async {
+                      final profileRevision = DataBroker.getValueDynamic(0, 'RemoteProfileRevision', 0);
                       await showDialog<bool>(context: context,
                           builder: (_) => const RemoteAccessDialog());
                       if (!mounted) return;
@@ -3671,6 +3678,17 @@ class _SettingsDialogState extends State<SettingsDialog>
                         _settings.webServerEnabled = current.webServerEnabled;
                         _settings.webServerPort = current.webServerPort;
                         _webPortController.text = current.webServerPort.toString();
+                        if (profileRevision != DataBroker.getValueDynamic(0, 'RemoteProfileRevision', 0)) {
+                          _settings.allowTransmit = current.allowTransmit;
+                          _settings.aprsIsEnabled = current.aprsIsEnabled;
+                          _settings.aprsIsServer = current.aprsIsServer;
+                          _settings.aprsIsPort = current.aprsIsPort;
+                          _settings.aprsIsRangeKm = current.aprsIsRangeKm;
+                          _settings.aprsIsGateToRf = current.aprsIsGateToRf;
+                          _aprsIsServerController.text = current.aprsIsServer;
+                          _aprsIsPortController.text = current.aprsIsPort.toString();
+                          _aprsIsCustomServer = !(current.aprsIsPort == _aprsIsDefaultPort && _aprsIsRegionHosts.contains(current.aprsIsServer));
+                        }
                       });
                     },
                   ),

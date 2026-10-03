@@ -106,6 +106,7 @@ jobs:
           Copy-Item docs/aprs-gateway-hardening.md "$buildDir/aprs-gateway-hardening.md"
           Copy-Item docs/aprs-history-and-map.md "$buildDir/aprs-history-and-map.md"
           Copy-Item docs/remote-dashboard.md "$buildDir/remote-dashboard.md"
+          Copy-Item docs/remote-profile.md "$buildDir/remote-profile.md"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH

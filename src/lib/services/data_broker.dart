@@ -79,7 +79,11 @@ class DataBroker {
   };
   // Connection-scoped telemetry is cached for dialogs but is never a saved
   // setting. Avoid disk writes on requests/polls and stale clients on restart.
-  static const Set<String> _runtimeKeys = {'RemoteClients', 'RemoteAudit'};
+  static const Set<String> _runtimeKeys = {
+    'RemoteClients',
+    'RemoteAudit',
+    'RemoteProfileRevision',
+  };
   final Map<String, Future<void>> _secretWrites = {};
 
   /// Singleton instance

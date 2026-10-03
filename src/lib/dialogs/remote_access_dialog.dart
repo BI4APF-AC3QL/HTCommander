@@ -9,6 +9,7 @@ import '../services/secret_store.dart';
 import '../services/web/remote_access_config.dart';
 import '../services/web/remote_audit.dart';
 import 'aprs_shortcuts_dialog.dart';
+import 'remote_profile_dialog.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
   const RemoteAccessDialog({super.key});
@@ -416,6 +417,23 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
                 context: context,
                 builder: (_) => const AprsShortcutsDialog(),
               ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.import_export),
+              label: Text(
+                _text('远控配置导入 / 导出', 'Remote profile import / export'),
+              ),
+              onPressed: () async {
+                final applied = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => const RemoteProfileDialog(),
+                );
+                if (applied == true && context.mounted) {
+                  // Import is immediate: close this stale editor so Save cannot
+                  // restore the pre-import activation or old endpoints.
+                  Navigator.of(context).pop(true);
+                }
+              },
             ),
             OutlinedButton.icon(
               icon: const Icon(Icons.copy),
