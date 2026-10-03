@@ -11,6 +11,7 @@ import 'remote_audit.dart';
 import 'aprs_shortcuts.dart';
 import 'remote_dashboard.dart';
 import 'remote_link_status.dart';
+import 'remote_beacon_status.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
@@ -166,6 +167,9 @@ class RemoteRadioController {
             .toList();
     return {
       'linkDiagnostics': RemoteLinkStatus.snapshot(id),
+      'beaconTask': RemoteBeaconStatus.sanitize(
+        DataBroker.getValueDynamic(0, 'SoftwareBeaconStatus'),
+      ),
       'dashboard': RemoteDashboard.build(
         radioId: id,
         now: _clock(),

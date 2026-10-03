@@ -607,10 +607,10 @@ class SoftwareModem {
     );
     _broker.subscribeMultiple(
       deviceId: DataBroker.allDevices,
-      names: const ['CancelGatewayFrames', 'CancelRemoteAprsFrame'],
+      names: const ['CancelGatewayFrames', 'CancelRemoteAprsFrame', 'CancelSoftwareBeaconFrames'],
       callback: (deviceId, _, tag) {
         if (tag is String &&
-            (tag == 'aprs-is-gate' || tag.startsWith('remote-aprs:'))) {
+            (tag == 'aprs-is-gate' || tag == 'software-beacon' || tag.startsWith('remote-aprs:'))) {
           _cancelTagged(deviceId, tag);
         }
       },

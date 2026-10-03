@@ -428,8 +428,9 @@ Future<void> _startApp(List<String> args) async {
   }
 
   // Register the software beacon handler so that, when an interval is set, the
-  // app periodically transmits its own APRS position/status beacon over the
-  // selected radio's "APRS" channel and gates it to the Internet (APRS-IS).
+  // host can explicitly approve a periodic APRS position/status task on the
+  // selected radio's APRS channel or a verified Internet-only destination.
+  // Startup and configuration edits leave the task paused.
   // Skipped on the hosted web build: the desktop host emits the beacon, so a
   // second timer here would double-beacon over the shared radio.
   if (!HostBridge.isHosted) {

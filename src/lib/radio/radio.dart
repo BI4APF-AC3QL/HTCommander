@@ -388,6 +388,13 @@ class Radio implements FirmwareRadio {
         if (tag == 'aprs-is-gate') deleteTransmitByTag('aprs-is-gate');
       },
     );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelSoftwareBeaconFrames',
+      callback: (_, _, tag) {
+        if (tag == 'software-beacon') deleteTransmitByTag('software-beacon');
+      },
+    );
 
     // Track the live general software-modem mode. This fires even for session
     // overrides that are broadcast without being persisted (store: false), so

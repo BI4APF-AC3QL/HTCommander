@@ -89,6 +89,33 @@ Radio _radio({bool busy = false, DateTime Function()? clock}) {
 
 void main() {
   tearDown(DataBroker.reset);
+  testWidgets('beacon pause removes only pending beacon hardware frames', (
+    tester,
+  ) async {
+    final radio = _radio(busy: true);
+    final transport = _Transport();
+    await radio.connect(transport);
+    radio.transmitTncData(
+      Uint8List(20),
+      '',
+      channelId: 1,
+      tag: 'software-beacon',
+    );
+    radio.transmitTncData(Uint8List(20), '', channelId: 1, tag: 'aprs-is-gate');
+    radio.transmitTncData(Uint8List(20), '', channelId: 1, tag: 'local');
+    expect(radio.transmitQueueLength, 3);
+    DataBroker.dispatch(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelSoftwareBeaconFrames',
+      data: 'software-beacon',
+      store: false,
+    );
+    await tester.pump(const Duration(seconds: 1));
+    expect(radio.transmitQueueLength, 2);
+    expect(transport.tncWrites, 0);
+    radio.dispose();
+    await transport.dispose();
+  });
 
   test(
     'unterminated megabyte input stays bounded and recovers at newline',

@@ -294,6 +294,11 @@ class AprsIsManager {
     // RF -> internet up-gate. Internet frames we re-dispatch here carry
     // `fromAprsIs` and are ignored by the gating logic.
     _broker.subscribe(deviceId: 1, name: 'AprsFrame', callback: _onAprsFrame);
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'SoftwareBeaconInternetSend',
+      callback: _onSoftwareBeacon,
+    );
 
     // Serve persisted internet history to the APRS / Map tabs on request.
     _broker.subscribe(
@@ -1151,9 +1156,57 @@ class AprsIsManager {
   // RF -> internet up-gate + heard-list maintenance
   // ---------------------------------------------------------------------------
 
+  void _onSoftwareBeacon(int deviceId, String name, Object? data) {
+    if (_disposed ||
+        data is! AX25Packet ||
+        data.tag != 'software-beacon' ||
+        !data.deadline.isAfter(_clock()) ||
+        !_readEnabled() ||
+        _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
+      return;
+    }
+    final task = _broker.getValueDynamic(0, 'SoftwareBeaconStatus');
+    final client = _client;
+    if (task is! Map ||
+        task['running'] != true ||
+        task['radioId'] != -1 ||
+        client == null ||
+        client.state != AprsIsConnectionState.connected ||
+        !client.canTransmit ||
+        !client.isVerified ||
+        data.addresses.length != 2 ||
+        data.addresses[1].toString().toUpperCase() !=
+            _readCallsignWithId().toUpperCase()) {
+      return;
+    }
+    final line = Tnc2Codec.encode(data);
+    if (line == null ||
+        line.length > 150 ||
+        line.codeUnits.any((c) => c < 32 || c > 126)) {
+      return;
+    }
+    try {
+      client.sendPacketLine(line);
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'SoftwareBeaconInternetAccepted',
+        data: true,
+        store: true,
+      );
+      _health.record('toInternet');
+    } catch (_) {
+      _health.record('failures');
+      _gateSendErrors++;
+      unawaited(_onSessionClosed(_generation));
+    }
+  }
+
   void _onAprsFrame(int deviceId, String name, Object? data) {
     if (data is! AprsFrameEventArgs) return;
     final aprs = data.aprsPacket;
+    // A local task uses a dedicated verified synchronous path, never the RF
+    // gateway backlog or heard list. Echo exists only for the APRS/map UI.
+    if (data.ax25Packet.tag == 'software-beacon') return;
     // Ignore the internet packets we ourselves re-dispatched.
     if (aprs.fromAprsIs) return;
     if (aprs.packet?.incoming == true) _health.record('receivedRf');

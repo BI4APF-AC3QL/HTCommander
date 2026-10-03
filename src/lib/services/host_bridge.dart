@@ -75,6 +75,7 @@ class HostBridge {
         !key.startsWith('agwpeserver') &&
         key != 'remoteclients' &&
         key != 'remoteaudit' &&
+        !key.startsWith('softwarebeacon') &&
         key != 'mapcustomurl'; // custom tile URLs may contain provider API keys
   }
 

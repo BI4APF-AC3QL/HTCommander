@@ -85,6 +85,8 @@ class DataBroker {
     'RemoteProfileRevision',
     'RadioLinkDiagnostics',
     'RadioAudioDiagnostics',
+    'SoftwareBeaconStatus',
+    'SoftwareBeaconInternetAccepted',
   };
   final Map<String, Future<void>> _secretWrites = {};
 

@@ -48,6 +48,43 @@ TncDataFragment frame(int marker, {String? tag, DateTime? deadline}) =>
 void main() {
   tearDown(DataBroker.reset);
   testWidgets(
+    'beacon pause cancels pending encode while retaining local packet',
+    (tester) async {
+      publish(0, 'AllowTransmit', 1);
+      publish(0, 'AprsSoftwareModemMode', 'AFSK1200');
+      publish(2, 'HtStatus', {'rssi': 0, 'isInTx': false});
+      final encoder = Encoder();
+      final modem = SoftwareModem(txEncoder: encoder, randomInt: (_) => 0)
+        ..init();
+      var output = 0;
+      final watch = DataBrokerClient()
+        ..subscribe(
+          deviceId: 2,
+          name: 'TransmitVoicePCM',
+          callback: (_, _, v) => output++,
+        );
+      publish(2, 'SoftModemTransmitPacket', frame(10, tag: 'software-beacon'));
+      publish(2, 'SoftModemTransmitPacket', frame(20));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(encoder.requests.single.map((f) => f.first), [10]);
+      publish(
+        DataBroker.allDevices,
+        'CancelSoftwareBeaconFrames',
+        'software-beacon',
+      );
+      encoder.finish(0);
+      await tester.pump();
+      expect(output, 0);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(encoder.requests.last.map((f) => f.first), [20]);
+      encoder.finish(1);
+      await tester.pump();
+      expect(output, 1);
+      modem.dispose();
+      watch.dispose();
+    },
+  );
+  testWidgets(
     'gateway recall cancels encoding bundle without cancelling unrelated local frame',
     (tester) async {
       publish(0, 'AllowTransmit', 1);
