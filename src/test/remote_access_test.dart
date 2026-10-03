@@ -133,7 +133,13 @@ void main() {
       await signed.drain<void>();
       final page = await get('/remote.html', cookie: session);
       expect(page.statusCode, 200);
-      await page.drain<void>();
+      final pageText = await utf8.decoder.bind(page).join();
+      // Chromium's manifest loader omits the login cookie without this
+      // attribute, even though a direct authenticated fetch returns 200.
+      expect(
+        pageText,
+        contains('href="/remote.webmanifest" crossorigin="use-credentials"'),
+      );
       final manifest = await get('/remote.webmanifest', cookie: session);
       expect(manifest.statusCode, 200);
       final data = jsonDecode(await utf8.decoder.bind(manifest).join()) as Map;
