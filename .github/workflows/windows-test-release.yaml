@@ -57,6 +57,8 @@ jobs:
         run: |
           npm ci --prefix tools/browser-acceptance --ignore-scripts --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/browser-acceptance/node_modules/playwright/cli.js install chromium --no-shell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/browser-acceptance/run.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

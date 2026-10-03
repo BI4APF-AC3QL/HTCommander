@@ -6,6 +6,7 @@ const sourceRoot=path.resolve(__dirname,'../..');
 const outputParent=process.env.HTC_BROWSER_OUTPUT||path.join(os.tmpdir(),'htc-browser-acceptance');fs.mkdirSync(outputParent,{recursive:true});
 const outputRoot=fs.mkdtempSync(path.join(outputParent,'run-'));console.log('Isolated browser evidence: '+outputRoot);
 const headless=process.argv.includes('--headless');
+const browserChannel=process.env.HTC_BROWSER_CHANNEL||'chromium';
 const statusPath=path.join(outputRoot,'status.json'),commandPath=path.join(outputRoot,'command.json');
 const state=()=>JSON.parse(fs.readFileSync(statusPath,'utf8'));
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -33,12 +34,12 @@ async function exercise(){
 
  const profileRoot=path.join(outputRoot,'browser-profiles');fs.mkdirSync(profileRoot,{recursive:true});
  const profileDir=fs.mkdtempSync(path.join(profileRoot,'acceptance-'));
- const context=await chromium.launchPersistentContext(profileDir,{channel:process.env.HTC_BROWSER_CHANNEL||'msedge',headless,viewport:{width:390,height:844},geolocation:{latitude:31.2,longitude:121.5,accuracy:15},args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-sync','--no-pings']});
+ const context=await chromium.launchPersistentContext(profileDir,{channel:browserChannel,headless,viewport:{width:390,height:844},geolocation:{latitude:31.2,longitude:121.5,accuracy:15},args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-sync','--no-pings']});
  const browser=context.browser();
  const page=await context.newPage();const errors=[],frames=[];
  page.on('pageerror',e=>errors.push(e.message));
  page.on('websocket',ws=>ws.on('framesent',e=>frames.push(e.payload)));
- const base=state().url,evidence={realBrowser:headless?'Edge Chromium headless':'Edge Chromium headed',width:390,browserVersion:browser.version(),productionHttpWebSocket:true,physicalRadio:false,physicalMicrophone:false,syntheticBrowserMicrophone:true};
+ const base=state().url,evidence={realBrowser:`${browserChannel} ${headless?'headless':'headed'}`,width:390,browserVersion:browser.version(),productionHttpWebSocket:true,physicalRadio:false,physicalMicrophone:false,syntheticBrowserMicrophone:true};
  try{
   await page.goto(base+'/login');await page.locator('input[type=password]').fill('synthetic-test-password');await page.locator('form button').click();
   await until(()=>state().clients.length===1);await page.waitForFunction(()=>state.readOnly===true);
@@ -82,8 +83,8 @@ async function exercise(){
   const manifestId=base+'/remote.html';let installed=false;
   try{
    // Install from the authenticated visible page, as the user install path does.
-   // The URL-based DevTools install path can register without a launchable
-   // application window in Edge; installed-state lookup alone missed that.
+   // Installed-state lookup alone is insufficient: the headed Windows gate
+   // must still observe a real standalone application window.
    await bounded(session.send('PWA.install',{manifestId}),30000);installed=true;
    evidence.pwa.installSource='Authenticated current-page native manifest';
    evidence.pwa.installedState=await browserCDP.send('PWA.getOsAppState',{manifestId});
