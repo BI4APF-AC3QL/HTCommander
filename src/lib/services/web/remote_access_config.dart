@@ -43,6 +43,7 @@ class RemoteAccessConfig {
     if (uri == null ||
         uri.scheme != 'https' ||
         uri.host.isEmpty ||
+        (uri.hasPort && (uri.port < 1 || uri.port > 65535)) ||
         uri.userInfo.isNotEmpty ||
         uri.hasQuery ||
         uri.hasFragment ||

@@ -111,6 +111,7 @@ jobs:
           Copy-Item docs/radio-link-diagnostics.md "$buildDir/radio-link-diagnostics.md"
           Copy-Item docs/remote-client-roles.md "$buildDir/remote-client-roles.md"
           Copy-Item docs/remote-beacon-task.md "$buildDir/remote-beacon-task.md"
+          Copy-Item docs/remote-connection-setup.md "$buildDir/remote-connection-setup.md"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH

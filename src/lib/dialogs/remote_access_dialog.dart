@@ -11,6 +11,8 @@ import '../services/web/remote_audit.dart';
 import 'aprs_shortcuts_dialog.dart';
 import 'remote_profile_dialog.dart';
 import 'link_diagnostics_dialog.dart';
+import 'remote_connection_dialog.dart';
+import '../services/web/remote_connection_models.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
   const RemoteAccessDialog({super.key});
@@ -94,6 +96,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
       );
       final addresses = interfaces
           .expand((i) => i.addresses)
+          .where((a) => !a.isLinkLocal && !a.isLoopback)
           .map((a) => a.address)
           .toSet()
           .toList();
@@ -409,6 +412,37 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               ),
             ),
             const Divider(),
+            if (!kIsWeb)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.qr_code),
+                label: Text(
+                  _text('连接地址二维码与诊断', 'Address QR and connection diagnostics'),
+                ),
+                onPressed: () {
+                  try {
+                    final spec = RemoteConnectionSpec(
+                      port:
+                          DataBroker.getValue<int>(0, 'webServerPort', 8080) ??
+                          8080,
+                      publicOrigin: RemoteAccessConfig.current.publicOrigin,
+                    );
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => RemoteConnectionDialog(
+                        spec: spec,
+                        hosts: List.of(_addresses),
+                      ),
+                    );
+                  } catch (_) {
+                    setState(
+                      () => _error = _text(
+                        '先保存有效的地址和端口。',
+                        'Save a valid address and port first.',
+                      ),
+                    );
+                  }
+                },
+              ),
             OutlinedButton.icon(
               icon: const Icon(Icons.monitor_heart_outlined),
               label: Text(_text('链路诊断', 'Link diagnostics')),
@@ -475,12 +509,32 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Row(
                   children: [
-                    Expanded(child: SelectableText('http://$ip:${_port.text}')),
+                    Expanded(
+                      child: SelectableText(
+                        Uri(
+                          scheme: 'http',
+                          host: ip,
+                          port: (int.tryParse(_port.text) ?? 8080).clamp(
+                            1,
+                            65535,
+                          ),
+                        ).toString(),
+                      ),
+                    ),
                     IconButton(
                       tooltip: _text('复制地址', 'Copy address'),
                       icon: const Icon(Icons.copy),
                       onPressed: () => Clipboard.setData(
-                        ClipboardData(text: 'http://$ip:${_port.text}'),
+                        ClipboardData(
+                          text: Uri(
+                            scheme: 'http',
+                            host: ip,
+                            port: (int.tryParse(_port.text) ?? 8080).clamp(
+                              1,
+                              65535,
+                            ),
+                          ).toString(),
+                        ),
                       ),
                     ),
                   ],
