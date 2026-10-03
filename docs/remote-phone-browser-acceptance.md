@@ -13,7 +13,14 @@
 
 发现浏览器的 manifest 加载器未携带登录 Cookie，得到登录 HTML 后报 `manifest-parsing-or-network-error`；此前直接带 Cookie 的 HTTP 200 测试不足以发现这个问题。现将 manifest 链接设置为 `crossorigin="use-credentials"`，保留 manifest、worker 和图标的登录保护。
 
-在独立的非隐身 Chromium 测试配置中，浏览器自己的 manifest 解析无错误，安装检查无错误；实际解码 192/512 图标并核对尺寸。原生 PWA 安装与已安装状态查询成功，测试后已卸载并清理测试配置。浏览器窗口的独立启动尚未由 headless 框架验收，仍需完成独立窗口/手机主屏幕启动验证；不能用直接 fetch 或 manifest 存在替代它。
+Windows 构建虚拟机上的 [验收运行 37117784225](https://github.com/BI4APF-AC3QL/HTCommander/actions/runs/37117784225) 使用 Playwright 1.62.1 锁定的完整 Chrome for Testing 151.0.7922.34，实际浏览器窗口通过：
+
+- 从当前已登录页面安装 PWA，选择浏览器原生“在窗口中打开”偏好，再用原生启动命令打开已安装应用。
+- 新应用窗口地址为 `/remote.html`，正常取得客户端状态，`display-mode: standalone` 为 true。没有使用 CSS 模拟独立窗口。
+- 浏览器 manifest 解析及安装检查无错误，实际解码 192/512 图标，核对尺寸与 HTTP 200；390px 视口的页面滚动宽度为 375px，无横向溢出或 pageerror。
+- 全屏进入/退出成功；测试后卸载应用、关闭浏览器并清理独立配置。验收 JSON、独立窗口及麦克风截图保存在该运行的 `remote-browser-acceptance` artifact，并已检查。
+
+此前 Edge 153 的原生启动命令失败，完整 Chrome 的默认 DevTools 安装偏好则打开普通标签；这些运行没有发布包，也没有被记为通过。当前门禁使用锁定的完整 Chrome、原生用户窗口偏好和实际窗口断言，不以已安装记录或 headless 结果替代窗口验收。此分支的自动 Windows 测试发布先执行此门禁。复现方法见 [浏览器验收工具](https://github.com/BI4APF-AC3QL/HTCommander/tree/feature/remote-aprs-dashboard/tools/browser-acceptance)。
 
 ## 实际设备的范围
 
