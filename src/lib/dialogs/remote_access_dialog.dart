@@ -7,6 +7,14 @@ import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../services/secret_store.dart';
 import '../services/web/remote_access_config.dart';
+import '../services/web/remote_audit.dart';
+import 'aprs_shortcuts_dialog.dart';
+import 'remote_profile_dialog.dart';
+import 'link_diagnostics_dialog.dart';
+import 'remote_connection_dialog.dart';
+import 'offline_simulation_dialog.dart';
+import '../services/diagnostic_log.dart';
+import '../services/web/remote_connection_models.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
   const RemoteAccessDialog({super.key});
@@ -22,6 +30,12 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
   late bool _enabled;
   late bool _remote;
   late bool _tx;
+  late bool _aprs;
+  late bool _position;
+  late bool _readOnly;
+  late bool _approval;
+  bool _stopped = false;
+  List<Map> _clients = [];
   bool _showPassword = false;
   bool _saving = false;
   String? _error;
@@ -37,6 +51,29 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
     _enabled = DataBroker.getValue<int>(0, 'webServerEnabled', 0) == 1;
     _remote = config.enabled;
     _tx = config.allowTransmit;
+    _aprs = config.allowAprs;
+    _position = config.allowPosition;
+    _readOnly = config.defaultReadOnly;
+    _approval = config.requireControlApproval;
+    _stopped = DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1;
+    _clients = (DataBroker.getValueDynamic(0, 'RemoteClients', []) as List)
+        .whereType<Map>()
+        .toList();
+    _broker.subscribeMultiple(
+      deviceId: 0,
+      names: const ['RemoteClients', 'webServerEmergencyStopped'],
+      callback: (_, _, _) {
+        if (!mounted) return;
+        setState(() {
+          _clients =
+              (DataBroker.getValueDynamic(0, 'RemoteClients', []) as List)
+                  .whereType<Map>()
+                  .toList();
+          _stopped =
+              DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1;
+        });
+      },
+    );
     _password = TextEditingController(text: config.password);
     _origin = TextEditingController(text: config.publicOrigin);
     _port = TextEditingController(
@@ -61,6 +98,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
       );
       final addresses = interfaces
           .expand((i) => i.addresses)
+          .where((a) => !a.isLinkLocal && !a.isLoopback)
           .map((a) => a.address)
           .toSet()
           .toList();
@@ -102,6 +140,10 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
         'webServerPassword': _password.text,
         'webServerPublicOrigin': config.externalOrigin ?? '',
         'webServerAllowTransmit': _tx ? 1 : 0,
+        'webServerAllowAprs': _aprs ? 1 : 0,
+        'webServerAllowPosition': _position ? 1 : 0,
+        'webServerDefaultReadOnly': _readOnly ? 1 : 0,
+        'webServerRequireControlApproval': _approval ? 1 : 0,
         'webServerRemoteEnabled': _remote ? 1 : 0,
         'webServerPort': port,
         'webServerEnabled': _enabled ? 1 : 0,
@@ -224,6 +266,264 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               value: _tx,
               onChanged: _saving ? null : (v) => setState(() => _tx = v),
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _text('允许远程 APRS 消息发送', 'Allow remote APRS messages'),
+              ),
+              subtitle: Text(
+                _text(
+                  '仍须电脑总允许发射；与语音权限独立。',
+                  'Requires host transmit permission, independent of voice.',
+                ),
+              ),
+              value: _aprs,
+              onChanged: _saving ? null : (v) => setState(() => _aprs = v),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_text('允许远程位置发送', 'Allow remote position packets')),
+              value: _position,
+              onChanged: _saving ? null : (v) => setState(() => _position = v),
+            ),
+            const Divider(),
+            FilledButton.icon(
+              icon: Icon(_stopped ? Icons.play_arrow : Icons.stop_circle),
+              onPressed: () => DataBroker.dispatch(
+                deviceId: 0,
+                name: 'webServerEmergencyStopped',
+                data: _stopped ? 0 : 1,
+              ),
+              label: Text(
+                _stopped
+                    ? _text('明确恢复远程控制', 'Resume remote control')
+                    : _text('紧急停止远程控制与发送', 'Emergency stop remote control/TX'),
+              ),
+            ),
+            Text(
+              _text(
+                '停止后不自动恢复；会取消待确认消息。恢复后仍须满足各项发射权限。',
+                'Stopped control stays stopped until explicitly resumed; pending messages are cancelled. TX permissions still apply.',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_text('新客户端默认只读', 'New clients start read-only')),
+              subtitle: Text(
+                _text(
+                  '只读客户端可收听与查看；在此授予控制权。重新连接使用默认权限。',
+                  'Read-only clients may listen and inspect. Grant control below; reconnect uses the default role.',
+                ),
+              ),
+              value: _readOnly,
+              onChanged: _saving ? null : (v) => setState(() => _readOnly = v),
+            ),
+            Text(_text('在线客户端', 'Connected clients')),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _text(
+                  '控制权申请必须由 Windows 批准',
+                  'Host approval required for control',
+                ),
+              ),
+              subtitle: Text(
+                _text(
+                  '关闭时空闲控制权自动授予首个有操作权限的申请者。只读客户端仍需由主机授权。',
+                  'When off, an eligible requester receives idle control automatically. Read-only clients still need host authorization.',
+                ),
+              ),
+              value: _approval,
+              onChanged: _saving ? null : (v) => setState(() => _approval = v),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.back_hand),
+              label: Text(_text('收回所有远程控制权', 'Recall all remote control')),
+              onPressed: () => DataBroker.dispatch(
+                deviceId: 0,
+                name: 'RemoteControlRecall',
+                data: true,
+                store: false,
+              ),
+            ),
+            ..._clients.map(
+              (client) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('#${client['id']} · ${client['address']}'),
+                subtitle: Text(
+                  (client['ownsControl'] == true
+                          ? _text('正在操作 · ', 'Operating · ')
+                          : '') +
+                      (client['controlRequested'] == true
+                          ? _text(
+                              '申请中 #${client['queuePosition']} · ',
+                              'Waiting #${client['queuePosition']} · ',
+                            )
+                          : '') +
+                      (client['readOnly'] == true
+                          ? _text('只读', 'Read-only')
+                          : _text('可申请控制', 'May request control')),
+                ),
+                trailing: Wrap(
+                  children: [
+                    IconButton(
+                      tooltip: _text('授予独占控制权', 'Grant exclusive control'),
+                      icon: Icon(
+                        client['ownsControl'] == true
+                            ? Icons.verified_user
+                            : Icons.gamepad,
+                      ),
+                      onPressed: _stopped
+                          ? null
+                          : () => DataBroker.dispatch(
+                              deviceId: 0,
+                              name: 'RemoteControlGrant',
+                              data: client['id'],
+                              store: false,
+                            ),
+                    ),
+                    IconButton(
+                      tooltip: _text('切换只读 / 控制', 'Toggle read-only / control'),
+                      icon: Icon(
+                        client['readOnly'] == true
+                            ? Icons.lock
+                            : Icons.lock_open,
+                      ),
+                      onPressed: () => DataBroker.dispatch(
+                        deviceId: 0,
+                        name: 'RemoteClientRole',
+                        data: {
+                          'id': client['id'],
+                          'readOnly': client['readOnly'] != true,
+                        },
+                        store: false,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: _text('撤销登录并断开', 'Revoke login and disconnect'),
+                      icon: const Icon(Icons.person_remove),
+                      onPressed: () => DataBroker.dispatch(
+                        deviceId: 0,
+                        name: 'RemoteClientRevoke',
+                        data: client['id'],
+                        store: false,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.science_outlined),
+              label: Text(_text('离线模拟演练', 'Offline simulation')),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const OfflineSimulationDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.copy),
+              label: Text(
+                _text('复制脱敏运行日志', 'Copy private diagnostic metadata'),
+              ),
+              onPressed: () => Clipboard.setData(
+                ClipboardData(
+                  text: DiagnosticLog.export(
+                    (DataBroker.getValueDynamic(1, 'DebugLogEntries', [])
+                            as List)
+                        .whereType<Map>(),
+                  ),
+                ),
+              ),
+            ),
+            if (!kIsWeb)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.qr_code),
+                label: Text(
+                  _text('连接地址二维码与诊断', 'Address QR and connection diagnostics'),
+                ),
+                onPressed: () {
+                  try {
+                    final spec = RemoteConnectionSpec(
+                      port:
+                          DataBroker.getValue<int>(0, 'webServerPort', 8080) ??
+                          8080,
+                      publicOrigin: RemoteAccessConfig.current.publicOrigin,
+                    );
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => RemoteConnectionDialog(
+                        spec: spec,
+                        hosts: List.of(_addresses),
+                      ),
+                    );
+                  } catch (_) {
+                    setState(
+                      () => _error = _text(
+                        '先保存有效的地址和端口。',
+                        'Save a valid address and port first.',
+                      ),
+                    );
+                  }
+                },
+              ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.monitor_heart_outlined),
+              label: Text(_text('链路诊断', 'Link diagnostics')),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const LinkDiagnosticsDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.star_outline),
+              label: Text(
+                _text('常用呼号与消息模板', 'Favorite callsigns and message templates'),
+              ),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const AprsShortcutsDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.import_export),
+              label: Text(
+                _text('远控配置导入 / 导出', 'Remote profile import / export'),
+              ),
+              onPressed: () async {
+                final applied = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => const RemoteProfileDialog(),
+                );
+                if (applied == true && context.mounted) {
+                  // Import is immediate: close this stale editor so Save cannot
+                  // restore the pre-import activation or old endpoints.
+                  Navigator.of(context).pop(true);
+                }
+              },
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.copy),
+              label: Text(
+                _text('复制脱敏操作审计 JSON', 'Copy redacted operation audit JSON'),
+              ),
+              onPressed: () => Clipboard.setData(
+                ClipboardData(
+                  text: RemoteAudit.export(
+                    (DataBroker.getValueDynamic(0, 'RemoteAudit', []) as List)
+                        .whereType<Map>()
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+            Text(
+              _text(
+                '审计仅在本次运行的内存中保存最近 200 条，不含密码、地址、消息正文、定位或音频；“接受”表示软件接受请求，不代表射频发送成功。相同客户端的连续同类拒绝每秒记录一次。',
+                'Audit keeps the latest 200 events in memory for this run. No passwords, addresses, message text, locations or audio. Accepted means software accepted a request, not RF success. Repeated identical denials are coalesced to one per second.',
+              ),
+            ),
             const Divider(),
             Text(
               _text('手机连接地址', 'Phone connection addresses'),
@@ -234,12 +534,32 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Row(
                   children: [
-                    Expanded(child: SelectableText('http://$ip:${_port.text}')),
+                    Expanded(
+                      child: SelectableText(
+                        Uri(
+                          scheme: 'http',
+                          host: ip,
+                          port: (int.tryParse(_port.text) ?? 8080).clamp(
+                            1,
+                            65535,
+                          ),
+                        ).toString(),
+                      ),
+                    ),
                     IconButton(
                       tooltip: _text('复制地址', 'Copy address'),
                       icon: const Icon(Icons.copy),
                       onPressed: () => Clipboard.setData(
-                        ClipboardData(text: 'http://$ip:${_port.text}'),
+                        ClipboardData(
+                          text: Uri(
+                            scheme: 'http',
+                            host: ip,
+                            port: (int.tryParse(_port.text) ?? 8080).clamp(
+                              1,
+                              65535,
+                            ),
+                          ).toString(),
+                        ),
                       ),
                     ),
                   ],

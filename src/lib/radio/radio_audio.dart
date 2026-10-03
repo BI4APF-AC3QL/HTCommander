@@ -15,6 +15,7 @@ import '../services/data_broker_client.dart';
 import 'audio_engine.dart';
 import 'pcm_player.dart';
 import 'radio.dart';
+import 'link_diagnostics.dart';
 
 /// Main-isolate host for the radio's Generic Audio RFCOMM channel.
 ///
@@ -33,7 +34,6 @@ class RadioAudio {
 
   // Bound playback latency: drop incoming PCM if we are more than this many
   // frames (~800 ms) behind real time, mirroring the C# buffer catch-up logic.
-  static const int _maxBufferedFrames = (_sampleRate * 800) ~/ 1000;
 
   final Radio radio;
   final int deviceId;
@@ -63,9 +63,11 @@ class RadioAudio {
   // PCM playback sink (native player on desktop, flutter_pcm_sound on mobile).
   // Owned by the host because background isolates cannot receive the player's
   // drain callback from the platform. The engine decodes; the host feeds.
-  final PcmPlayer _pcm = PcmPlayer();
+  final PcmPlayer _pcm;
+  final Future<void> Function(List<Object?>)? _engineSpawner;
   bool _pcmSoundReady = false;
-  int _bufferedFrames = 0;
+  final RadioAudioDiagnostics _diagnostics;
+  Timer? _diagnosticsTimer;
 
   // The device ID of the radio currently selected (preferred) in the main form,
   // published on DataBroker device 1 as 'SelectedRadioDeviceId'. When connected
@@ -84,7 +86,14 @@ class RadioAudio {
     required this.radio,
     required this.deviceId,
     required this.macAddress,
-  }) {
+    PcmPlayer? playback,
+    Future<void> Function(List<Object?>)? engineSpawner,
+    DateTime Function()? clock,
+  }) : _pcm = playback ?? PcmPlayer(),
+       // Keep the construction adapter public and its implementation private.
+       // ignore: prefer_initializing_formals
+       _engineSpawner = engineSpawner,
+       _diagnostics = RadioAudioDiagnostics(clock: clock) {
     // Restore the persisted output-device selection (device 0 = global).
     _outputDeviceId =
         _broker.getValue<String>(0, 'OutputAudioDevice', '') ?? '';
@@ -200,11 +209,16 @@ class RadioAudio {
     // engine then falls back to relaying transmit bytes via a `send` event.
     final RootIsolateToken? rootToken = RootIsolateToken.instance;
 
-    await Isolate.spawn(audioEngineIsolateEntry, <Object?>[
-      receivePort.sendPort,
-      rootToken,
-      macAddress,
-    ], debugName: 'radio-audio-engine-$deviceId');
+    final arguments = <Object?>[receivePort.sendPort, rootToken, macAddress];
+    if (_engineSpawner != null) {
+      await _engineSpawner(arguments);
+    } else {
+      await Isolate.spawn(
+        audioEngineIsolateEntry,
+        arguments,
+        debugName: 'radio-audio-engine-$deviceId',
+      );
+    }
 
     await ready.future;
     _engineSpawning = false;
@@ -329,7 +343,7 @@ class RadioAudio {
     if (data is! int) return;
     if (data == _selectedRadioDeviceId) return;
     _selectedRadioDeviceId = data;
-    if (!_isAudibleRadio) _bufferedFrames = 0;
+    if (!_isAudibleRadio) _diagnostics.resetBuffer();
   }
 
   // ---------------------------------------------------------------------------
@@ -486,6 +500,13 @@ class RadioAudio {
   Future<void> start() async {
     if (_running || _connecting) return;
     _connecting = true;
+    _diagnostics.start();
+    _diagnosticsTimer?.cancel();
+    _diagnosticsTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _publishAudioDiagnostics(),
+    );
+    _publishAudioDiagnostics();
 
     try {
       // Open the audio playback device (root isolate) and spawn the audio
@@ -508,6 +529,7 @@ class RadioAudio {
           .listen(
             _onAudioData,
             onError: (Object e) {
+              _diagnostics.failureReason = 'audioStreamError';
               _debug('Audio data stream error: $e');
             },
           );
@@ -554,6 +576,7 @@ class RadioAudio {
       }
 
       if (!ok) {
+        _diagnostics.failureReason = 'audioConnectFailed';
         await _audioDataSub?.cancel();
         _audioDataSub = null;
         _connecting = false;
@@ -594,6 +617,7 @@ class RadioAudio {
       await _audioConnSub?.cancel();
       _audioConnSub = null;
       await _releasePcmSound();
+      _diagnostics.failureReason = 'audioStartFailed';
       _debug('Audio start error: $e');
       _running = false;
       _connecting = false;
@@ -606,6 +630,10 @@ class RadioAudio {
     if (!_running && !_connecting) return;
     _running = false;
     _connecting = false;
+    _diagnostics.stop();
+    _diagnosticsTimer?.cancel();
+    _diagnosticsTimer = null;
+    _publishAudioDiagnostics();
 
     await _audioDataSub?.cancel();
     _audioDataSub = null;
@@ -629,6 +657,8 @@ class RadioAudio {
 
   /// Dispose all resources.
   Future<void> dispose() async {
+    _diagnosticsTimer?.cancel();
+    _diagnosticsTimer = null;
     await stop();
     _recording = false;
     // Tell the engine to release its resources and exit, then tear down the
@@ -647,6 +677,7 @@ class RadioAudio {
     final ourAddr = macAddress.toUpperCase().replaceAll('-', ':');
     if (eventAddr != ourAddr) return;
     if (event.type == BluetoothClassicEventType.disconnected) {
+      _diagnostics.failureReason = 'audioDisconnected';
       _debug('Audio channel disconnected by remote.');
       stop();
     }
@@ -658,6 +689,7 @@ class RadioAudio {
 
   void _onAudioData(Uint8List data) {
     if (!_running && !_connecting) return;
+    _diagnostics.received(data.length);
     _sendToEngine(<String, Object?>{
       'cmd': 'rx',
       'bytes': TransferableTypedData.fromList(<Uint8List>[data]),
@@ -698,7 +730,7 @@ class RadioAudio {
       await _pcm.release();
     } catch (_) {}
     _pcmSoundReady = false;
-    _bufferedFrames = 0;
+    _diagnostics.resetBuffer();
     await _initPcmSound();
   }
 
@@ -714,12 +746,12 @@ class RadioAudio {
       await _pcm.release();
     } catch (_) {}
     _pcmSoundReady = false;
-    _bufferedFrames = 0;
+    _diagnostics.resetBuffer();
   }
 
   // Invoked by the PCM player when the buffer drains below the threshold.
   void _onFeed(int remainingFrames) {
-    _bufferedFrames = remainingFrames;
+    _diagnostics.drained(remainingFrames);
   }
 
   Future<void> _playPcm(Int16List pcm) async {
@@ -728,12 +760,12 @@ class RadioAudio {
     // still decode, record and process data; they just don't feed the speaker.
     if (!_isAudibleRadio) return;
     // If we are too far behind real time, drop this chunk to catch up.
-    if (_bufferedFrames > _maxBufferedFrames) return;
-
-    _bufferedFrames += pcm.length;
+    final epoch = _diagnostics.reserve(pcm.length);
+    if (epoch == null) return;
     try {
       await _pcm.feed(pcm);
     } catch (e) {
+      _diagnostics.failed(epoch, pcm.length);
       _debug('PCM feed error: $e');
     }
   }
@@ -757,7 +789,24 @@ class RadioAudio {
   // Data Broker event dispatch (translated from engine events)
   // ---------------------------------------------------------------------------
 
+  void _publishAudioDiagnostics() {
+    _broker.dispatch(
+      deviceId: deviceId,
+      name: 'RadioAudioDiagnostics',
+      data: _diagnostics.snapshot,
+      store: true,
+    );
+  }
+
   void _dispatchAudioStateChanged(bool enabled) {
+    if (enabled) {
+      _diagnostics.state = 'running';
+    } else {
+      _diagnostics.stop();
+      _diagnosticsTimer?.cancel();
+      _diagnosticsTimer = null;
+    }
+    _publishAudioDiagnostics();
     _broker.dispatch(
       deviceId: deviceId,
       name: 'AudioState',
