@@ -33,6 +33,7 @@ const remoteMobilePage = r'''<!doctype html>
 </section>
 <section class="card"><h2>操作权</h2><p id="controlStatus" class="muted">查看和收听无需操作权。</p><div class="row"><button id="controlRequest">申请操作权</button><button id="controlRelease" disabled>释放操作权</button></div><div id="controlHandoff" class="row"></div><p class="muted">同一时间只允许一端操作。Windows 可随时收回；重连后重新申请。</p></section>
 <section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
+<section class="card"><h2>本机麦克风测试</h2><p class="muted">仅在当前手机/电脑浏览器测量输入，最长 10 秒。不会发送到 Windows 或电台，不播放回声，不保存声音；只读用户也可测试。需要 HTTPS 和麦克风许可。</p><div class="row"><button id="micTest">测试麦克风（不发射）</button><button id="micTestStop" disabled>停止测试</button></div><p id="micTestStatus" aria-live="polite" class="muted">尚未测试</p></section>
 <section class="card"><h2>APRS 消息</h2><label for="aprsFavorite">常用呼号</label><select id="aprsFavorite"></select><label for="aprsTemplate">消息模板</label><select id="aprsTemplate"></select><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>预览 APRS 消息</button><div id="aprsConfirmation" hidden><p id="aprsPreview" style="white-space:pre-wrap"></p><div class="row"><button id="aprsConfirm" disabled>确认发送此消息</button><button id="aprsCancel">取消发送</button></div></div><p class="muted">常用项由 Windows 配置。选取只填写草稿，需预览后确认发送。需电脑端授权 APRS 发送和允许发射；提交不等于对方收到。</p></section>
 <section class="card"><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
 <section class="card"><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
@@ -58,6 +59,7 @@ let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0
 let pendingAprs=null,pendingHandoff=null,shortcutsSignature='';
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
+let micTestBusy=false,micTestGeneration=0,micTestStream=null,micTestNode=null,micTestSource=null,micTestMute=null,micTestTimer=null;
 let aprsReadThrough=0,aprsMessageSignature='';
 let positionDraft=null,positionGeneration=0,pendingPosition=null;
 function positionPreview(){
@@ -142,7 +144,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
  socket.onmessage=event=>{if(typeof event.data!=='string'){playAudio(event.data);return;}
   if(event.data.startsWith('remote:')){const msg=JSON.parse(event.data.slice(7));if(msg.clientId!==undefined)clientId=msg.clientId;if(msg.error){notice(msg.error);stopPtt();}if(msg.state){state=msg.state;render();}}
  };
- socket.onclose=async()=>{stopPtt();stopPlayback();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
+ socket.onclose=async()=>{stopMicTest();stopPtt();stopPlayback();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
  socket.onerror=()=>socket.close();
 }
 $('controlRequest').onclick=()=>send({op:'requestControl'});
@@ -185,7 +187,8 @@ function render(){
  $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null||!control;
  $('volume').disabled=!connected||state.txOwner!=null||!control;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
  const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext&&control;
- $('ptt').disabled=!ready||(state.txOwner!=null&&!own);
+ $('ptt').disabled=micTestBusy||!ready||(state.txOwner!=null&&!own);
+ $('micTest').disabled=micTestBusy||pressed||transmitting||document.hidden;
  $('txHint').textContent=state.emergencyStopped?'Windows 已紧急停止远程控制。':!control?'请先申请操作权；Windows 可批准或收回。':!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
  if(pressed&&own){transmitting=true;$('ptt').classList.add('active');$('ptt').textContent='正在发射 · 松手停止';}else if(transmitting&&!own){stopPtt();notice('发射已停止。');}
 }
@@ -234,9 +237,36 @@ async function prepareMic(){const ctx=await context();if(!pressed)return false;i
  const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});if(!pressed||generation!==micGeneration){stream.getTracks().forEach(t=>t.stop());return false;}micStream=stream;micSource=ctx.createMediaStreamSource(micStream);micNode=ctx.createScriptProcessor(2048,1,1);micMute=ctx.createGain();micMute.gain.value=0;micSource.connect(micNode);micNode.connect(micMute);micMute.connect(ctx.destination);
  micNode.onaudioprocess=event=>{if(!transmitting||!pressed||socket.readyState!==WebSocket.OPEN)return;if(socket.bufferedAmount>32768){stopPtt();notice('网络发送积压，已停止发射。');return;}const input=event.inputBuffer.getChannelData(0);const step=ctx.sampleRate/32000;const values=[];for(;micPosition<input.length;micPosition+=step){const j=Math.floor(micPosition);const fraction=micPosition-j;values.push(input[j]*(1-fraction)+(input[Math.min(j+1,input.length-1)]||0)*fraction);}micPosition-=input.length;const frame=new ArrayBuffer(4+values.length*2);const view=new DataView(frame);view.setUint8(0,242);view.setUint8(1,1);view.setUint16(2,32000,true);values.forEach((x,i)=>view.setInt16(4+i*2,Math.max(-32768,Math.min(32767,Math.round(x*32767))),true));socket.send(frame);};
 return true;}
-$('ptt').addEventListener('pointerdown',async event=>{event.preventDefault();if(pressed)return;pressed=true;$('ptt').setPointerCapture(event.pointerId);try{if(!await prepareMic()||!pressed)return;micPosition=0;send({op:'pttStart'});}catch(error){stopPtt();notice('麦克风失败：'+error.message);}});
+function stopMicTest(label='已停止本机测试；未上传或保存声音。'){
+ const hadSession=micTestBusy;micTestGeneration++;micTestBusy=false;clearTimeout(micTestTimer);micTestTimer=null;
+ if(micTestStream)micTestStream.getTracks().forEach(t=>t.stop());if(micTestNode){micTestNode.onaudioprocess=null;micTestNode.disconnect();}if(micTestSource)micTestSource.disconnect();if(micTestMute)micTestMute.disconnect();micTestStream=micTestNode=micTestSource=micTestMute=null;
+ $('micTestStop').disabled=true;if(hadSession)$('micTestStatus').textContent=label;render();
+}
+$('micTestStop').onclick=()=>stopMicTest();
+$('micTest').onclick=async()=>{
+ if(micTestBusy||pressed||transmitting||micStream||document.hidden)return;
+ if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){$('micTestStatus').textContent='麦克风测试需要 HTTPS 和浏览器支持。';return;}
+ micTestBusy=true;const generation=++micTestGeneration;$('micTestStop').disabled=false;$('micTestStatus').textContent='等待本机麦克风许可…';render();
+ micTestTimer=setTimeout(()=>stopMicTest('许可等待超时；迟到的麦克风会立即关闭。'),15000);
+ try{
+  const ctx=await context();if(generation!==micTestGeneration||!micTestBusy)return;
+  const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
+  if(generation!==micTestGeneration||!micTestBusy||document.hidden){stream.getTracks().forEach(t=>t.stop());return;}
+  micTestStream=stream;micTestSource=ctx.createMediaStreamSource(stream);micTestNode=ctx.createScriptProcessor(2048,1,1);micTestMute=ctx.createGain();micTestMute.gain.value=0;micTestSource.connect(micTestNode);micTestNode.connect(micTestMute);micTestMute.connect(ctx.destination);
+  clearTimeout(micTestTimer);micTestTimer=setTimeout(()=>stopMicTest('10 秒测试完成；未上传或保存声音。'),10000);
+  $('micTestStatus').textContent='本机测量中；此时 PTT 不可用。';
+  let meterAt=0;micTestNode.onaudioprocess=event=>{
+   if(generation!==micTestGeneration||!micTestBusy||document.hidden||Date.now()-meterAt<100)return;meterAt=Date.now();
+   const samples=event.inputBuffer.getChannelData(0);let peak=0,sum=0,clips=0;
+   for(let i=0;i<Math.min(samples.length,2048);i++){const value=Number.isFinite(samples[i])?samples[i]:0;peak=Math.max(peak,Math.abs(value));sum+=value*value;if(Math.abs(value)>=.999)clips++;}
+   const count=Math.min(samples.length,2048),rms=count?Math.sqrt(sum/count):0;
+   $('micTestStatus').textContent='本机输入 '+ctx.sampleRate+' Hz · 峰值 '+(Math.min(1,peak)*100).toFixed(0)+'% · RMS '+(Math.min(1,rms)*100).toFixed(0)+'% · 当前块削波 '+clips+'；未上传。';
+  };
+ }catch(_){if(generation===micTestGeneration)stopMicTest('麦克风不可用或许可被拒绝；未发射。');}
+};
+$('ptt').addEventListener('pointerdown',async event=>{event.preventDefault();if(pressed||micTestBusy||$('ptt').disabled)return;pressed=true;$('ptt').setPointerCapture(event.pointerId);try{if(!await prepareMic()||!pressed)return;micPosition=0;send({op:'pttStart'});}catch(error){stopPtt();notice('麦克风失败：'+error.message);}});
 for(const name of ['pointerup','pointercancel','lostpointercapture'])$('ptt').addEventListener(name,()=>stopPtt());
-window.addEventListener('blur',()=>{stopPtt();cancelPositionPreview();});document.addEventListener('visibilitychange',()=>{if(document.hidden){stopPtt();cancelPositionPreview();positionGeneration++;}});window.addEventListener('pagehide',()=>{stopPtt();cancelPositionPreview();positionGeneration++;if(micStream)micStream.getTracks().forEach(t=>t.stop());});
+window.addEventListener('blur',()=>{stopMicTest();stopPtt();cancelPositionPreview();});document.addEventListener('visibilitychange',()=>{if(document.hidden){stopMicTest();stopPtt();cancelPositionPreview();positionGeneration++;}});window.addEventListener('pagehide',()=>{stopMicTest();stopPtt();cancelPositionPreview();positionGeneration++;if(micStream)micStream.getTracks().forEach(t=>t.stop());});
 $('channel').onchange=()=>send({op:'channel',value:Number($('channel').value),vfo:'A'});
 $('scan').onclick=()=>send({op:'scan',value:!state.settings?.scan});
 $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});

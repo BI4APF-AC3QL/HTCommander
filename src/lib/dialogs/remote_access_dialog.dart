@@ -12,6 +12,8 @@ import 'aprs_shortcuts_dialog.dart';
 import 'remote_profile_dialog.dart';
 import 'link_diagnostics_dialog.dart';
 import 'remote_connection_dialog.dart';
+import 'offline_simulation_dialog.dart';
+import '../services/diagnostic_log.dart';
 import '../services/web/remote_connection_models.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
@@ -412,6 +414,29 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               ),
             ),
             const Divider(),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.science_outlined),
+              label: Text(_text('离线模拟演练', 'Offline simulation')),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const OfflineSimulationDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.copy),
+              label: Text(
+                _text('复制脱敏运行日志', 'Copy private diagnostic metadata'),
+              ),
+              onPressed: () => Clipboard.setData(
+                ClipboardData(
+                  text: DiagnosticLog.export(
+                    (DataBroker.getValueDynamic(1, 'DebugLogEntries', [])
+                            as List)
+                        .whereType<Map>(),
+                  ),
+                ),
+              ),
+            ),
             if (!kIsWeb)
               OutlinedButton.icon(
                 icon: const Icon(Icons.qr_code),

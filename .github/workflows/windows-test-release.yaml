@@ -112,6 +112,11 @@ jobs:
           Copy-Item docs/remote-client-roles.md "$buildDir/remote-client-roles.md"
           Copy-Item docs/remote-beacon-task.md "$buildDir/remote-beacon-task.md"
           Copy-Item docs/remote-connection-setup.md "$buildDir/remote-connection-setup.md"
+          Copy-Item docs/diagnostics-and-offline-simulation.md "$buildDir/diagnostics-and-offline-simulation.md"
+          Copy-Item docs/remote-microphone-test.md "$buildDir/remote-microphone-test.md"
+          # Preserve relative links from the bundled simple setup guide.
+          New-Item -ItemType Directory -Force "$buildDir/docs" | Out-Null
+          Copy-Item docs/remote-*.md,docs/aprs-*.md,docs/windows-*.md,docs/radio-link-diagnostics.md,docs/phone-remote-control.md,docs/diagnostics-and-offline-simulation.md "$buildDir/docs"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH

@@ -227,5 +227,49 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(element('mediaMetrics').textContent.includes('8 kHz 单声道'));
   assert.ok(element('mediaMetrics').textContent.includes('15.6 KiB'));
   document.hidden=true;clock+=8000;const noPoll=commands().length;poll();assert.equal(commands().length,noPoll);document.hidden=false;
-  console.log('Mobile page tests passed: APRS search/reply/unread, FFT tone/silence, bounded playback recovery, microphone cancellation/ownership/resampling/background stop, per-connection media preference, tile consent and measured low-bandwidth cadence.');
+
+  // Local microphone testing is available to read-only clients, but never
+  // requests PTT, encodes upstream audio, uploads samples or plays echo.
+  state.readOnly=true;state.txAllowed=false;state.controlOwner=null;update();
+  const binaryBefore=socket.sent.filter(v=>v instanceof ArrayBuffer).length;
+  const pttBefore=commands().filter(v=>v==='pttStart').length;
+  const testTimers=new Map();let timerId=1000,rejectPermission;
+  context.setTimeout=(callback,delay)=>{const id=++timerId;testTimers.set(id,{callback,delay});return id;};
+  context.clearTimeout=id=>testTimers.delete(id);
+  context.navigator.mediaDevices.getUserMedia=()=>new Promise((r,j)=>{resolvePermission=r;rejectPermission=j;});
+  let localTest=element('micTest').onclick();await wait();
+  assert.equal(element('ptt').disabled,true);assert.equal(element('micTestStop').disabled,false);
+  element('micTestStop').onclick();const cancelledCount=stopped;resolvePermission(stream);await localTest;
+  assert.equal(stopped,cancelledCount+1);assert.equal(element('micTestStop').disabled,true);
+  // A pending permission response after the watchdog cannot revive the test.
+  localTest=element('micTest').onclick();await wait();
+  const pendingTimer=Array.from(testTimers.values()).find(t=>t.delay===15000);
+  pendingTimer.callback();const expiredCount=stopped;resolvePermission(stream);await localTest;
+  assert.equal(stopped,expiredCount+1);
+  localTest=element('micTest').onclick();await wait();rejectPermission(Error('secret permission error'));await localTest;
+  assert.ok(element('micTestStatus').textContent.includes('许可被拒绝'));
+  assert.ok(!element('micTestStatus').textContent.includes('secret'));
+  localTest=element('micTest').onclick();await wait();resolvePermission(stream);await localTest;
+  processor.onaudioprocess({inputBuffer:{getChannelData:()=>new Float32Array(2048).fill(.5)}});
+  assert.ok(element('micTestStatus').textContent.includes('峰值 50%'));
+  assert.ok(element('micTestStatus').textContent.includes('RMS 50%'));
+  clock+=100;processor.onaudioprocess({inputBuffer:{getChannelData:()=>new Float32Array(2048).fill(1)}});
+  assert.ok(element('micTestStatus').textContent.includes('削波 2048'));
+  const activeTimer=Array.from(testTimers.values()).find(t=>t.delay===10000);
+  const timeoutCount=stopped;activeTimer.callback();assert.equal(stopped,timeoutCount+1);
+  assert.equal(processor.onaudioprocess,null);assert.equal(element('micTestStop').disabled,true);
+  localTest=element('micTest').onclick();await wait();resolvePermission(stream);await localTest;
+  const backgroundCount=stopped;document.hidden=true;documentEvents.visibilitychange();
+  assert.equal(stopped,backgroundCount+1);document.hidden=false;
+  localTest=element('micTest').onclick();await wait();resolvePermission(stream);await localTest;
+  const blurCount=stopped;windowEvents.blur();assert.equal(stopped,blurCount+1);
+  localTest=element('micTest').onclick();await wait();resolvePermission(stream);await localTest;
+  const hideCount=stopped;windowEvents.pagehide();assert.equal(stopped,hideCount+1);
+  // HTTPS restriction and absence of mediaDevices produce fixed local errors.
+  context.window.isSecureContext=false;const noHttps=stopped;await element('micTest').onclick();
+  assert.ok(element('micTestStatus').textContent.includes('HTTPS'));assert.equal(stopped,noHttps);
+  context.window.isSecureContext=true;
+  assert.equal(socket.sent.filter(v=>v instanceof ArrayBuffer).length,binaryBefore);
+  assert.equal(commands().filter(v=>v==='pttStart').length,pttBefore);
+  console.log('Mobile page tests passed: APRS search/reply/unread, FFT tone/silence, bounded playback recovery, microphone cancellation/ownership/resampling/background stop and isolated local-only mic tests, per-connection media preference, tile consent and measured low-bandwidth cadence.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
