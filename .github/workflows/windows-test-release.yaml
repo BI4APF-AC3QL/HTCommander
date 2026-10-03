@@ -107,6 +107,7 @@ jobs:
           Copy-Item docs/aprs-history-and-map.md "$buildDir/aprs-history-and-map.md"
           Copy-Item docs/remote-dashboard.md "$buildDir/remote-dashboard.md"
           Copy-Item docs/remote-profile.md "$buildDir/remote-profile.md"
+          Copy-Item docs/remote-low-bandwidth.md "$buildDir/remote-low-bandwidth.md"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH

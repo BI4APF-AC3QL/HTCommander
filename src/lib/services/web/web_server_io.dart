@@ -30,6 +30,7 @@ import 'remote_access_config.dart';
 import 'remote_web_auth.dart';
 import 'remote_mobile_page.dart';
 import 'remote_tile_proxy.dart';
+import 'remote_media.dart';
 import '../../utils/map_source.dart';
 
 /// Callback raised when a WebSocket [client] connects or disconnects.
@@ -168,12 +169,13 @@ class WebServer {
     try {
       final value = jsonDecode(message.substring(7));
       return value is Map &&
-          const [
-            'state',
-            'pttStop',
-            'requestControl',
-            'releaseControl',
-          ].contains(value['op']);
+          (RemoteMediaProfile.validCommand(value) ||
+              const [
+                'state',
+                'pttStop',
+                'requestControl',
+                'releaseControl',
+              ].contains(value['op']));
     } catch (_) {
       return false;
     }
@@ -571,7 +573,8 @@ class WebServer {
       };
       final source = match == null ? null : sources[match[1]];
       final revision = request.uri.queryParameters['v'];
-      final tile = source == null ||
+      final tile =
+          source == null ||
               (revision != null && revision != source.cacheNamespace)
           ? null
           : await (_tiles ??= RemoteTileProxy()).tile(

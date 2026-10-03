@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:htcommander/radio/pcm_player.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +18,9 @@ void set(int id, String name, Object value) =>
 class _Phone {
   _Phone(this.socket) {
     socket.listen((value) {
+      if (value is List<int>) {
+        audioPackets.add(List<int>.of(value));
+      }
       if (value is String && value.startsWith('remote:')) {
         final message = jsonDecode(value.substring(7)) as Map;
         final wait = _reply;
@@ -25,6 +30,7 @@ class _Phone {
     }, onDone: () => _reply?.completeError(StateError('closed')));
   }
   final WebSocket socket;
+  final audioPackets = <List<int>>[];
   Completer<Map>? _reply;
   Future<Map> command(Map data) {
     _reply = Completer<Map>();
@@ -131,6 +137,104 @@ void main() {
         .setMockMethodCallHandler(secure, null);
   });
   tearDown(DataBroker.reset);
+  test(
+    'receive profile isolates clients, bytes, audio stop and reconnect without RF',
+    () async {
+      final host = _Host(), observer = DataBrokerClient();
+      final writes = <String>[];
+      for (final event in [
+        'TransmitDataFrame',
+        'SetVolumeLevel',
+        'ChannelChangeVfoA',
+        'Scan',
+        'Ptt',
+        'SendRawCommand',
+      ]) {
+        observer.subscribe(
+          deviceId: 2,
+          name: event,
+          callback: (_, name, _) => writes.add(name),
+        );
+      }
+      observer.subscribe(
+        deviceId: 1,
+        name: 'SendAprsMessage',
+        callback: (_, name, _) => writes.add(name),
+      );
+      try {
+        await host.start(readOnly: true);
+        final a = await host.phone(), b = await host.phone();
+        final initial = await a.command({'op': 'media', 'lowBandwidth': true});
+        expect(initial['error'], isNull);
+        expect(initial['state']['readOnly'], true);
+        expect(initial['state']['controlOwner'], isNull);
+        expect(initial['state']['media']['lowBandwidth'], true);
+        expect(
+          (await b.command({'op': 'state'}))['state']['media']['lowBandwidth'],
+          false,
+        );
+        a.socket.add('audioon');
+        b.socket.add('audioon');
+        await a.command({'op': 'state'});
+        await b.command({'op': 'state'});
+        final pcm = Int16List(16000);
+        PcmPlayer.playbackTap!(pcm, 32000, 1);
+        for (
+          var i = 0;
+          i < 100 && (a.audioPackets.isEmpty || b.audioPackets.isEmpty);
+          i++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(a.audioPackets.single.length, 8004);
+        expect(b.audioPackets.single.length, 32004);
+        expect(a.audioPackets.single.take(4), [241, 1, 64, 31]);
+        expect(
+          (await a.command({
+            'op': 'state',
+          }))['state']['media']['audioPayloadBytes'],
+          8004,
+        );
+        expect(
+          (await b.command({
+            'op': 'state',
+          }))['state']['media']['audioPayloadBytes'],
+          32004,
+        );
+        a.socket.add('audiooff');
+        await a.command({'op': 'state'});
+        PcmPlayer.playbackTap!(pcm, 32000, 1);
+        for (var i = 0; i < 100 && b.audioPackets.length < 2; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(b.audioPackets, hasLength(2));
+        expect(a.audioPackets, hasLength(1));
+        await a.command({'op': 'media', 'lowBandwidth': false});
+        a.socket.add('audioon');
+        await a.command({'op': 'state'});
+        PcmPlayer.playbackTap!(pcm, 32000, 1);
+        for (var i = 0; i < 100 && a.audioPackets.length < 2; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(a.audioPackets.last.length, 32004);
+        PcmPlayer.playbackTap!(Int16List(3), 32000, 2);
+        expect(
+          (await a.command({'op': 'state'}))['state']['media']['skippedBlocks'],
+          1,
+        );
+        final reconnected = await host.phone();
+        final fresh = (await reconnected.command({
+          'op': 'state',
+        }))['state']['media'];
+        expect(fresh['lowBandwidth'], false);
+        expect(fresh['audioPayloadBytes'], 0);
+        expect(writes, isEmpty);
+      } finally {
+        await host.close();
+        observer.dispose();
+      }
+    },
+  );
   test('requests stay bounded and repeated requests cannot extend expiry', () {
     var now = DateTime(2026);
     final lease = ControlLease(clock: () => now);

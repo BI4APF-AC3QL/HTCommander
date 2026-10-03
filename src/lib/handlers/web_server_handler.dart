@@ -37,6 +37,7 @@ import '../services/host_bridge.dart';
 import '../services/web/web_server.dart';
 import '../services/web/remote_access_config.dart';
 import '../services/web/remote_radio_controller.dart';
+import '../services/web/remote_media.dart';
 import '../winlink/winlink_mail.dart';
 
 /// Manages the lifecycle of the [WebServer] and bridges WebSocket clients to the
@@ -87,6 +88,8 @@ class WebServerHandler {
   /// Browsers that opted in to receive the host's played audio, keyed by client
   /// id. Populated by `audioon` / cleared by `audiooff` / disconnect.
   final Map<int, WebSocketClient> _audioClients = <int, WebSocketClient>{};
+  final Map<int, RemoteMediaProfile> _mediaClients = {};
+  final RemoteReceiveEncoder _receiveEncoder = RemoteReceiveEncoder();
 
   /// Initializes the handler: loads settings, subscribes to changes, and starts
   /// the server if enabled.
@@ -397,6 +400,7 @@ class WebServerHandler {
   // ---------------------------------------------------------------------------
 
   void _onClientConnected(WebSocketClient client) {
+    _mediaClients[client.id] = RemoteMediaProfile();
     _publishClients();
     if (_disposed) return;
     // Report the current radio status to the freshly connected browser.
@@ -728,12 +732,22 @@ class WebServerHandler {
       try {
         final command = jsonDecode(message.substring(7));
         if (command is! Map) return;
-        final error = _remote.command(client.id, command);
+        String? error;
+        if (command['op'] == 'media') {
+          if (!RemoteMediaProfile.validCommand(command)) {
+            error = 'Invalid receive media preference.';
+          } else {
+            _mediaClients[client.id]!.lowBandwidth = command['lowBandwidth'];
+            _resetUnusedReceiveEncoder();
+          }
+        } else {
+          error = _remote.command(client.id, command);
+        }
         _autoGrantNext();
         client.sendText(
           'remote:${jsonEncode({
             'clientId': client.id,
-            'state': {..._remote.snapshot(client.id), 'readOnly': client.readOnly},
+            'state': {..._remote.snapshot(client.id), 'readOnly': client.readOnly, 'media': _mediaClients[client.id]?.snapshot},
             'error': error,
           })}',
         );
@@ -773,6 +787,7 @@ class WebServerHandler {
     if (message == 'audiooff') {
       _remote.command(client.id, {'op': 'pttStop'});
       _audioClients.remove(client.id);
+      _resetUnusedReceiveEncoder();
       return;
     }
     if (message.startsWith('mailop:')) {
@@ -894,6 +909,8 @@ class WebServerHandler {
     if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
     _remote.recallControl();
     _audioClients.clear();
+    _mediaClients.clear();
+    _receiveEncoder.reset();
     _broker.dispatch(
       deviceId: 0,
       name: 'CancelRemoteAprs',
@@ -910,6 +927,8 @@ class WebServerHandler {
     if (_disposed) return;
     _remote.disconnected(client.id);
     _audioClients.remove(client.id);
+    _mediaClients.remove(client.id);
+    _resetUnusedReceiveEncoder();
     _broker.dispatch(
       deviceId: 0,
       name: 'CancelRemoteAprs',
@@ -956,18 +975,40 @@ class WebServerHandler {
   /// tagged binary frame (`[magic, channels, rateLo, rateHi]` + PCM).
   void _onHostPcm(Int16List pcm, int sampleRate, int channels) {
     if (_disposed || _audioClients.isEmpty) return;
-    final pcmBytes = pcm.buffer.asUint8List(
-      pcm.offsetInBytes,
-      pcm.lengthInBytes,
-    );
-    final msg = Uint8List(4 + pcmBytes.length);
-    msg[0] = HostBridge.audioFrameMagic;
-    msg[1] = channels & 0xFF;
-    msg[2] = sampleRate & 0xFF;
-    msg[3] = (sampleRate >> 8) & 0xFF;
-    msg.setRange(4, msg.length, pcmBytes);
+    if (!RemoteReceiveEncoder.valid(pcm, sampleRate, channels)) {
+      _receiveEncoder.reset();
+      for (final id in _audioClients.keys) {
+        _mediaClients[id]?.skippedBlocks++;
+      }
+      return;
+    }
+    Uint8List? normal, low;
+    var lowEncoded = false;
     for (final client in _audioClients.values) {
-      client.sendBinary(msg);
+      final profile = _mediaClients[client.id]!;
+      Uint8List? packet;
+      if (profile.lowBandwidth) {
+        if (!lowEncoded) {
+          low = _receiveEncoder.low(pcm, sampleRate, channels);
+          lowEncoded = true;
+        }
+        packet = low;
+      } else {
+        normal ??= RemoteReceiveEncoder.normal(pcm, sampleRate, channels);
+        packet = normal;
+      }
+      if (packet != null) {
+        client.sendBinary(packet);
+        profile.submitted(packet.length);
+      }
+    }
+  }
+
+  void _resetUnusedReceiveEncoder() {
+    if (!_audioClients.keys.any(
+      (id) => _mediaClients[id]?.lowBandwidth == true,
+    )) {
+      _receiveEncoder.reset();
     }
   }
 

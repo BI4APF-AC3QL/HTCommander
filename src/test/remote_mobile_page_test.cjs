@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../lib/services/web/remote_mobile_page.dart'), 'utf8');
 const script = source.split('<script>')[1].split('</script>')[0];
-const elements = new Map();
+const elements = new Map(), drawCounts = {}, intervals = [];
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
     value: id === 'playback' ? '0.8' : '', textContent: '', disabled: false,
@@ -14,7 +14,7 @@ function element(id) {
     addEventListener(name, handler) { this.handlers[name] = handler; },
     replaceChildren(...children) { this.children = children; }, setPointerCapture() {},
     getBoundingClientRect(){return {left:0,top:0,width:512,height:320};},
-    getContext(){return {fillRect(){},drawImage(){},beginPath(){},arc(){},fill(){},fillText(){},moveTo(){},lineTo(){},stroke(){}};},
+    getContext(){return {fillRect(){drawCounts[id]=(drawCounts[id]||0)+1;},drawImage(){},beginPath(){},arc(){},fill(){},fillText(){},moveTo(){},lineTo(){},stroke(){}};},
   });
   return elements.get(id);
 }
@@ -45,7 +45,7 @@ const context = { document, WebSocket, ArrayBuffer, DataView, Float32Array,
   window: { isSecureContext: true, AudioContext, confirm:()=>true, addEventListener: (name, f) => windowEvents[name] = f },
   location: { protocol: 'https:', host: 'radio.example' },
   navigator: { mediaDevices: { getUserMedia: () => new Promise(r => resolvePermission = r) },geolocation:{getCurrentPosition:callback=>resolveLocation=callback} },
-  setInterval() {}, setTimeout() {}, clearTimeout() {}, fetch: async () => ({ redirected: false }),
+  setInterval(callback,delay) {intervals.push({callback,delay});}, setTimeout() {}, clearTimeout() {}, fetch: async () => ({ redirected: false }),
 };
 vm.runInNewContext(script, context);
 const socket = WebSocket.sockets[0];
@@ -190,5 +190,36 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   await element('listen').onclick();
   assert.equal(vm.runInNewContext('scheduledAudio.size',context),0);
   element('spectrumPause').onclick();assert.equal(element('spectrumPause').textContent,'继续图形');
-  console.log('Mobile page tests passed: APRS search/reply/unread, FFT tone/silence, bounded playback recovery, microphone cancellation/ownership/resampling and background stop.');
+  // Compare the real page's periodic work over the same simulated 8 seconds.
+  let clock=Date.now();context.Date=class extends Date {static now(){return clock;}};
+  const poll=intervals.find(i=>i.delay===500&&String(i.callback).includes('lastStatePoll')).callback;
+  const cadence=low=>{
+    element('networkMode').value=low?'low':'normal';element('networkMode').onchange();
+    const start=clock;vm.runInNewContext('lastStatePoll=Date.now();lastSpectrumDraw=Date.now();lastMapDraw=Date.now();listening=true;spectrumPaused=false;spectrumCount=1024;',context);
+    const before=commands().filter(x=>x==='state').length,spec=drawCounts.spectrum||0,map=drawCounts.stationMap||0;
+    for(let t=100;t<=8000;t+=100){clock=start+t;vm.runInNewContext('spectrumDirty=true;mapDirty=true;drawSpectrum();drawMap();',context);if(t%500===0)poll();}
+    return {polls:commands().filter(x=>x==='state').length-before,spec:((drawCounts.spectrum||0)-spec),map:((drawCounts.stationMap||0)-map)};
+  };
+  // Start in low mode: no automatic tile requests, including a new source.
+  element('networkMode').value='low';element('networkMode').onchange();
+  assert.equal(commands().at(-2),'media');
+  const mediaCommand=JSON.parse(socket.sent.filter(v=>typeof v==='string'&&v.startsWith('remote:')).at(-2).slice(7));
+  assert.equal(mediaCommand.lowBandwidth,true);
+  const imageCount=context.Image.all.length;
+  element('mapSource').onchange();vm.runInNewContext('lastMapDraw=0;drawMap()',context);
+  assert.equal(context.Image.all.length,imageCount);
+  element('mapRetry').onclick();vm.runInNewContext('lastMapDraw=0;drawMap()',context);
+  assert.ok(vm.runInNewContext('mapLoads',context)<=2);
+  assert.ok(context.Image.all.length>imageCount);
+  for(const image of context.Image.all.slice(imageCount))if(image.onload)image.onload();
+  const lowCadence=cadence(true),normalCadence=cadence(false);
+  assert.deepEqual(lowCadence,{polls:1,spec:16,map:4});
+  assert.deepEqual(normalCadence,{polls:4,spec:80,map:16});
+  element('networkMode').value='low';element('networkMode').onchange();socket.onopen();
+  assert.ok(socket.sent.some(v=>v==='remote:{"op":"media","lowBandwidth":true}'));
+  state.media={lowBandwidth:true,audioPayloadBytes:16004,audioFrames:50,skippedBlocks:1};update();
+  assert.ok(element('mediaMetrics').textContent.includes('8 kHz 单声道'));
+  assert.ok(element('mediaMetrics').textContent.includes('15.6 KiB'));
+  document.hidden=true;clock+=8000;const noPoll=commands().length;poll();assert.equal(commands().length,noPoll);document.hidden=false;
+  console.log('Mobile page tests passed: APRS search/reply/unread, FFT tone/silence, bounded playback recovery, microphone cancellation/ownership/resampling/background stop, per-connection media preference, tile consent and measured low-bandwidth cadence.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

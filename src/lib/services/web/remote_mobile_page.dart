@@ -22,6 +22,7 @@ const remoteMobilePage = r'''<!doctype html>
 </style></head><body><main>
 <header><h1>远程电台</h1><span id="connection" role="status">正在连接…</span></header>
 <div id="notice" role="alert"></div>
+<section class="card"><h2>网络与接收质量</h2><label for="networkMode">当前手机带宽模式</label><select id="networkMode"><option value="normal">标准接收</option><option value="low">低带宽 · 8 kHz 单声道</option></select><p id="mediaMetrics" class="muted">等待电脑确认接收模式</p><p class="muted">低带宽适合语音收听，频谱降至 2 Hz、地图绘制降至 0.5 Hz、状态每 8 秒更新；点击“加载地图瓦片”才下载底图。操作请求仍立即处理，麦克风发送格式保持原设置。计数为本次连接提交的音频负载，包含 4 字节帧头，不含协议、瓦片或其他流量。</p></section>
 <section class="card"><h2>运行仪表盘</h2><div id="dashboardRadio" class="muted">等待电脑数据</div><p id="dashboardReport" class="muted"></p><p id="dashboardChannel"></p><p id="dashboardGateway"></p><p id="dashboardTotals" class="muted"></p><p id="dashboardMessages" class="muted"></p><p id="dashboardClients" class="muted"></p><details><summary>最近 5 条活动（UTC）</summary><div id="dashboardActivity"></div></details><p class="muted">收发与扫描是电台上次报告的状态，报告时间未知时会明确标注。统计表示本次运行的软件事件，不代表射频交付。</p></section>
 <section class="card"><h2 id="radio">Windows 电台</h2><div id="frequency">— MHz</div><div id="status" class="muted">等待电脑连接电台</div>
 <label for="channel">信道 A</label><select id="channel" disabled></select>
@@ -50,6 +51,7 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installProm
 $('installApp').onclick=async()=>{if(!installPrompt){notice('请使用浏览器菜单“安装应用 / 添加到主屏幕”；iPhone 在 Safari 分享菜单中添加。');return;}try{await installPrompt.prompt();await installPrompt.userChoice;}catch(error){notice(error.message);}finally{installPrompt=null;}};
 $('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('此浏览器不支持全屏，可添加到主屏幕。');}catch(error){notice(error.message);}};
 if(window.isSecureContext&&'serviceWorker' in navigator)navigator.serviceWorker.register('/remote-worker.js',{scope:'/remote.html'}).catch(()=>notice('应用安装组件未注册，可继续通过浏览器使用。'));
+let lowBandwidth=false,mapTilesAllowed=true,lastSpectrumDraw=0,lastMapDraw=0,lastStatePoll=0;
 let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0;
 let pendingAprs=null,pendingHandoff=null,shortcutsSignature='';
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
@@ -76,7 +78,7 @@ function updateMapState(){
 function requestMap(){send({op:'state',mapBounds:mapBounds()});}
 function tileImage(source,z,x,y){
  const limit=2**z;if(y<0||y>=limit)return null;x=((x%limit)+limit)%limit;const key=source.id+'/'+z+'/'+x+'/'+y;
- if(mapTiles.has(key))return mapTiles.get(key);if(mapLoads>=8)return null;
+ if(mapTiles.has(key))return mapTiles.get(key);if(!mapTilesAllowed||mapLoads>=(lowBandwidth?2:8))return null;
  const image=new Image(),generation=mapTileGeneration;image.loaded=false;mapLoads++;
  image.onload=()=>{mapLoads--;if(generation!==mapTileGeneration)return;image.loaded=true;mapDirty=true;};image.onerror=()=>{mapLoads--;if(generation!==mapTileGeneration)return;mapTileErrors++;mapDirty=true;};
  mapTiles.set(key,image);while(mapTiles.size>64)mapTiles.delete(mapTiles.keys().next().value);
@@ -84,7 +86,7 @@ function tileImage(source,z,x,y){
  if(!/^https:\/\//i.test(url)&&!/^\/remote-tiles\//.test(url)){mapLoads--;mapTileErrors++;return image;}image.src=url;return image;
 }
 function drawMap(){
- if(document.hidden||!mapDirty)return;mapDirty=false;const canvas=$('stationMap'),ctx=canvas.getContext('2d');if(!ctx)return;
+ if(document.hidden||!mapDirty||Date.now()-lastMapDraw<(lowBandwidth?2000:500))return;lastMapDraw=Date.now();mapDirty=false;const canvas=$('stationMap'),ctx=canvas.getContext('2d');if(!ctx)return;
  const source=(state.mapSources||[]).find(s=>s.id===mapSourceId);ctx.fillStyle='#101827';ctx.fillRect(0,0,512,320);const center=mapProject(mapLat,mapLon,mapZoom),left=center[0]-256,top=center[1]-160;
  if(source){$('mapAttribution').textContent=source.attribution;for(let x=Math.floor(left/256);x<=Math.floor((left+512)/256);x++)for(let y=Math.floor(top/256);y<=Math.floor((top+320)/256);y++){const tile=tileImage(source,mapZoom,x,y);if(tile&&tile.loaded)ctx.drawImage(tile,x*256-left,y*256-top,256,256);}}
  const clusters=new Map();mapHits=[];for(const station of state.mapStations||[]){const p=mapProject(station.lat,station.lon,mapZoom),world=256*2**mapZoom;let x=p[0]-left;if(x>world/2+256)x-=world;if(x<-world/2+256)x+=world;const y=p[1]-top;if(x<0||x>512||y<0||y>320)continue;const key=Math.floor(x/40)+','+Math.floor(y/40);if(!clusters.has(key))clusters.set(key,[]);clusters.get(key).push({station,x,y});}
@@ -110,13 +112,13 @@ function feedSpectrum(buffer,rate){
 }
 function stopPlayback(){for(const source of scheduledAudio){try{source.stop();}catch(_){}}scheduledAudio.clear();nextAudio=0;}
 function drawSpectrum(){
- if(document.hidden||spectrumPaused||!listening||!spectrumDirty||spectrumCount<1024)return;spectrumDirty=false;
+ if(document.hidden||spectrumPaused||!listening||!spectrumDirty||spectrumCount<1024||Date.now()-lastSpectrumDraw<(lowBandwidth?500:100))return;lastSpectrumDraw=Date.now();spectrumDirty=false;
  const samples=new Float32Array(1024);for(let i=0;i<1024;i++)samples[i]=spectrumSamples[(spectrumCursor+i)%1024];const db=spectrumDb(samples);
  const canvas=$('spectrum'),waterfall=$('waterfall'),ctx=canvas.getContext('2d'),wc=waterfall.getContext('2d');if(!ctx||!wc)return;
  const maxHz=Math.min(spectrumRate/2,Number($('spectrumRange').value)||8000),boost=Number($('spectrumGain').value)||0;
  ctx.fillStyle='#101827';ctx.fillRect(0,0,512,128);ctx.strokeStyle='#79ddc7';ctx.beginPath();wc.drawImage(waterfall,0,0,512,127,0,1,512,127);
  for(let x=0;x<512;x++){const bin=Math.min(db.length-1,Math.floor(x/512*maxHz*1024/spectrumRate));const level=Math.max(0,Math.min(1,(db[bin]+boost+100)/100));const y=128-level*118;if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);wc.fillStyle='hsl('+(240-level*240)+',85%,'+(10+level*55)+'%)';wc.fillRect(x,0,1,1);}ctx.stroke();ctx.fillStyle='#adbed5';ctx.fillText('0 Hz',4,125);ctx.fillText((maxHz/1000)+' kHz',455,125);
- $('audioMetrics').textContent='峰值 '+(audioPeak?20*Math.log10(audioPeak):-120).toFixed(1)+' dBFS · 削波样本 '+audioClips+' · 缓冲恢复 '+audioResets+' · 排队 '+scheduledAudio.size+' · 图形 10 Hz';
+ $('audioMetrics').textContent='峰值 '+(audioPeak?20*Math.log10(audioPeak):-120).toFixed(1)+' dBFS · 削波样本 '+audioClips+' · 缓冲恢复 '+audioResets+' · 排队 '+scheduledAudio.size+' · 图形 '+(lowBandwidth?'2':'10')+' Hz';
 }
 function renderMessages(){
  const messages=state.aprsMessages||[];const query=$('aprsSearch').value.trim().toUpperCase();
@@ -134,7 +136,7 @@ function notice(text){$('notice').textContent=text||'';}
 function send(op){if(socket&&socket.readyState===WebSocket.OPEN){socket.send(typeof op==='string'?op:'remote:'+JSON.stringify(op));return true;}return false;}
 function stopPtt(){pressed=false;transmitting=false;micGeneration++;send({op:'pttStop'});if(micStream)micStream.getTracks().forEach(t=>t.stop());if(micNode)micNode.disconnect();if(micSource)micSource.disconnect();if(micMute)micMute.disconnect();micStream=micNode=micSource=micMute=null;$('ptt').classList.remove('active');$('ptt').textContent='按住讲话';}
 function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket.aspx');socket.binaryType='arraybuffer';
- socket.onopen=()=>{failed=0;$('connection').textContent='已连接电脑';requestMap();if(listening)send('audioon');};
+ socket.onopen=()=>{failed=0;$('connection').textContent='已连接电脑';send({op:'media',lowBandwidth});lastStatePoll=Date.now();requestMap();if(listening)send('audioon');};
  socket.onmessage=event=>{if(typeof event.data!=='string'){playAudio(event.data);return;}
   if(event.data.startsWith('remote:')){const msg=JSON.parse(event.data.slice(7));if(msg.clientId!==undefined)clientId=msg.clientId;if(msg.error){notice(msg.error);stopPtt();}if(msg.state){state=msg.state;render();}}
  };
@@ -144,7 +146,7 @@ function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws:
 $('controlRequest').onclick=()=>send({op:'requestControl'});
 $('controlRelease').onclick=()=>{stopPtt();send({op:'releaseControl'});};
 function render(){
- renderDashboard();
+ renderDashboard();renderMedia();
  const control=state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped;
  $('controlRequest').disabled=!socket||socket.readyState!==WebSocket.OPEN||state.emergencyStopped||control||state.controlRequested;
  $('controlRelease').disabled=!control&&!state.controlRequested;
@@ -199,6 +201,12 @@ function renderDashboard(){
  const labels={requestControl:'申请操作权',releaseControl:'释放操作权',handoffControl:'移交操作权',grantControl:'授予操作权',recallControl:'主机收回',disconnect:'断开连接',revokeLogin:'撤销登录',readOnlyRole:'设置只读角色',channel:'换信道',volume:'调音量',scan:'扫描',aprsMessage:'APRS 消息请求',aprsPosition:'位置发送请求',pttStart:'PTT 请求',pttStop:'停止 PTT',pttRelease:'释放 PTT',invalidCommand:'未知命令',rawWrite:'原始写入',writeDenied:'权限拒绝'},results={accepted:'请求接受',denied:'拒绝',released:'释放'};
  $('dashboardActivity').replaceChildren(...(Array.isArray(d.activity)?d.activity:[]).slice(0,5).map(e=>{const row=document.createElement('p');row.textContent=e.time+' · '+(e.clientId===0?'Windows':'客户端 #'+e.clientId)+' · '+(labels[e.action]||'操作')+' · '+(results[e.result]||'未知结果');return row;}));
 }
+function renderMedia(){
+ const media=state.media||{};const mode=typeof media.lowBandwidth==='boolean'?(media.lowBandwidth?'低带宽 · 8 kHz 单声道':'标准接收 · 原始采样率'):'等待电脑确认';
+ const bytes=Number.isSafeInteger(media.audioPayloadBytes)&&media.audioPayloadBytes>=0?(media.audioPayloadBytes/1024).toFixed(1)+' KiB':'未知';
+ $('mediaMetrics').textContent=mode+' · 本连接音频负载 '+bytes+' · 帧 '+(media.audioFrames??'未知')+' · 无效输入块 '+(media.skippedBlocks??'未知');
+}
+$('networkMode').onchange=()=>{lowBandwidth=$('networkMode').value==='low';mapTilesAllowed=!lowBandwidth;lastSpectrumDraw=lastMapDraw=lastStatePoll=0;mapDirty=true;stopPlayback();spectrumSamples.fill(0);spectrumCount=spectrumCursor=0;$('mapRetry').textContent=lowBandwidth?'加载地图瓦片':'重试地图';send({op:'media',lowBandwidth});requestMap();};
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}
 function playAudio(data){if(!listening||!audio||audio.state!=='running')return;const v=new DataView(data);if(v.byteLength<6||v.getUint8(0)!==241)return;const n=v.getUint8(1),rate=v.getUint16(2,true);if(n<1||n>2||rate<8000||rate>48000)return;const frames=Math.floor((v.byteLength-4)/(2*n));if(!frames)return;const b=audio.createBuffer(n,frames,rate);for(let ch=0;ch<n;ch++){const a=b.getChannelData(ch);for(let i=0;i<frames;i++)a[i]=v.getInt16(4+(i*n+ch)*2,true)/32768;}
  feedSpectrum(b,rate);const now=audio.currentTime;if(nextAudio<now||nextAudio>now+.5||scheduledAudio.size>=32){if(scheduledAudio.size){audioResets++;stopPlayback();}nextAudio=now+Math.max(.08,Math.min(.3,(Number($('audioBuffer').value)||120)/1000));}const source=audio.createBufferSource();source.buffer=b;source.connect(gain);scheduledAudio.add(source);source.onended=()=>{scheduledAudio.delete(source);source.disconnect();};source.start(nextAudio);nextAudio+=frames/rate;
@@ -219,7 +227,7 @@ $('spectrumRange').onchange=()=>{spectrumDirty=true;};$('spectrumGain').oninput=
 function mapZoomBy(delta){mapZoom=Math.max(2,Math.min(18,mapZoom+delta));mapDirty=true;requestMap();}
 $('mapZoomIn').onclick=()=>mapZoomBy(1);$('mapZoomOut').onclick=()=>mapZoomBy(-1);
 function resetMapTiles(){mapTiles.clear();mapTileGeneration++;mapTileErrors=0;mapDirty=true;}
-$('mapSource').onchange=()=>{mapSourceId=$('mapSource').value;resetMapTiles();};$('mapRetry').onclick=resetMapTiles;$('mapSearch').oninput=updateMapState;
+$('mapSource').onchange=()=>{mapSourceId=$('mapSource').value;mapTilesAllowed=!lowBandwidth;resetMapTiles();};$('mapRetry').onclick=()=>{mapTilesAllowed=true;resetMapTiles();};$('mapSearch').oninput=updateMapState;
 $('stationMap').addEventListener('pointerdown',e=>{mapDrag={x:e.clientX,y:e.clientY,c:mapProject(mapLat,mapLon,mapZoom)};mapDragged=false;$('stationMap').setPointerCapture(e.pointerId);});
 $('stationMap').addEventListener('pointermove',e=>{if(!mapDrag)return;const r=$('stationMap').getBoundingClientRect(),dx=(e.clientX-mapDrag.x)*512/r.width,dy=(e.clientY-mapDrag.y)*320/r.height;if(Math.abs(dx)+Math.abs(dy)>5)mapDragged=true;[mapLat,mapLon]=mapUnproject(mapDrag.c[0]-dx,mapDrag.c[1]-dy,mapZoom);mapDirty=true;});
 $('stationMap').addEventListener('pointerup',e=>{mapDrag=null;if(!mapDragged){const r=$('stationMap').getBoundingClientRect(),x=(e.clientX-r.left)*512/r.width,y=(e.clientY-r.top)*320/r.height;const hit=mapHits.find(h=>Math.hypot(h.x-x,h.y-y)<20);if(hit){const s=hit.items[0].station;mapLat=s.lat;mapLon=s.lon;if(hit.items.length>1)mapZoomBy(1);else{mapSelected=s.call;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已选择 '+s.call+'，可发送 APRS 消息。');}}}mapDirty=true;requestMap();});
@@ -248,5 +256,5 @@ $('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;con
  pendingAprs={destination,text,expires:Date.now()+30000};$('aprsPreview').textContent='将通过电台提交给 '+destination+'：\n'+text+'\n确认前不会发送；预览 30 秒后失效。';$('aprsConfirmation').hidden=false;$('aprsConfirm').disabled=false;
 });
 $('aprsConfirm').onclick=()=>{if($('aprsConfirm').disabled||!pendingAprs)return;const draft=pendingAprs;if(Date.now()>draft.expires||state.controlOwner!==clientId||state.readOnly||state.emergencyStopped||!state.connected||!state.aprsAllowed||state.txOwner!=null||draft.destination!==$('aprsDestination').value.trim().toUpperCase()||draft.text!==$('aprsText').value){cancelAprsPreview();notice('草稿或权限已变化，请重新预览。');return;}cancelAprsPreview();send({op:'aprsMessage',destination:draft.destination,text:draft.text});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');};
-setInterval(()=>{if(!document.hidden)requestMap();},2000);open();
+setInterval(()=>{if(!document.hidden&&Date.now()-lastStatePoll>=(lowBandwidth?8000:2000)){lastStatePoll=Date.now();requestMap();}},500);open();
 </script></body></html>''';
