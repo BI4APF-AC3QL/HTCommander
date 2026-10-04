@@ -226,6 +226,10 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   state.media={lowBandwidth:true,audioPayloadBytes:16004,audioFrames:50,skippedBlocks:1};update();
   assert.ok(element('mediaMetrics').textContent.includes('8 kHz 单声道'));
   assert.ok(element('mediaMetrics').textContent.includes('15.6 KiB'));
+  assert.ok(element('mediaMetrics').textContent.includes('主机待发 未知'));
+  state.media.hostOutput={queuedPayloadBytes:65536,droppedAudioBlocks:17};update();
+  assert.ok(element('mediaMetrics').textContent.includes('主机待发 64.0 KiB'));
+  assert.ok(element('mediaMetrics').textContent.includes('主机丢弃旧/积压音频块 17'));
   document.hidden=true;clock+=8000;const noPoll=commands().length;poll();assert.equal(commands().length,noPoll);document.hidden=false;
 
   // Local microphone testing is available to read-only clients, but never

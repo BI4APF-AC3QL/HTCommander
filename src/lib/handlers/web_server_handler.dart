@@ -747,7 +747,11 @@ class WebServerHandler {
         client.sendText(
           'remote:${jsonEncode({
             'clientId': client.id,
-            'state': {..._remote.snapshot(client.id), 'readOnly': client.readOnly, 'media': _mediaClients[client.id]?.snapshot},
+            'state': {
+              ..._remote.snapshot(client.id),
+              'readOnly': client.readOnly,
+              'media': {...?_mediaClients[client.id]?.snapshot, 'hostOutput': client.outputSnapshot},
+            },
             'error': error,
           })}',
         );
@@ -998,8 +1002,7 @@ class WebServerHandler {
         packet = normal;
       }
       if (packet != null) {
-        client.sendBinary(packet);
-        profile.submitted(packet.length);
+        if (client.sendBinary(packet)) profile.submitted(packet.length);
       }
     }
   }

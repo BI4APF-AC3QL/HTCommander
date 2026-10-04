@@ -32,7 +32,9 @@ class WebSocketClient {
 
   void sendText(String message) {}
 
-  void sendBinary(List<int> data) {}
+  bool sendBinary(List<int> data) => false;
+
+  Map<String, Object> get outputSnapshot => {};
 }
 
 /// Inert web stub of the static web + WebSocket server.

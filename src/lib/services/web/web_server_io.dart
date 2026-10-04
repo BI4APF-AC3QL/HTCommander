@@ -23,6 +23,9 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:crypto/crypto.dart' show sha1;
+
+import 'bounded_websocket_output.dart';
 
 import '../data_broker_client.dart';
 import '../data_broker.dart';
@@ -51,39 +54,52 @@ class WebSocketClient {
     this._socket, {
     this.readOnly = false,
     this.address = '',
-  });
+    Socket? transport,
+    void Function()? onClosed,
+    // ignore: prefer_initializing_formals
+  }) : _transport = transport,
+       // ignore: prefer_initializing_formals
+       _onClosed = onClosed {
+    _output = BoundedWebSocketOutput(
+      write: (data) async {
+        await _socket.addStream(Stream<Object>.value(data));
+      },
+      onFailure: (_) => _close(),
+    );
+  }
   bool readOnly;
   final String address;
   final DateTime connectedAt = DateTime.now();
-
-  /// Monotonically increasing client identifier.
   final int id;
   final WebSocket _socket;
+  final Socket? _transport;
+  final void Function()? _onClosed;
+  late final BoundedWebSocketOutput _output;
+  bool _closed = false;
 
-  /// Sends a text frame to this client.
-  void sendText(String message) {
-    try {
-      _socket.add(message);
-    } catch (_) {
-      // Client likely disconnected; ignore.
-    }
-  }
+  Map<String, Object> get outputSnapshot => _output.snapshot;
 
-  /// Sends a binary frame to this client.
-  void sendBinary(List<int> data) {
-    try {
-      _socket.add(data);
-    } catch (_) {
-      // Client likely disconnected; ignore.
-    }
-  }
+  void sendText(String message) => _output.enqueue(message);
+
+  bool sendBinary(List<int> data) =>
+      _output.enqueue(data, audio: data.isNotEmpty && data[0] == 0xf1);
 
   void _close() {
-    try {
-      _socket.close();
-    } catch (_) {
-      // Already closed.
+    if (_closed) return;
+    _closed = true;
+    _output.close();
+    // Graceful close can wait behind a paused WebSocket stream. Retaining the
+    // detached transport lets timeout/revoke/shutdown destroy it immediately.
+    if (_transport != null) {
+      _transport.destroy();
+    } else {
+      try {
+        _socket.close().catchError((_) {});
+      } catch (_) {
+        /* Already bound/closed. */
+      }
     }
+    if (_onClosed != null) scheduleMicrotask(_onClosed);
   }
 }
 
@@ -361,19 +377,72 @@ class WebServer {
       await request.response.close();
       return;
     }
+    final generation = _generation;
     WebSocket socket;
+    Socket? transport;
     try {
-      socket = await WebSocketTransformer.upgrade(request);
+      // Retain the detached socket for bounded aborts. Framing/validation stay
+      // in dart:io's supported WebSocket.fromUpgradedSocket implementation.
+      final key = request.headers.value('Sec-WebSocket-Key');
+      if (!WebSocketTransformer.isUpgradeRequest(request) ||
+          key == null ||
+          base64.decode(key).length != 16) {
+        request.response.statusCode = HttpStatus.badRequest;
+        await request.response.close();
+        return;
+      }
+      final response = request.response;
+      response.statusCode = HttpStatus.switchingProtocols;
+      response.headers.set(HttpHeaders.connectionHeader, 'Upgrade');
+      response.headers.set(HttpHeaders.upgradeHeader, 'websocket');
+      response.headers.set(
+        'Sec-WebSocket-Accept',
+        base64.encode(
+          sha1
+              .convert(
+                utf8.encode(
+                  '$key'
+                  '258EAFA5-E914-47DA-95CA-C5AB0DC85B11',
+                ),
+              )
+              .bytes,
+        ),
+      );
+      response.headers.contentLength = 0;
+      transport = await response.detachSocket();
+      socket = WebSocket.fromUpgradedSocket(
+        transport,
+        serverSide: true,
+        compression: CompressionOptions.compressionOff,
+        maxPayloadLength: 65536,
+      );
+      if (!_running ||
+          generation != _generation ||
+          _clients.length >= 8 ||
+          !_authorized(request)) {
+        transport.destroy();
+        return;
+      }
     } catch (_) {
+      transport?.destroy();
+      try {
+        request.response.statusCode = HttpStatus.badRequest;
+        await request.response.close();
+      } catch (_) {
+        /* Already detached. */
+      }
       return;
     }
 
     final clientId = _nextClientId++;
-    final client = WebSocketClient(
+    late final WebSocketClient client;
+    client = WebSocketClient(
       clientId,
       socket,
       readOnly: remoteConfig.defaultReadOnly,
       address: request.connectionInfo?.remoteAddress.address ?? '',
+      transport: transport,
+      onClosed: () => _removeClient(client),
     );
     socket.pingInterval = const Duration(seconds: 20);
     _clients[clientId] = client;
@@ -391,6 +460,7 @@ class WebServer {
 
     socket.listen(
       (dynamic message) {
+        if (client._closed) return;
         if (remoteConfig.enabled && !_authorized(request)) {
           client._close();
           return;
@@ -432,10 +502,15 @@ class WebServer {
   }
 
   void _removeClient(WebSocketClient client) {
+    client._close();
     _sessionChecks.remove(client.id)?.cancel();
     _clientSessions.remove(client.id);
     if (_clients.remove(client.id) == null) return;
-    _broker.logInfo('[WebServer] WebSocket client ${client.id} disconnected');
+    final reason = client._output.failure;
+    _broker.logInfo(
+      '[WebServer] WebSocket client ${client.id} disconnected'
+      '${reason == null ? '' : ': $reason'}',
+    );
     onClientDisconnected?.call(client);
   }
 

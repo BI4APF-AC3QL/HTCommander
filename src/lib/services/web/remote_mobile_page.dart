@@ -226,7 +226,8 @@ function renderLinkDiagnostics(){
 function renderMedia(){
  const media=state.media||{};const mode=typeof media.lowBandwidth==='boolean'?(media.lowBandwidth?'低带宽 · 8 kHz 单声道':'标准接收 · 原始采样率'):'等待电脑确认';
  const bytes=Number.isSafeInteger(media.audioPayloadBytes)&&media.audioPayloadBytes>=0?(media.audioPayloadBytes/1024).toFixed(1)+' KiB':'未知';
- $('mediaMetrics').textContent=mode+' · 本连接音频负载 '+bytes+' · 帧 '+(media.audioFrames??'未知')+' · 无效输入块 '+(media.skippedBlocks??'未知');
+ const out=media.hostOutput||{},queued=Number.isSafeInteger(out.queuedPayloadBytes)?(out.queuedPayloadBytes/1024).toFixed(1)+' KiB':'未知';
+ $('mediaMetrics').textContent=mode+' · 本连接音频负载 '+bytes+' · 帧 '+(media.audioFrames??'未知')+' · 无效输入块 '+(media.skippedBlocks??'未知')+' · 主机待发 '+queued+' · 主机丢弃旧/积压音频块 '+(out.droppedAudioBlocks??'未知');
 }
 $('networkMode').onchange=()=>{lowBandwidth=$('networkMode').value==='low';mapTilesAllowed=!lowBandwidth;lastSpectrumDraw=lastMapDraw=lastStatePoll=0;mapDirty=true;stopPlayback();spectrumSamples.fill(0);spectrumCount=spectrumCursor=0;$('mapRetry').textContent=lowBandwidth?'加载地图瓦片':'重试地图';send({op:'media',lowBandwidth});requestMap();};
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}
