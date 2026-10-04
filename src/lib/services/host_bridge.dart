@@ -73,6 +73,8 @@ class HostBridge {
         ].any(key.contains) &&
         !key.startsWith('webserver') &&
         !key.startsWith('agwpeserver') &&
+        !key.startsWith('rollingvoice') &&
+        key != 'satelliteremotestate' &&
         key != 'remoteclients' &&
         key != 'remoteaudit' &&
         !key.startsWith('softwarebeacon') &&

@@ -43,7 +43,16 @@ async function exercise(){
  try{
   await page.goto(base+'/login');await page.locator('input[type=password]').fill('synthetic-test-password');await page.locator('form button').click();
   await until(()=>state().clients.length===1);await page.waitForFunction(()=>state.readOnly===true);
+  evidence.menu={};
+  for(const [menu,key] of [['menuRadio','radio'],['menuAprs','aprs'],['menuMap','map'],['menuAudio','audio'],['menuMore','more']]){
+    await page.locator('#'+menu).click();
+    const visible=await page.evaluate(()=>[...document.querySelectorAll('[data-page]')].filter(e=>!e.hidden).map(e=>e.dataset.page));assert.ok(visible.length>0&&visible.every(p=>p===key));
+    for(const width of [320,390]){await page.setViewportSize({width,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth)<=width);}
+    evidence.menu[key]=true;
+  }
+  await page.setViewportSize({width:390,height:844});await page.locator('#menuRadio').click();await page.screenshot({path:path.join(outputRoot,'radio-menu.png'),fullPage:true});
   assert.equal(await page.locator('#ptt').isDisabled(),true);
+  await page.locator('#menuAudio').click();
   await page.locator('#micTest').click();await page.waitForFunction(()=>document.querySelector('#micTestStatus').textContent.includes('本机输入')&&!document.querySelector('#micTestStatus').textContent.includes('峰值 0%'));
   const micText=await page.locator('#micTestStatus').innerText();assert.ok(micText.includes('峰值'));assert.ok(micText.includes('RMS'));
   assert.equal(await page.locator('#ptt').isDisabled(),true);await page.locator('#micTest').locator('xpath=../..').screenshot({path:path.join(outputRoot,'microphone.png')});
@@ -56,6 +65,8 @@ async function exercise(){
   // Use the browser's native permission/geolocation path with synthetic coords.
   const session=await context.newCDPSession(page);const browserCDP=await browser.newBrowserCDPSession();const bcId=(await browserCDP.send('Target.getBrowserContexts')).browserContextIds[0];
   await browserCDP.send('Browser.setPermission',{permission:{name:'geolocation'},setting:'denied',origin:base,browserContextId:bcId});
+  await page.locator('#menuAprs').click();
+  await page.getByText('一次性 APRS 位置发送',{exact:true}).click();
   await page.locator('#positionAcquire').click();await page.waitForFunction(()=>document.querySelector('#notice').textContent.includes('定位失败'));
   assert.deepEqual(state().events,[]);evidence.locationDeniedNoRequest=true;
   await browserCDP.send('Browser.setPermission',{permission:{name:'geolocation'},setting:'granted',origin:base,browserContextId:bcId});
@@ -74,6 +85,15 @@ async function exercise(){
   await page.locator('#positionSend').click();await page.locator('#positionConfirm').click();
   await until(()=>state().events.length===1);assert.deepEqual(state().events,['TransmitDataFrame']);
   evidence.nativeGeolocation={permissionDeniedAndGranted:true,syntheticCoordinates:true,previewCancelAndEmergencyZeroFrames:true,confirmedMockFrameRequests:1,voiceAndAprsMessageDenied:true};
+  await page.locator('#menuRadio').click();await page.getByText('电台音量与静噪',{exact:true}).click();
+  await page.locator('#squelch').focus();await page.locator('#squelch').press('ArrowRight');await until(()=>state().squelchRequests.length===1);assert.deepEqual(state().squelchRequests,[6]);
+  await page.getByText('卫星多普勒（接收跟踪）',{exact:true}).click();await host({op:'orbitFresh'});await page.waitForFunction(()=>!document.querySelector('#satelliteStart').disabled);
+  await page.locator('#satelliteStart').click();await until(()=>state().satelliteRequests.length===1);assert.equal(state().satelliteRequests[0].receiveOnly,true);assert.equal(state().satelliteRequests[0].noradId,25544);
+  await page.waitForFunction(()=>!document.querySelector('#satelliteStop').disabled);assert.equal(await page.locator('#ptt').isDisabled(),true);assert.equal(await page.locator('#channel').isDisabled(),true);
+  await page.locator('#satelliteStop').click();await until(()=>state().satelliteRequests.length===2);assert.equal(state().satelliteRequests[1],null);
+  await host({op:'orbitFresh'});await page.waitForFunction(()=>!document.querySelector('#satelliteStart').disabled);await page.locator('#satelliteStart').click();await until(()=>state().satelliteRequests.length===3);
+  await host({op:'role',id:client,readOnly:true});await until(()=>state().satelliteRequests.length===4);assert.equal(state().satelliteRequests[3],null);await page.waitForFunction(()=>state.readOnly);assert.equal(await page.locator('#squelch').isDisabled(),true);
+  evidence.radioControls={squelch:6,receiveOnlySatellite:true,stopAndRoleRevocationRelease:true,noAdditionalRfRequests:state().events.length===1};
   // Validate actual browser service-worker/manifest/icon decoding; do not infer
   // a phone installation from this inspection.
   await page.evaluate(()=>navigator.serviceWorker.ready);
@@ -110,6 +130,7 @@ async function exercise(){
   }finally{
    if(installed){await bounded(browserCDP.send('PWA.uninstall',{manifestId}),20000);evidence.pwa.uninstalledAfterTest=true;}
   }
+  await page.locator('#menuMore').click();
   await page.locator('#fullscreen').click();await page.waitForFunction(()=>document.fullscreenElement!==null);
   evidence.fullscreenEntered=true;await page.locator('#fullscreen').click();await page.waitForFunction(()=>document.fullscreenElement===null);
   evidence.fullscreenExited=true;

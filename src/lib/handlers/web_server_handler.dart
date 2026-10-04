@@ -94,6 +94,13 @@ class WebServerHandler {
   /// Initializes the handler: loads settings, subscribes to changes, and starts
   /// the server if enabled.
   void init() {
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'SatelliteSupport',
+      callback: (_, _, value) {
+        if (value != 1) _remote.stopSatelliteTracking();
+      },
+    );
     _publishClients();
     _enabled = (_broker.getValue<int>(0, 'webServerEnabled', 0) ?? 0) == 1;
     _port = _broker.getValue<int>(0, 'webServerPort', 8080) ?? 8080;

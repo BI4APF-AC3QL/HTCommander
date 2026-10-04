@@ -72,6 +72,7 @@ jobs:
             ${{ runner.temp }}/remote-browser-acceptance/**/failure.json
             ${{ runner.temp }}/remote-browser-acceptance/**/microphone.png
             ${{ runner.temp }}/remote-browser-acceptance/**/standalone.png
+            ${{ runner.temp }}/remote-browser-acceptance/**/radio-menu.png
             ${{ runner.temp }}/remote-browser-acceptance/**/fixture.log
           if-no-files-found: ignore
 
@@ -141,7 +142,7 @@ jobs:
           Copy-Item docs/remote-microphone-test.md "$buildDir/remote-microphone-test.md"
           # Preserve relative links from the bundled simple setup guide.
           New-Item -ItemType Directory -Force "$buildDir/docs" | Out-Null
-          Copy-Item docs/remote-*.md,docs/aprs-*.md,docs/windows-*.md,docs/radio-link-diagnostics.md,docs/phone-remote-control.md,docs/diagnostics-and-offline-simulation.md "$buildDir/docs"
+          Copy-Item docs/rolling-*.md,docs/remote-*.md,docs/aprs-*.md,docs/windows-*.md,docs/radio-link-diagnostics.md,docs/phone-remote-control.md,docs/diagnostics-and-offline-simulation.md "$buildDir/docs"
           @"
           HTCommander Windows x64 test build
           Branch: $env:BUILD_BRANCH
@@ -196,6 +197,7 @@ jobs:
           包含可配置域名及后端端口的 HTCommander-HTTPS-Gateway.exe；入门见包内 简单配置方法.md。
           包含远程 APRS/会话/位置预览、地图换源/轨迹、音频频谱/瀑布、运行仪表盘、低带宽模式、网关统计、客户端权限与脱敏诊断。
           增加每连接发送容量、旧音频丢弃和写入超时保护；详情见 docs/remote-output-backpressure.md。
+          手机五菜单收纳、设备静噪、卫星接收多普勒，以及本机 24 小时循环 WAV 录音；说明见 docs/remote-mobile-menu.md 和 docs/rolling-voice-recording.md。
           24 项软件验收见 REMOTE-SUITE-ACCEPTANCE.md；软件测试范围和现场复测边界见 docs/remote-suite-v2-verification.md。
           没有进行真实 RF/PTT/信标测试，也没有证明实际 Windows 未响应的根因。
           "@ | Set-Content release-notes.md -Encoding utf8

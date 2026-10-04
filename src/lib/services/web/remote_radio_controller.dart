@@ -12,6 +12,7 @@ import 'aprs_shortcuts.dart';
 import 'remote_dashboard.dart';
 import 'remote_link_status.dart';
 import 'remote_beacon_status.dart';
+import 'remote_satellite_control.dart';
 
 /// The mobile page uses typed controls rather than an unrestricted broker pipe.
 class RemoteRadioController {
@@ -27,6 +28,8 @@ class RemoteRadioController {
   final int Function() target;
   final bool Function(int) _clientCanControl;
   final void Function()? onControlChanged;
+  final RemoteSatelliteControl _satellite = RemoteSatelliteControl();
+  void stopSatelliteTracking() => _satellite.stop();
   final ControlLease _control;
   final RemoteAudit _audit;
   List<Map<String, Object>> get auditEvents => _audit.events;
@@ -64,6 +67,7 @@ class RemoteRadioController {
   void grantControl(int id, {int actor = 0}) {
     if (id <= 0) throw ArgumentError.value(id);
     if (_control.owner == id) return;
+    _satellite.stop();
     final previous = _control.owner;
     release();
     if (previous != null) _cancelAprs(previous);
@@ -73,6 +77,7 @@ class RemoteRadioController {
   }
 
   void recallControl() {
+    _satellite.stop();
     final previous = _control.owner;
     final hadRequests = _control.requests.isNotEmpty;
     release();
@@ -166,6 +171,7 @@ class RemoteRadioController {
             .take(256)
             .toList();
     return {
+      'satellite': _satellite.snapshot(_clock().toUtc()),
       'linkDiagnostics': RemoteLinkStatus.snapshot(id),
       'beaconTask': RemoteBeaconStatus.sanitize(
         DataBroker.getValueDynamic(0, 'SoftwareBeaconStatus'),
@@ -230,6 +236,12 @@ class RemoteRadioController {
       'settings': DataBroker.getValueDynamic(id, 'Settings', null),
       'status': DataBroker.getValueDynamic(id, 'HtStatus', null),
       'volume': DataBroker.getValue<int>(id, 'Volume', 0),
+      'frequencyModeActive': DataBroker.getValue<bool>(
+        id,
+        'FreqModeActive',
+        false,
+      ),
+      'frequencyModeHz': DataBroker.getValue<int>(id, 'FreqModeFreq', 0),
       'channels': _channels(id)
           .map(
             (c) => {
@@ -357,6 +369,9 @@ class RemoteRadioController {
     if (_owner != null) return 'Release PTT before changing radio controls.';
     switch (op) {
       case 'channel':
+        if (_satellite.snapshot(_clock())['tracking'] != null) {
+          return 'Stop satellite tracking before changing channel.';
+        }
         final channel = message['value'];
         if (channel is! int ||
             !_channels(id).any((c) => c['channelId'] == channel)) {
@@ -368,6 +383,21 @@ class RemoteRadioController {
           channel,
         );
         return null;
+      case 'squelch':
+        final value = message['value'];
+        if (value is! int || value < 0 || value > 9) {
+          return 'Squelch must be 0–9.';
+        }
+        if (DataBroker.getValueDynamic(id, 'Settings') is! Map) {
+          return 'Radio settings are not ready.';
+        }
+        _dispatch(id, 'SetSquelchLevel', value);
+        return null;
+      case 'satelliteStart':
+        return _satellite.start(clientId, id, message, _clock().toUtc());
+      case 'satelliteStop':
+        _satellite.stop(clientId);
+        return null;
       case 'volume':
         final value = message['value'];
         if (value is! int || value < 0 || value > 15) {
@@ -376,6 +406,9 @@ class RemoteRadioController {
         _dispatch(id, 'SetVolumeLevel', value);
         return null;
       case 'scan':
+        if (_satellite.snapshot(_clock())['tracking'] != null) {
+          return 'Stop satellite tracking before scanning.';
+        }
         if (message['value'] is! bool) return 'Invalid scan value.';
         _dispatch(id, 'Scan', message['value']);
         return null;
@@ -549,6 +582,7 @@ class RemoteRadioController {
   }
 
   void disconnected(int id) {
+    _satellite.stop(id);
     _viewports.remove(id);
     if (_owner == id) release();
     final previous = _control.owner;

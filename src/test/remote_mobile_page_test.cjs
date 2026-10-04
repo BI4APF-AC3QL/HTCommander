@@ -10,6 +10,7 @@ const elements = new Map(), drawCounts = {}, intervals = [];
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
     value: id === 'playback' ? '0.8' : '', textContent: '', disabled: false,
+    attributes:{},setAttribute(k,v){this.attributes[k]=v;},removeAttribute(k){delete this.attributes[k];},
     handlers: {}, classList: { add() {}, remove() {} },
     addEventListener(name, handler) { this.handlers[name] = handler; },
     replaceChildren(...children) { this.children = children; }, setPointerCapture() {},
@@ -38,7 +39,8 @@ class WebSocket {
   send(data) { this.sent.push(data); }
   close() { this.readyState = 3; }
 }
-const document = { hidden: false, getElementById: element, createElement: () => ({}),
+const cards=['radio','aprs','map','audio','more'].map(page=>({dataset:{page},hidden:page!=='radio'}));
+const document = { querySelectorAll:()=>cards, hidden: false, getElementById: element, createElement: () => ({}),
   addEventListener: (name, f) => documentEvents[name] = f };
 const context = { document, WebSocket, ArrayBuffer, DataView, Float32Array,
   Image: class {static all=[];constructor(){this.constructor.all.push(this);}},
@@ -64,6 +66,16 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
   assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
+  element('menuAprs').onclick();assert.ok(cards.every(c=>c.hidden===(c.dataset.page!=='aprs')));assert.equal(element('menuAprs').attributes['aria-current'],'page');
+  element('menuRadio').onclick();assert.equal(element('menuAprs').attributes['aria-current'],undefined);
+  state.settings.squelchLevel=5;update();assert.equal(element('squelch').value,5);assert.equal(element('squelch').disabled,false);
+  element('squelch').value='7';element('squelch').onchange();assert.equal(commands().at(-1),'squelch');
+  state.readOnly=true;update();assert.equal(element('squelch').disabled,true);state.readOnly=false;update();
+  state.satellite={enabled:true,observerKnown:true,catalog:[{id:25544,name:'ISS',usages:[{index:0,name:'Voice',downlinkHz:145800000}]}],positions:[{id:25544,azimuthDeg:90,elevationDeg:30,rangeRateKmS:1,fresh:true}]};update();
+  assert.equal(element('satelliteStart').disabled,false);element('satelliteStart').onclick();assert.equal(commands().at(-1),'satelliteStart');
+  state.satellite.tracking={name:'ISS',remoteClientId:1};state.frequencyModeActive=true;state.frequencyModeHz=145799600;update();assert.equal(element('frequency').textContent,'145.79960 MHz');assert.equal(element('ptt').disabled,true);delete state.satellite.tracking;state.frequencyModeActive=false;update();
+  state.satellite.positions[0].fresh=false;update();assert.equal(element('satelliteStart').disabled,true);state.satellite={};update();
+
   assert.ok(element('dashboardRadio').textContent.includes('电台 未知'));
   assert.ok(element('dashboardMessages').textContent.includes('等待 ACK 未知'));
   state.dashboard={radio:{link:'Connected',receiving:true,transmitting:false,scan:true,signalLevel:7,reportAt:'2026-10-03T00:59:52Z',reportAgeSeconds:8,channel:'<img src=x onerror=alert(1)>',channelSource:'report',rxFrequency:144390000},gateway:{enabled:true,link:'Connected (verified)',health:{receivedRf:5,receivedIs:6,toInternet:4,toRfRequested:2,dropped:1,failures:0}},messages:{waiting:2,acknowledged:1,rejected:0,timedOut:0,cancelled:0},clientCount:2,activity:[{time:'2026-10-03T01:00:00Z',clientId:1,action:'volume',result:'accepted',text:'private-message',password:'private-password'}]};update();
@@ -199,7 +211,8 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   // Compare the real page's periodic work over the same simulated 8 seconds.
   let clock=Date.now();context.Date=class extends Date {static now(){return clock;}};
   const poll=intervals.find(i=>i.delay===500&&String(i.callback).includes('lastStatePoll')).callback;
-  const cadence=low=>{
+  const cadence=(low,page)=>{
+    vm.runInNewContext(`showPage('${page}')`,context);
     element('networkMode').value=low?'low':'normal';element('networkMode').onchange();
     const start=clock;vm.runInNewContext('lastStatePoll=Date.now();lastSpectrumDraw=Date.now();lastMapDraw=Date.now();listening=true;spectrumPaused=false;spectrumCount=1024;',context);
     const before=commands().filter(x=>x==='state').length,spec=drawCounts.spectrum||0,map=drawCounts.stationMap||0;
@@ -211,6 +224,7 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.equal(commands().at(-2),'media');
   const mediaCommand=JSON.parse(socket.sent.filter(v=>typeof v==='string'&&v.startsWith('remote:')).at(-2).slice(7));
   assert.equal(mediaCommand.lowBandwidth,true);
+  element('menuMap').onclick();
   const imageCount=context.Image.all.length;
   element('mapSource').onchange();vm.runInNewContext('lastMapDraw=0;drawMap()',context);
   assert.equal(context.Image.all.length,imageCount);
@@ -218,9 +232,11 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(vm.runInNewContext('mapLoads',context)<=2);
   assert.ok(context.Image.all.length>imageCount);
   for(const image of context.Image.all.slice(imageCount))if(image.onload)image.onload();
-  const lowCadence=cadence(true),normalCadence=cadence(false);
-  assert.deepEqual(lowCadence,{polls:1,spec:16,map:4});
-  assert.deepEqual(normalCadence,{polls:4,spec:80,map:16});
+  assert.deepEqual(cadence(true,'audio'),{polls:1,spec:16,map:0});
+  assert.deepEqual(cadence(false,'audio'),{polls:4,spec:80,map:0});
+  assert.deepEqual(cadence(true,'map'),{polls:1,spec:0,map:4});
+  assert.deepEqual(cadence(false,'map'),{polls:4,spec:0,map:16});
+  element('menuAudio').onclick();
   element('networkMode').value='low';element('networkMode').onchange();socket.onopen();
   assert.ok(socket.sent.some(v=>v==='remote:{"op":"media","lowBandwidth":true}'));
   state.media={lowBandwidth:true,audioPayloadBytes:16004,audioFrames:50,skippedBlocks:1};update();

@@ -23,6 +23,8 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secure, (_) async => null);
     final events = <String>[];
+    final squelchRequests = <int>[];
+    final satelliteRequests = <Object?>[];
     final observer = DataBrokerClient();
     for (final key in [
       'TransmitDataFrame',
@@ -59,9 +61,54 @@ void main() {
     set(2, 'State', 'Connected');
     set(2, 'HtStatus', {'isPowerOn': true, 'isInRx': false, 'isInTx': false});
     set(2, 'Channels', [
-      {'channelId': 1, 'name': 'APRS', 'txDisable': false},
+      {'channelId': 1, 'name': 'APRS', 'rxFreq': 144390000, 'txDisable': false},
     ]);
-    set(2, 'Settings', {'channelA': 1, 'doubleChannel': 0});
+    set(2, 'Settings', {'channelA': 1, 'doubleChannel': 0, 'squelchLevel': 5});
+    void orbitFresh() {
+      set(0, 'SatelliteRemoteState', {
+        'enabled': true,
+        'observerKnown': true,
+        'catalog': [
+          {
+            'id': 25544,
+            'name': 'ISS',
+            'usages': [
+              {'index': 0, 'name': 'Voice', 'downlinkHz': 145800000},
+            ],
+          },
+        ],
+        'positions': [
+          {
+            'id': 25544,
+            'utc': DateTime.now().toUtc().toIso8601String(),
+            'azimuthDeg': 90.0,
+            'elevationDeg': 30.0,
+            'rangeRateKmS': 1.0,
+          },
+        ],
+      });
+    }
+
+    orbitFresh();
+    observer.subscribe(
+      deviceId: 2,
+      name: 'SetSquelchLevel',
+      callback: (_, _, v) {
+        if (v is int) {
+          squelchRequests.add(v);
+          set(2, 'Settings', {
+            'channelA': 1,
+            'doubleChannel': 0,
+            'squelchLevel': v,
+          });
+        }
+      },
+    );
+    observer.subscribe(
+      deviceId: 0,
+      name: 'SatelliteTrackTarget',
+      callback: (_, _, v) => satelliteRequests.add(v),
+    );
     set(2, 'AudioState', true);
     final aprs = AprsHandler()..init();
     final host = WebServerHandler()..init();
@@ -78,6 +125,8 @@ void main() {
         jsonEncode({
           'url': 'http://127.0.0.1:${host.boundPort}',
           'events': events,
+          'squelchRequests': squelchRequests,
+          'satelliteRequests': satelliteRequests,
           'clients': DataBroker.getValueDynamic(0, 'RemoteClients', []),
           'position': DataBroker.getValueDynamic(1, 'RemotePositionStatus'),
         }),
@@ -102,6 +151,7 @@ void main() {
           if (data['op'] == 'grant') set(0, 'RemoteControlGrant', data['id']);
           if (data['op'] == 'emergency') set(0, 'webServerEmergencyStopped', 1);
           if (data['op'] == 'resume') set(0, 'webServerEmergencyStopped', 0);
+          if (data['op'] == 'orbitFresh') orbitFresh();
           if (data['op'] == 'positionOff') set(0, 'webServerAllowPosition', 0);
         }
         await report();
