@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "version": "2026.07.12",
-  "sourceDate": 20260712,
-  "url": "https://github.com/Ylianst/HTCommander/releases/download/callsign-db/fcc_amateur.cdb.xz",
+  "version": "2026.10.04",
+  "sourceDate": 20261004,
+  "url": "https://github.com/BI4APF-AC3QL/HTCommander/releases/download/callsign-db/fcc_amateur.cdb.xz",
   "compressed": true,
-  "sizeBytes": 22400780,
-  "md5": "669fbff5db440892acb1a495a6cefe7b",
-  "recordCount": 1588146,
+  "sizeBytes": 22655528,
+  "md5": "a6ce0131ce9a4574f1a248a501b57270",
+  "recordCount": 1603930,
   "overlay": {
-    "version": "2026.09.27",
-    "sourceDate": 20260927,
-    "url": "https://github.com/Ylianst/HTCommander/releases/download/callsign-db/fcc_amateur_overlay.cdb.xz",
+    "version": "2026.10.04",
+    "sourceDate": 20261004,
+    "url": "https://github.com/BI4APF-AC3QL/HTCommander/releases/download/callsign-db/fcc_amateur_overlay.cdb.xz",
     "compressed": true,
-    "sizeBytes": 1619784,
-    "md5": "7a4184b17159ed42bee8dfffb3b31b8f",
-    "recordCount": 91006
+    "sizeBytes": 88,
+    "md5": "894ee1611f00aeb80a27d6be0e49ecca",
+    "recordCount": 0
   }
 }
