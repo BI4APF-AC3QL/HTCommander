@@ -9,67 +9,329 @@ ${failed ? '<p role="alert">密码错误，请重试 / Incorrect password</p>' :
 <input id="password" name="password" type="password" required autocomplete="current-password" maxlength="1024">
 <button>登录 / Sign in</button></form><small>密码在电脑的远程操控设置中配置。</small></main></html>''';
 
+const remotePwaManifest =
+    r'''{"id":"/remote.html","name":"HTCommander 远程电台","short_name":"远程电台","start_url":"/remote.html","scope":"/","display":"standalone","background_color":"#101827","theme_color":"#101827","description":"连接 Windows 主机查看、收听和控制电台","icons":[{"src":"/icons/Icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icons/Icon-512.png","sizes":"512x512","type":"image/png"}]}''';
+// No fetch handler or offline cache: authenticated content always uses network.
+const remotePwaWorker =
+    "self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));";
+
 const remoteMobilePage = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>HTCommander 远程操控</title><style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101827;color:#eef4ff;font:16px system-ui}main{max-width:680px;margin:auto;padding:24px 18px 40px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px}h2{font-size:17px;margin:0 0 14px}.card{background:#1c293d;border:1px solid #33445e;border-radius:16px;padding:18px;margin:16px 0}.muted{color:#adbed5;font-size:14px;line-height:1.6}button,select,input{font:inherit}button,select{border:1px solid #40536f;background:#253752;color:inherit;border-radius:10px;padding:12px;min-height:48px}select{width:100%;margin:8px 0 12px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}a{color:#7fe3cf}label{display:block;margin:8px 0}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.row>*{flex:1}input[type=range]{width:100%;min-height:40px;accent-color:#79ddc7}#ptt{width:100%;min-height:112px;font-size:23px;background:#234c48;border:2px solid #70d7bc;touch-action:none;user-select:none;-webkit-user-select:none}#ptt.active{background:#963849;border-color:#ff849d}#notice{white-space:pre-wrap;color:#ffcea0;min-height:24px}#connection{font-size:14px;color:#79ddc7}#frequency{font:28px ui-monospace,monospace;margin:8px 0}footer{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:24px}
+<title>HTCommander 远程操控</title><link rel="manifest" href="/remote.webmanifest" crossorigin="use-credentials"><link rel="apple-touch-icon" href="/icons/Icon-192.png"><meta name="theme-color" content="#101827"><meta name="apple-mobile-web-app-capable" content="yes"><style>
+:root{color-scheme:dark}[hidden]{display:none!important}.pageMenu{position:sticky;top:0;z-index:10;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;background:#101827;padding:8px 0}.pageMenu button{padding:12px 2px;min-height:44px}.pageMenu button[aria-current="page"]{background:#79ddc7;color:#101827}.card{overflow-wrap:anywhere}.card summary{cursor:pointer;min-height:44px}*{box-sizing:border-box}body{margin:0;background:#101827;color:#eef4ff;font:16px system-ui}main{max-width:680px;margin:auto;padding:24px 18px 40px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}h1{font-size:24px}h2{font-size:17px;margin:0 0 14px}.card{background:#1c293d;border:1px solid #33445e;border-radius:16px;padding:18px;margin:16px 0}.muted{color:#adbed5;font-size:14px;line-height:1.6}button,select,input{font:inherit}button,select{border:1px solid #40536f;background:#253752;color:inherit;border-radius:10px;padding:12px;min-height:48px}select{width:100%;margin:8px 0 12px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}a{color:#7fe3cf}label{display:block;margin:8px 0}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.row>*{flex:1}input[type=range]{width:100%;min-height:40px;accent-color:#79ddc7}#ptt{width:100%;min-height:112px;font-size:23px;background:#234c48;border:2px solid #70d7bc;touch-action:none;user-select:none;-webkit-user-select:none}#ptt.active{background:#963849;border-color:#ff849d}#notice{white-space:pre-wrap;color:#ffcea0;min-height:24px}#connection{font-size:14px;color:#79ddc7}#frequency{font:28px ui-monospace,monospace;margin:8px 0}footer{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:24px}
 </style></head><body><main>
 <header><h1>远程电台</h1><span id="connection" role="status">正在连接…</span></header>
 <div id="notice" role="alert"></div>
-<section class="card"><h2 id="radio">Windows 电台</h2><div id="frequency">— MHz</div><div id="status" class="muted">等待电脑连接电台</div>
+<nav class="pageMenu" aria-label="功能菜单"><button id="menuRadio" aria-controls="pageTitle" aria-current="page">电台</button><button id="menuAprs" aria-controls="pageTitle">APRS</button><button id="menuMap" aria-controls="pageTitle">地图</button><button id="menuAudio" aria-controls="pageTitle">音频</button><button id="menuMore" aria-controls="pageTitle">更多</button></nav><h2 id="pageTitle" tabindex="-1">电台控制</h2><section class="card" data-page="more" hidden><details><summary>网络与接收质量</summary><label for="networkMode">当前手机带宽模式</label><select id="networkMode"><option value="normal">标准接收</option><option value="low">低带宽 · 8 kHz 单声道</option></select><p id="mediaMetrics" class="muted">等待电脑确认接收模式</p><p class="muted">低带宽适合语音收听，频谱降至 2 Hz、地图绘制降至 0.5 Hz、状态每 8 秒更新；点击“加载地图瓦片”才下载底图。操作请求仍立即处理，麦克风发送格式保持原设置。计数为本次连接提交的音频负载，包含 4 字节帧头，不含协议、瓦片或其他流量。</p></details></section>
+<section class="card" data-page="more" hidden><details><summary>运行仪表盘</summary><div id="dashboardRadio" class="muted">等待电脑数据</div><p id="dashboardReport" class="muted"></p><p id="dashboardChannel"></p><p id="dashboardGateway"></p><p id="dashboardTotals" class="muted"></p><p id="dashboardMessages" class="muted"></p><p id="dashboardClients" class="muted"></p><details><summary>最近 5 条活动（UTC）</summary><div id="dashboardActivity"></div></details><p class="muted">收发与扫描是电台上次报告的状态，报告时间未知时会明确标注。统计表示本次运行的软件事件，不代表射频交付。</p></details></section>
+<section class="card" data-page="radio"><h2 id="radio">Windows 电台</h2><div id="frequency">— MHz</div><div id="status" class="muted">等待电脑连接电台</div>
 <label for="channel">信道 A</label><select id="channel" disabled></select>
 <div class="row"><button id="scan" disabled>开启扫描</button><button id="listen">开启收听</button></div>
-<label for="volume">电台音量 <span id="volumeValue">0</span></label><input id="volume" type="range" min="0" max="15" step="1" disabled>
-<label for="playback">手机播放音量</label><input id="playback" type="range" min="0" max="1" value="0.8" step="0.05">
+<details><summary>电台音量与静噪</summary><label for="volume">电台音量 <span id="volumeValue">0</span></label><input id="volume" type="range" min="0" max="15" step="1" disabled>
+<label for="squelch">设备静噪 <span id="squelchValue">未知</span></label><input id="squelch" type="range" min="0" max="9" step="1" disabled><p class="muted">0 打开静噪；提高级别可能滤掉弱信号。</p></details>
 </section>
-<section class="card"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
-<footer><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
+<section class="card" data-page="radio"><details><summary>操作权</summary><p id="controlStatus" class="muted">查看和收听无需操作权。</p><div class="row"><button id="controlRequest">申请操作权</button><button id="controlRelease" disabled>释放操作权</button></div><div id="controlHandoff" class="row"></div><p class="muted">同一时间只允许一端操作。Windows 可随时收回；重连后重新申请。</p></details></section>
+<section class="card" data-page="radio"><h2>按住讲话 / PTT</h2><p id="txHint" class="muted">电脑需启用远程发射与“允许发射”。手机麦克风需要 HTTPS。</p><button id="ptt" disabled>按住讲话</button><p class="muted">松手、切到后台或断线即停止。连续讲话上限 60 秒。</p></section>
+<section class="card" data-page="audio" hidden><h2>手机播放设置</h2><label for="playback">手机播放音量</label><input id="playback" type="range" min="0" max="1" value="0.8" step="0.05">
+<label for="audioBuffer">音频起始缓冲（毫秒）</label><input id="audioBuffer" type="range" min="80" max="300" value="120" step="20"><p class="muted">较小缓冲延迟低，较大缓冲适合网络抖动；积压超过半秒会清理旧音频。</p></section>
+<section class="card" data-page="audio" hidden><h2>本机麦克风测试</h2><p class="muted">仅在当前手机/电脑浏览器测量输入，最长 10 秒。不会发送到 Windows 或电台，不播放回声，不保存声音；只读用户也可测试。需要 HTTPS 和麦克风许可。</p><div class="row"><button id="micTest">测试麦克风（不发射）</button><button id="micTestStop" disabled>停止测试</button></div><p id="micTestStatus" aria-live="polite" class="muted">尚未测试</p></section>
+<section class="card" data-page="radio"><details><summary>卫星多普勒（接收跟踪）</summary><p id="satelliteStatus" class="muted">等待主机卫星数据</p><label for="satellite">卫星</label><select id="satellite"></select><label for="satelliteUsage">工作模式 / 下行</label><select id="satelliteUsage"></select><p id="satellitePreview" class="muted"></p><div class="row"><button id="satelliteStart" disabled>开始接收跟踪</button><button id="satelliteStop" disabled>停止跟踪</button></div><p class="muted">使用 Windows 的轨道和观测位置；请先在电脑更新 TLE，轨道过旧会影响精度。跟踪会切换接收频率；不申请 PTT、不发送上行。断线或失去操作权会停止手机发起的跟踪。</p></details></section>
+<section class="card" data-page="aprs" hidden><h2>APRS 消息</h2><label for="aprsFavorite">常用呼号</label><select id="aprsFavorite"></select><label for="aprsTemplate">消息模板</label><select id="aprsTemplate"></select><label for="aprsDestination">目标呼号 / SSID</label><input id="aprsDestination" maxlength="9" placeholder="CALL-7" autocomplete="off"><label for="aprsText">消息（最多 67 个 ASCII 字符）</label><input id="aprsText" maxlength="67" autocomplete="off"><button id="aprsSend" disabled>预览 APRS 消息</button><div id="aprsConfirmation" hidden><p id="aprsPreview" style="white-space:pre-wrap"></p><div class="row"><button id="aprsConfirm" disabled>确认发送此消息</button><button id="aprsCancel">取消发送</button></div></div><p class="muted">常用项由 Windows 配置。选取只填写草稿，需预览后确认发送。需电脑端授权 APRS 发送和允许发射；提交不等于对方收到。</p></section>
+<section class="card" data-page="aprs" hidden><h2>APRS 发送状态</h2><div id="aprsDeliveries" aria-live="polite"></div><p class="muted">等待确认表示已交给电脑发送流程，不代表射频发射成功。最多尝试三次；断线或撤销权限后取消。</p></section>
+<section class="card" data-page="aprs" hidden><h2>APRS 会话 <span id="aprsUnread"></span></h2><label for="aprsSearch">搜索呼号或消息</label><input id="aprsSearch" type="search"><button id="aprsRead">全部标为已读</button><div id="aprsMessages"></div><p class="muted">显示最近 100 条与本台有关的消息。点呼号填写回复目标；未读标记仅用于当前页面。</p></section>
+<section class="card" data-page="more" hidden><details><summary>APRS 网关诊断</summary><p id="gatewayMetrics">等待电脑数据</p><p id="gatewayLink"></p><p id="gatewayRf"></p><details><summary>最近 24 小时统计（UTC）</summary><div id="gatewayHealth"></div></details><p class="muted">网络上行队列最多 32 条，30 秒过期；恢复后逐条处理。射频转发需电脑许可，排队帧 15 秒过期。统计仅保存在本次运行内，计数表示软件处理结果，不代表服务器或接收电台已确认。</p></details></section>
+<section class="card" data-page="more" hidden><details><summary>电台与本机音频链路诊断</summary><div id="linkDiagnostics"></div><p class="muted">统计本次连接的软件观察。控制写入延迟包含主机排队；读取往返仅统计未重试的匹配响应。积压/丢弃是 Windows 播放缓冲估计，同步字节或超时不能换算为射频丢包率。低带宽模式每 8 秒刷新；未知不会显示成零。</p></details></section>
+<section class="card" data-page="more" hidden><details><summary>Windows 定时信标任务</summary><p id="beaconTask" class="muted">等待电脑数据</p><p class="muted">由 Windows 的 APRS → 软件信标配置并单独确认启动。手机仅查看。暂停、重启、权限撤销或目标断开后需在 Windows 重新批准；繁忙、定位过期或错过的时段跳过，不补发。提交计数不代表射频交付。</p></details></section>
+<section class="card" data-page="more" hidden><details><summary>近期操作审计</summary><div id="auditEvents"></div><p class="muted">最近 20 条，时间为 UTC；Windows 可复制本次运行最近 200 条脱敏 JSON。“请求接受”不表示已发射或对方收到；不记录密码、地址、消息正文、定位或音频。连续同类拒绝每秒合并一次。</p></details></section>
+<section class="card" data-page="audio" hidden><h2>接收音频频谱 / 瀑布</h2><div class="row"><button id="spectrumPause">暂停图形</button><select id="spectrumRange" aria-label="频谱范围"><option value="4000">0–4 kHz</option><option value="8000" selected>0–8 kHz</option><option value="16000">0–16 kHz</option></select></div><label for="spectrumGain">显示增益（dB）</label><input id="spectrumGain" type="range" min="0" max="60" value="0"><canvas id="spectrum" width="512" height="128" style="width:100%" aria-label="接收音频频谱"></canvas><canvas id="waterfall" width="512" height="128" style="width:100%" aria-label="接收音频瀑布图"></canvas><p id="audioMetrics" class="muted">开启收听后显示。音频频谱不是射频扫频。</p></section>
+<section class="card" data-page="map" hidden><h2>APRS 地图</h2><label for="mapSource">地图源（当前手机）</label><select id="mapSource"></select><div class="row"><button id="mapZoomIn">放大＋</button><button id="mapZoomOut">缩小－</button><button id="mapRetry">重试地图</button></div><canvas id="stationMap" width="512" height="320" style="width:100%;touch-action:none" aria-label="APRS 台站地图，可拖动"></canvas><p id="mapAttribution" class="muted"></p><label for="mapSearch">查找当前视野呼号</label><input id="mapSearch" type="search" maxlength="9"><div id="mapStationList"></div><p id="mapInfo" class="muted">等待位置。灰色标记表示超过 30 分钟未更新；24 小时后清理。</p><p class="muted">瓦片由 Windows 主机获取。若地图显示访问限制或授权提示，请换源，或在电脑配置可用的授权 XYZ 地址。</p></section>
+<section class="card" data-page="aprs" hidden><details><summary>一次性 APRS 位置发送</summary><div class="row"><button id="positionAcquire">获取手机位置</button><button id="positionRadio">预览电台位置</button></div><p id="positionPreview" class="muted">先选择位置来源。获取定位不会发送。</p><button id="positionSend" disabled>预览发送此位置</button><div id="positionConfirmation" hidden><p id="positionConfirmText"></p><div class="row"><button id="positionConfirm" disabled>确认发送此位置</button><button id="positionCancel">取消位置发送</button></div></div><p id="positionResult" class="muted"></p><p class="muted">位置发送需 Windows 单独授权及总允许发射。定位有效期 2 分钟，精度须在 100 米以内；电台未报告精度时显示未知。需预览后确认；位置报文没有消息 ACK，提交不代表已发射或收到。</p></details></section>
+<div class="row" data-page="more" hidden><button id="installApp">添加到主屏幕</button><button id="fullscreen">全屏</button></div><p class="muted" data-page="more" hidden>Android 可使用浏览器“安装应用 / 添加到主屏幕”；iPhone 使用 Safari“分享 → 添加到主屏幕”。切到后台可能暂停连接与收听，讲话会停止；返回页面后检查连接状态。</p>
+<footer data-page="more" hidden><a href="/index.html">完整界面 · 地图/APRS</a><button id="logout">退出登录</button></footer>
 </main><script>
 'use strict';
 const $=id=>document.getElementById(id);
+let activePage='radio';
+function showPage(page){
+ const titles={radio:'电台控制',aprs:'APRS 消息与定位',map:'台站地图',audio:'音频与频谱',more:'诊断与设置'};if(!titles[page])return;
+ if(page!==activePage){if(pressed||transmitting)stopPtt();if(micTestBusy)stopMicTest();cancelAprsPreview();cancelPositionPreview();}
+ activePage=page;document.querySelectorAll('[data-page]').forEach(e=>e.hidden=e.dataset.page!==page);
+ for(const [key,id] of Object.entries({radio:'menuRadio',aprs:'menuAprs',map:'menuMap',audio:'menuAudio',more:'menuMore'})){if(key===page)$(id).setAttribute('aria-current','page');else $(id).removeAttribute('aria-current');}
+ $('pageTitle').textContent=titles[page];if(page==='map'){mapDirty=true;requestMap();}if(page==='audio')lastSpectrumDraw=0;
+}
+for(const [page,id] of Object.entries({radio:'menuRadio',aprs:'menuAprs',map:'menuMap',audio:'menuAudio',more:'menuMore'}))$(id).onclick=()=>showPage(page);
+
+let installPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;});
+$('installApp').onclick=async()=>{if(!installPrompt){notice('请使用浏览器菜单“安装应用 / 添加到主屏幕”；iPhone 在 Safari 分享菜单中添加。');return;}try{await installPrompt.prompt();await installPrompt.userChoice;}catch(error){notice(error.message);}finally{installPrompt=null;}};
+$('fullscreen').onclick=async()=>{try{if(document.fullscreenElement)await document.exitFullscreen();else if(document.documentElement.requestFullscreen)await document.documentElement.requestFullscreen();else notice('此浏览器不支持全屏，可添加到主屏幕。');}catch(error){notice(error.message);}};
+if(window.isSecureContext&&'serviceWorker' in navigator)navigator.serviceWorker.register('/remote-worker.js',{scope:'/remote.html'}).catch(()=>notice('应用安装组件未注册，可继续通过浏览器使用。'));
+let lowBandwidth=false,mapTilesAllowed=true,lastSpectrumDraw=0,lastMapDraw=0,lastStatePoll=0;
 let socket,clientId=-1,state={},channels=[],listSignature='',retry=null,failed=0;
+let pendingAprs=null,pendingHandoff=null,shortcutsSignature='';
 let audio=null,gain=null,nextAudio=0,listening=false,micStream=null,micNode=null,micSource=null,micMute=null;
 let pressed=false,transmitting=false,micPosition=0,selected=-1,micGeneration=0;
+let micTestBusy=false,micTestGeneration=0,micTestStream=null,micTestNode=null,micTestSource=null,micTestMute=null,micTestTimer=null;
+let aprsReadThrough=0,aprsMessageSignature='';
+let positionDraft=null,positionGeneration=0,pendingPosition=null;
+function positionPreview(){
+ const p=positionDraft;if(!p){$('positionPreview').textContent='先选择位置来源。获取定位不会发送。';return;}
+ const age=(Date.now()-Date.parse(p.capturedAt))/1000;
+ $('positionPreview').textContent=(p.radio?'电台':'手机')+' · '+p.latitude.toFixed(5)+', '+p.longitude.toFixed(5)+' · 精度 '+(p.accuracy==null?'未知':p.accuracy.toFixed(1)+' 米')+' · '+Math.max(0,Math.round(age))+' 秒前'+(age>120?'（已过期，请重新获取）':'');
+}
+function positionReady(p=positionDraft){if(!p)return false;const age=Date.now()-Date.parse(p.capturedAt);return Number.isFinite(age)&&age>=-5000&&age<=120000&&(p.radio&&p.accuracy==null||p.accuracy>0&&p.accuracy<=100);}
+function cancelPositionPreview(){pendingPosition=null;$('positionConfirmation').hidden=true;$('positionConfirm').disabled=true;}
+function canConfirmPosition(){return pendingPosition&&Date.now()<=pendingPosition.expires&&positionReady(pendingPosition.position)&&JSON.stringify(pendingPosition.position)===JSON.stringify(positionDraft)&&state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped&&state.connected&&state.positionAllowed&&state.txOwner==null&&!document.hidden;}
+let mapLat=31.2,mapLon=121.5,mapZoom=6,mapDirty=true,mapSelected='',mapSourceId='',mapSourceSignature='',mapHits=[],mapDrag=null,mapDragged=false,mapTileErrors=0;
+const mapTiles=new Map();let mapLoads=0,mapTileGeneration=0;
+function mapProject(lat,lon,z){const scale=256*2**z,s=Math.sin(Math.max(-85.051129,Math.min(85.051129,lat))*Math.PI/180);return [(lon+180)/360*scale,(.5-Math.log((1+s)/(1-s))/(4*Math.PI))*scale];}
+function mapUnproject(x,y,z){const scale=256*2**z;return [Math.atan(Math.sinh(Math.PI*(1-2*y/scale)))*180/Math.PI,((x/scale*360)%360+360)%360-180];}
+function mapBounds(){const c=mapProject(mapLat,mapLon,mapZoom),sw=mapUnproject(c[0]-256,c[1]+160,mapZoom),ne=mapUnproject(c[0]+256,c[1]-160,mapZoom);return [sw[0],sw[1],ne[0],ne[1]];}
+function updateMapState(){
+ const sources=state.mapSources||[],signature=JSON.stringify(sources);if(signature!==mapSourceSignature){mapSourceSignature=signature;const selected=mapSourceId||state.mapSource;if(!sources.some(s=>s.id===selected))mapSourceId=state.mapSource||'';else mapSourceId=selected;$('mapSource').replaceChildren(...sources.map(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;return o;}));$('mapSource').value=mapSourceId;resetMapTiles();}
+ mapDirty=true;const query=$('mapSearch').value.trim().toUpperCase();const rows=(state.mapStations||[]).filter(s=>!query||s.call.includes(query)).slice(0,20).map(s=>{const b=document.createElement('button');b.textContent=s.call+' · '+s.lat.toFixed(3)+', '+s.lon.toFixed(3);b.onclick=()=>{mapSelected=s.call;mapLat=s.lat;mapLon=s.lon;mapDirty=true;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已定位 '+s.call+' 并填写消息目标。');requestMap();};return b;});$('mapStationList').replaceChildren(...rows);
+}
+function requestMap(){send({op:'state',mapBounds:mapBounds()});}
+function tileImage(source,z,x,y){
+ const limit=2**z;if(y<0||y>=limit)return null;x=((x%limit)+limit)%limit;const key=source.id+'/'+z+'/'+x+'/'+y;
+ if(mapTiles.has(key))return mapTiles.get(key);if(!mapTilesAllowed||mapLoads>=(lowBandwidth?2:8))return null;
+ const image=new Image(),generation=mapTileGeneration;image.loaded=false;mapLoads++;
+ image.onload=()=>{mapLoads--;if(generation!==mapTileGeneration)return;image.loaded=true;mapDirty=true;};image.onerror=()=>{mapLoads--;if(generation!==mapTileGeneration)return;mapTileErrors++;mapDirty=true;};
+ mapTiles.set(key,image);while(mapTiles.size>64)mapTiles.delete(mapTiles.keys().next().value);
+ const url=source.url.replaceAll('{z}',z).replaceAll('{x}',x).replaceAll('{y}',y).replaceAll('{s}','a');
+ if(!/^https:\/\//i.test(url)&&!/^\/remote-tiles\//.test(url)){mapLoads--;mapTileErrors++;return image;}image.src=url;return image;
+}
+function drawMap(){
+ if(document.hidden||activePage!=='map'||!mapDirty||Date.now()-lastMapDraw<(lowBandwidth?2000:500))return;lastMapDraw=Date.now();mapDirty=false;const canvas=$('stationMap'),ctx=canvas.getContext('2d');if(!ctx)return;
+ const source=(state.mapSources||[]).find(s=>s.id===mapSourceId);ctx.fillStyle='#101827';ctx.fillRect(0,0,512,320);const center=mapProject(mapLat,mapLon,mapZoom),left=center[0]-256,top=center[1]-160;
+ if(source){$('mapAttribution').textContent=source.attribution;for(let x=Math.floor(left/256);x<=Math.floor((left+512)/256);x++)for(let y=Math.floor(top/256);y<=Math.floor((top+320)/256);y++){const tile=tileImage(source,mapZoom,x,y);if(tile&&tile.loaded)ctx.drawImage(tile,x*256-left,y*256-top,256,256);}}
+ const clusters=new Map();mapHits=[];for(const station of state.mapStations||[]){const p=mapProject(station.lat,station.lon,mapZoom),world=256*2**mapZoom;let x=p[0]-left;if(x>world/2+256)x-=world;if(x<-world/2+256)x+=world;const y=p[1]-top;if(x<0||x>512||y<0||y>320)continue;const key=Math.floor(x/40)+','+Math.floor(y/40);if(!clusters.has(key))clusters.set(key,[]);clusters.get(key).push({station,x,y});}
+ for(const items of clusters.values()){const {station,x,y}=items[0];const stale=Date.now()-Date.parse(station.time)>1800000;ctx.fillStyle=stale?'#929da9':'#79ddc7';ctx.beginPath();ctx.arc(x,y,items.length>1?14:7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#eef4ff';ctx.fillText(items.length>1?String(items.length):station.call,x+9,y-8);mapHits.push({x,y,items});
+  if(station.call===mapSelected){ctx.strokeStyle='#ffcea0';ctx.beginPath();for(let i=0;i<(station.track||[]).length;i++){const p=mapProject(station.track[i][0],station.track[i][1],mapZoom);if(i===0)ctx.moveTo(p[0]-left,p[1]-top);else ctx.lineTo(p[0]-left,p[1]-top);}ctx.stroke();}}
+ $('mapInfo').textContent='视野内 '+(state.mapStations||[]).length+' 台 · 缩放 '+mapZoom+' · 瓦片缓存 '+mapTiles.size+'/64 · 瓦片失败 '+mapTileErrors+'。灰色表示位置超过 30 分钟。'+(mapTileErrors?' 地图源可能无法访问或要求授权，请换源或在 Windows 配置已授权的 XYZ 地址。':'');if(mapLoads)mapDirty=true;
+}
+const spectrumSamples=new Float32Array(1024),scheduledAudio=new Set();
+let spectrumCursor=0,spectrumRate=32000,spectrumCount=0,spectrumPaused=false,audioResets=0,audioClips=0,audioPeak=0,spectrumDirty=false;
+// Hann-windowed radix-2 FFT. All storage and canvas dimensions are bounded.
+function spectrumDb(samples){
+ const n=samples.length;if(n<2||(n&(n-1)))throw Error('FFT requires power-of-two samples');
+ const real=new Float64Array(n),imag=new Float64Array(n);let windowSum=0;
+ for(let i=0;i<n;i++){const w=.5-.5*Math.cos(2*Math.PI*i/(n-1));real[i]=samples[i]*w;windowSum+=w;}
+ for(let i=1,j=0;i<n;i++){let bit=n>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;if(i<j){const t=real[i];real[i]=real[j];real[j]=t;}}
+ for(let length=2;length<=n;length*=2){const angle=-2*Math.PI/length;for(let start=0;start<n;start+=length){for(let j=0;j<length/2;j++){const c=Math.cos(angle*j),s=Math.sin(angle*j),a=start+j,b=a+length/2,tr=real[b]*c-imag[b]*s,ti=real[b]*s+imag[b]*c;real[b]=real[a]-tr;imag[b]=imag[a]-ti;real[a]+=tr;imag[a]+=ti;}}}
+ const db=new Float32Array(n/2);for(let i=0;i<db.length;i++)db[i]=20*Math.log10(Math.max(1e-6,Math.hypot(real[i],imag[i])*(i===0?1:2)/windowSum));return db;
+}
+function feedSpectrum(buffer,rate){
+ if(rate!==spectrumRate){spectrumSamples.fill(0);spectrumCursor=0;spectrumCount=0;spectrumRate=rate;}
+ const samples=buffer.getChannelData(0);audioPeak=0;
+ for(const x of samples){spectrumSamples[spectrumCursor]=x;spectrumCursor=(spectrumCursor+1)%1024;spectrumCount=Math.min(1024,spectrumCount+1);audioPeak=Math.max(audioPeak,Math.abs(x));if(Math.abs(x)>=.999)audioClips++;}spectrumDirty=true;
+}
+function stopPlayback(){for(const source of scheduledAudio){try{source.stop();}catch(_){}}scheduledAudio.clear();nextAudio=0;}
+function drawSpectrum(){
+ if(document.hidden||activePage!=='audio'||spectrumPaused||!listening||!spectrumDirty||spectrumCount<1024||Date.now()-lastSpectrumDraw<(lowBandwidth?500:100))return;lastSpectrumDraw=Date.now();spectrumDirty=false;
+ const samples=new Float32Array(1024);for(let i=0;i<1024;i++)samples[i]=spectrumSamples[(spectrumCursor+i)%1024];const db=spectrumDb(samples);
+ const canvas=$('spectrum'),waterfall=$('waterfall'),ctx=canvas.getContext('2d'),wc=waterfall.getContext('2d');if(!ctx||!wc)return;
+ const maxHz=Math.min(spectrumRate/2,Number($('spectrumRange').value)||8000),boost=Number($('spectrumGain').value)||0;
+ ctx.fillStyle='#101827';ctx.fillRect(0,0,512,128);ctx.strokeStyle='#79ddc7';ctx.beginPath();wc.drawImage(waterfall,0,0,512,127,0,1,512,127);
+ for(let x=0;x<512;x++){const bin=Math.min(db.length-1,Math.floor(x/512*maxHz*1024/spectrumRate));const level=Math.max(0,Math.min(1,(db[bin]+boost+100)/100));const y=128-level*118;if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);wc.fillStyle='hsl('+(240-level*240)+',85%,'+(10+level*55)+'%)';wc.fillRect(x,0,1,1);}ctx.stroke();ctx.fillStyle='#adbed5';ctx.fillText('0 Hz',4,125);ctx.fillText((maxHz/1000)+' kHz',455,125);
+ $('audioMetrics').textContent='峰值 '+(audioPeak?20*Math.log10(audioPeak):-120).toFixed(1)+' dBFS · 削波样本 '+audioClips+' · 缓冲恢复 '+audioResets+' · 排队 '+scheduledAudio.size+' · 图形 '+(lowBandwidth?'2':'10')+' Hz';
+}
+function renderMessages(){
+ const messages=state.aprsMessages||[];const query=$('aprsSearch').value.trim().toUpperCase();
+ const unread=messages.filter(e=>e.incoming&&e.id>aprsReadThrough).length;
+ $('aprsUnread').textContent=unread?'（'+unread+' 条未读）':'';
+ const signature=JSON.stringify([messages,query,aprsReadThrough,state.aprsDeliveries]);if(signature===aprsMessageSignature)return;aprsMessageSignature=signature;
+ const rows=[];for(const e of messages.slice().reverse()){
+  if(query&&!(e.peer+' '+e.text).toUpperCase().includes(query))continue;
+  const peer=document.createElement('button');peer.textContent=(e.incoming&&e.id>aprsReadThrough?'● ':'')+e.peer+' · '+(e.incoming?'收到':'提交');peer.onclick=()=>{$('aprsDestination').value=e.peer;notice('已填写回复目标，请编辑消息后发送。');};
+  const text=document.createElement('p');text.textContent=e.text;
+  const stamp=document.createElement('small');const delivery=(state.aprsDeliveries||[]).find(d=>d.source===e.source&&d.destination===e.destination&&d.sequence===e.sequence);stamp.textContent=e.time+(e.viaInternet?' · APRS-IS':' · RF')+(delivery?' · '+delivery.status:'');rows.push(peer,text,stamp);
+ }$('aprsMessages').replaceChildren(...rows);
+}
 function notice(text){$('notice').textContent=text||'';}
 function send(op){if(socket&&socket.readyState===WebSocket.OPEN){socket.send(typeof op==='string'?op:'remote:'+JSON.stringify(op));return true;}return false;}
 function stopPtt(){pressed=false;transmitting=false;micGeneration++;send({op:'pttStop'});if(micStream)micStream.getTracks().forEach(t=>t.stop());if(micNode)micNode.disconnect();if(micSource)micSource.disconnect();if(micMute)micMute.disconnect();micStream=micNode=micSource=micMute=null;$('ptt').classList.remove('active');$('ptt').textContent='按住讲话';}
 function open(){socket=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket.aspx');socket.binaryType='arraybuffer';
- socket.onopen=()=>{failed=0;$('connection').textContent='已连接电脑';send({op:'state'});if(listening)send('audioon');};
+ socket.onopen=()=>{failed=0;$('connection').textContent='已连接电脑';send({op:'media',lowBandwidth});lastStatePoll=Date.now();requestMap();if(listening)send('audioon');};
  socket.onmessage=event=>{if(typeof event.data!=='string'){playAudio(event.data);return;}
   if(event.data.startsWith('remote:')){const msg=JSON.parse(event.data.slice(7));if(msg.clientId!==undefined)clientId=msg.clientId;if(msg.error){notice(msg.error);stopPtt();}if(msg.state){state=msg.state;render();}}
  };
- socket.onclose=async()=>{stopPtt();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
+ socket.onclose=async()=>{stopMicTest();stopPtt();stopPlayback();state={};render();$('connection').textContent='连接中断，正在重连';failed++;if(failed>=3){try{const r=await fetch('/remote.html',{cache:'no-store'});if(r.redirected){location.href='/login';return;}}catch(_){}}clearTimeout(retry);retry=setTimeout(open,3000);};
  socket.onerror=()=>socket.close();
 }
+$('controlRequest').onclick=()=>send({op:'requestControl'});
+$('controlRelease').onclick=()=>{stopPtt();send({op:'releaseControl'});};
 function render(){
+ renderDashboard();renderMedia();renderLinkDiagnostics();
+ const task=state.beaconTask;const causes={restart:'重启后等待确认',disabled:'已关闭',configuration:'配置已修改',host:'Windows 已暂停',emergency:'紧急停止',permission:'未允许发射',radio:'指定电台/APRS 信道不可用',internet:'APRS-IS 未验证连接',disposed:'任务已停止'};
+ $('beaconTask').textContent=!task?'未知 · Windows 尚未报告任务':(task.running?'运行中':'已暂停')+' · '+(task.internetOnly?'APRS-IS':'指定电台')+' · '+(task.intervalSeconds??'未知')+' 秒 · '+(causes[task.availability||task.reason]||'')+' · 下次 UTC '+(task.nextAt||'—')+' · 提交 / 跳过 '+(task.requests??'未知')+' / '+(task.skipped??'未知');
+ const control=state.controlOwner===clientId&&!state.readOnly&&!state.emergencyStopped;
+ $('controlRequest').disabled=!socket||socket.readyState!==WebSocket.OPEN||state.emergencyStopped||control||state.controlRequested;
+ $('controlRelease').disabled=!control&&!state.controlRequested;
+ const queue=state.controlRequests||[],place=queue.indexOf(clientId)+1;
+ $('controlStatus').textContent=state.emergencyStopped?'Windows 已停止远程控制。':control?'你持有操作权。':state.controlRequested?'申请已排队（第 '+place+' 位）'+(state.controlApprovalRequired||state.readOnly?'，等待 Windows 批准。':'，可由当前操作者移交。'):state.controlOwner!=null?'客户端 #'+state.controlOwner+' 正在操作；你可以查看、收听或申请排队。':'操作权空闲，点击申请。';
+ if(pendingHandoff&&(!control||state.controlApprovalRequired||!queue.includes(pendingHandoff.id)||Date.now()>pendingHandoff.expires))pendingHandoff=null;
+ const handoffButtons=(control&&!state.controlApprovalRequired?queue:[]).filter(id=>id!==clientId).map(id=>{const button=document.createElement('button');button.textContent='移交给 #'+id;button.onclick=()=>{pendingHandoff={id,expires:Date.now()+30000};render();};return button;});
+ if(pendingHandoff){const draft=pendingHandoff,warning=document.createElement('p'),yes=document.createElement('button'),no=document.createElement('button');warning.textContent='移交会停止当前讲话并取消原端待发/重试 APRS。';yes.textContent='确认移交给 #'+draft.id;yes.onclick=()=>{if(pendingHandoff!==draft||Date.now()>draft.expires||state.controlOwner!==clientId||state.readOnly||state.emergencyStopped||state.controlApprovalRequired||!(state.controlRequests||[]).includes(draft.id))return;pendingHandoff=null;stopPtt();send({op:'handoffControl',clientId:draft.id});render();};no.textContent='取消移交';no.onclick=()=>{pendingHandoff=null;render();};handoffButtons.push(warning,yes,no);} $('controlHandoff').replaceChildren(...handoffButtons);
+ if(pressed&&!control)stopPtt();
+ positionPreview();$('positionSend').disabled=!positionReady()||!state.connected||!state.positionAllowed||!control||state.txOwner!=null;
+ if(pendingPosition&&!canConfirmPosition())cancelPositionPreview();
+ const ps=state.positionStatus;if(ps&&ps.clientId===clientId)$('positionResult').textContent=ps.status==='submitted'?'电脑已提交位置报文，尚无射频发送或接收确认。':'电脑拒绝位置发送，请检查权限、定位时间与电台状态。';
+ updateMapState();
+ const g=state.gatewayMetrics||{};$('gatewayMetrics').textContent='排队 '+(g.queueDepth||0)+' · 过期 '+(g.queueExpired||0)+' · 队列溢出 '+(g.queueOverflow||0)+' · 重复 '+((g.queueDuplicates||0)+(g.duplicateDrops||0))+' · 限速丢弃 '+(g.rateDrops||0)+' · 写入错误 '+(g.sendErrors||0);
+ const reasons={connectFailed:'无法连接 APRS-IS',loginTimeout:'APRS-IS 登录超时',connectionClosed:'APRS-IS 连接已断开'};
+ $('gatewayLink').textContent='重连尝试 '+(g.reconnectAttempts||0)+' · 连接失败 '+(g.connectionFailures||0)+' · 意外断开 '+(g.disconnects||0)+(reasons[g.failureReason]?' · '+reasons[g.failureReason]:'')+(g.nextRetryAt?' · 下次重试 '+g.nextRetryAt:'');
+ $('gatewayRf').textContent='上行 '+(g.toInternet?'开启':'关闭')+' · 射频转发 '+(g.toRf?'开启':'关闭')+' · 下行提交 '+(g.rfForwarded||0)+' · 下行重复 '+(g.rfDuplicateDrops||0)+' · 下行限速 '+(g.rfRateDrops||0)+' · 电台/权限不可用 '+(g.rfUnavailableDrops||0)+' · 规则拒绝 '+(g.policyDrops||0);
+ $('gatewayHealth').replaceChildren(...(state.gatewayHealth||[]).slice(0,24).map(h=>{const row=document.createElement('p');row.textContent=h.hour+' · RF 收到 '+(h.receivedRf||0)+' · IS 收到 '+(h.receivedIs||0)+' · 上行 '+(h.toInternet||0)+' · 下行请求 '+(h.toRfRequested||0)+' · 丢弃 '+(h.dropped||0)+' · 故障 '+(h.failures||0);return row;}));
+ const auditLabels={requestControl:'申请操作权',releaseControl:'释放操作权',handoffControl:'移交操作权',grantControl:'授予操作权',recallControl:'主机收回',disconnect:'断开连接',revokeLogin:'撤销登录',readOnlyRole:'设置只读角色',channel:'换信道',squelch:'设备静噪',satelliteStart:'接收多普勒开始',satelliteStop:'接收多普勒停止',volume:'调电台音量',scan:'扫描',aprsMessage:'APRS 消息请求',aprsPosition:'位置发送请求',pttStart:'PTT 请求',pttStop:'停止 PTT 请求',pttRelease:'释放 PTT',invalidCommand:'未知命令',rawWrite:'原始写入',writeDenied:'权限边界拒绝'};
+ const auditResults={accepted:'请求接受',denied:'拒绝',released:'释放'};
+ $('auditEvents').replaceChildren(...(state.auditEvents||[]).slice(0,20).map(e=>{const row=document.createElement('p');row.textContent=e.time+' · '+(e.clientId===0?'Windows':'客户端 #'+e.clientId)+' · '+(auditLabels[e.action]||'操作')+' · '+(auditResults[e.result]||'未知结果')+(e.affectedClient!=null?' · 目标 #'+e.affectedClient:'');return row;}));
+ renderMessages();
+ const labels={waiting:'等待 ACK',acknowledged:'已确认',rejected:'对方拒收',timedOut:'确认超时',cancelled:'已取消'};
+ $('aprsDeliveries').replaceChildren(...(state.aprsDeliveries||[]).slice(-20).reverse().map(e=>{const row=document.createElement('p');row.textContent=e.destination+' · '+(labels[e.status]||e.status)+' · 尝试 '+e.attempts+'/3 · 序号 '+e.sequence;return row;}));
+ $('aprsSend').disabled=state.connected!==true||state.aprsAllowed!==true||state.txOwner!=null||!control;
+ renderShortcuts();if(pendingAprs&&($('aprsSend').disabled||Date.now()>pendingAprs.expires))cancelAprsPreview();$('aprsConfirm').disabled=!pendingAprs||$('aprsSend').disabled;
  const connected=state.connected===true;const s=state.settings||{};channels=state.channels||[];
  const sig=JSON.stringify(channels);if(sig!==listSignature){listSignature=sig;$('channel').replaceChildren(...channels.map(c=>{const o=document.createElement('option');o.value=c.channelId;o.textContent=(c.channelId+1)+' · '+(c.name||'未命名')+' · '+((c.rxFreq||0)/1e6).toFixed(5);return o;}));}
- selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null;
- const c=channels.find(c=>c.channelId===selected);$('frequency').textContent=c?((c.rxFreq||0)/1e6).toFixed(5)+' MHz':'— MHz';
+ selected=s.channelA??-1;$('channel').value=String(selected);$('channel').disabled=!connected||state.txOwner!=null||!control;
+ const c=channels.find(c=>c.channelId===selected);const fm=state.frequencyModeActive&&Number.isInteger(state.frequencyModeHz)&&state.frequencyModeHz>0;$('frequency').textContent=fm?(state.frequencyModeHz/1e6).toFixed(5)+' MHz':state.satellite?.tracking?'等待跟踪频率报告':c&&c.rxFreq>0?(c.rxFreq/1e6).toFixed(5)+' MHz':'— MHz';
  $('status').textContent=!connected?'请先在 Windows 连接电台':(state.audio?'音频通道已连接':'电脑尚未启用电台音频')+(s.scan?' · 扫描中':'');
- $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null;
- $('volume').disabled=!connected||state.txOwner!=null;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
- const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext;
- $('ptt').disabled=!ready||(state.txOwner!=null&&!own);
- $('txHint').textContent=!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
+ $('scan').textContent=s.scan?'停止扫描':'开启扫描';$('scan').disabled=!connected||state.txOwner!=null||!control;
+ const sq=s.squelchLevel;const sqKnown=Number.isInteger(sq)&&sq>=0&&sq<=9;$('squelch').disabled=!connected||state.txOwner!=null||!control||!sqKnown;$('squelchValue').textContent=sqKnown?sq:'未知';if(sqKnown&&document.activeElement!==$('squelch'))$('squelch').value=sq;renderSatellite(control);
+ $('volume').disabled=!connected||state.txOwner!=null||!control;if(document.activeElement!==$('volume'))$('volume').value=state.volume||0;$('volumeValue').textContent=state.volume||0;
+ const own=state.txOwner===clientId;const ready=connected&&state.audio&&state.txAllowed&&window.isSecureContext&&control&&!state.satellite?.tracking;
+ $('ptt').disabled=micTestBusy||!ready||(state.txOwner!=null&&!own);
+ $('micTest').disabled=micTestBusy||pressed||transmitting||document.hidden;
+ $('txHint').textContent=state.satellite?.tracking?'接收多普勒跟踪中；停止跟踪后再讲话。':state.emergencyStopped?'Windows 已紧急停止远程控制。':!control?'请先申请操作权；Windows 可批准或收回。':!window.isSecureContext?'手机麦克风需要 HTTPS 地址；当前可控制与收听。':!state.txAllowed?'请在电脑启用远程发射和“允许发射”。':!state.audio?'请在电脑启用电台音频。':(state.txOwner!=null&&!own)?'其他客户端正在讲话。':'按住按钮讲话，松手停止。';
  if(pressed&&own){transmitting=true;$('ptt').classList.add('active');$('ptt').textContent='正在发射 · 松手停止';}else if(transmitting&&!own){stopPtt();notice('发射已停止。');}
 }
+function renderDashboard(){
+ const d=state.dashboard||{},r=d.radio||{},g=d.gateway||{},h=g.health||{},m=d.messages||{};
+ const count=v=>Number.isSafeInteger(v)&&v>=0?String(v):'未知';
+ const flag=(v,yes,no)=>v===true?yes:v===false?no:'未知';
+ const links={Connected:'已连接',Connecting:'连接中',Disconnected:'未连接','Connected (verified)':'已验证连接','Connected (read-only)':'只读连接'};
+ $('dashboardRadio').textContent='电台 '+(links[r.link]||'未知')+' · 接收 '+flag(r.receiving,'中','空闲')+' · 发射 '+flag(r.transmitting,'中','空闲')+' · 扫描 '+flag(r.scan,'开启','关闭')+' · 信号 '+count(r.signalLevel)+'/15';
+ $('dashboardReport').textContent=typeof r.reportAt==='string'&&Number.isSafeInteger(r.reportAgeSeconds)&&r.reportAgeSeconds>=0?'上次状态报告 '+r.reportAt+' · '+r.reportAgeSeconds+' 秒前':'上次状态报告时间未知';
+ const frequency=typeof r.rxFrequency==='number'&&Number.isFinite(r.rxFrequency)&&r.rxFrequency>0?(r.rxFrequency/1e6).toFixed(5)+' MHz':'频率未知';
+ $('dashboardChannel').textContent=(typeof r.channel==='string'?r.channel:'信道未知')+' · '+frequency+(r.channelSource==='settingsA'?'（配置的 A 信道）':r.channelSource==='report'?'（上次报告的信道）':'');
+ $('dashboardGateway').textContent='APRS-IS '+flag(g.enabled,'已启用','已关闭')+' · '+(links[g.link]||'状态未知');
+ $('dashboardTotals').textContent='最近 24 小时 · RF 收到 '+count(h.receivedRf)+' · IS 收到 '+count(h.receivedIs)+' · 上行 '+count(h.toInternet)+' · 下行请求 '+count(h.toRfRequested)+' · 丢弃 '+count(h.dropped)+' · 故障 '+count(h.failures);
+ $('dashboardMessages').textContent='消息 · 等待 ACK '+count(m.waiting)+' · 已确认 '+count(m.acknowledged)+' · 拒收 '+count(m.rejected)+' · 超时 '+count(m.timedOut)+' · 取消 '+count(m.cancelled);
+ $('dashboardClients').textContent='远程连接 '+count(d.clientCount)+'（同一登录可包含多条连接）';
+ const labels={requestControl:'申请操作权',releaseControl:'释放操作权',handoffControl:'移交操作权',grantControl:'授予操作权',recallControl:'主机收回',disconnect:'断开连接',revokeLogin:'撤销登录',readOnlyRole:'设置只读角色',channel:'换信道',squelch:'设备静噪',satelliteStart:'接收多普勒开始',satelliteStop:'接收多普勒停止',volume:'调音量',scan:'扫描',aprsMessage:'APRS 消息请求',aprsPosition:'位置发送请求',pttStart:'PTT 请求',pttStop:'停止 PTT',pttRelease:'释放 PTT',invalidCommand:'未知命令',rawWrite:'原始写入',writeDenied:'权限拒绝'},results={accepted:'请求接受',denied:'拒绝',released:'释放'};
+ $('dashboardActivity').replaceChildren(...(Array.isArray(d.activity)?d.activity:[]).slice(0,5).map(e=>{const row=document.createElement('p');row.textContent=e.time+' · '+(e.clientId===0?'Windows':'客户端 #'+e.clientId)+' · '+(labels[e.action]||'操作')+' · '+(results[e.result]||'未知结果');return row;}));
+}
+function renderLinkDiagnostics(){
+ const d=state.linkDiagnostics||{},c=d.control||{},a=d.audio||{};
+ const n=v=>Number.isSafeInteger(v)&&v>=0?String(v):'未知',delay=v=>v?n(v.lastMs)+' / '+n(v.medianMs)+' / '+n(v.maxMs)+' ms（'+n(v.samples)+' 个样本）':'未知';
+ const reasons={disconnected:'控制通道已断开',unableToConnect:'控制通道连接失败',disposed:'电台已释放',writeFailed:'控制写入失败',readTimeout:'读取响应超时',playbackBacklog:'本机播放积压',playbackFeedFailed:'本机播放写入失败',audioStreamError:'音频接收流错误',audioConnectFailed:'音频通道连接失败',audioStartFailed:'音频初始化失败',audioDisconnected:'音频通道已断开'};
+ const lines=['控制通道 '+(c.connected===true?'已连接':c.connected===false?'已断开':'未知')+' · RX '+n(c.rxBytes)+' 字节 · 命令 '+n(c.commandsReceived),
+  '写入 最近/中位/最大 '+delay(c.writeDelay),'读取 最近/中位/最大 '+delay(c.replyDelay),
+  '待写 '+n(c.pendingWrites)+' · 读取队列 '+n(c.queuedReads)+' · TNC 分片 '+n(c.queuedTncFragments),
+  '写入失败 '+n(c.writeFailures)+' · 读取超时/重试/放弃 '+n(c.readTimeouts)+'/'+n(c.readRetries)+'/'+n(c.abandonedReads),
+  '同步跳过 '+n(c.framingSkippedBytes)+' 字节 · 最近控制接收 '+(c.lastRxAt||'未知'),
+  '本机音频 '+({stopped:'停止',connecting:'连接中',running:'运行'}[a.state]||'未知')+' · 积压/峰值 '+n(a.bufferedMs)+'/'+n(a.peakBufferedMs)+' ms',
+  '播放丢弃块/帧 '+n(a.droppedBlocks)+'/'+n(a.droppedFrames)+' · 播放错误 '+n(a.feedErrors),
+  '音频接收 '+n(a.receivedBytes)+' 字节 · 最近音频接收 '+(a.lastRxAt||'未知'),
+  '最近故障 '+(reasons[a.failureReason]||reasons[c.failureReason]||'无已记录原因')];
+ $('linkDiagnostics').replaceChildren(...lines.map(line=>{const p=document.createElement('p');p.textContent=line;return p;}));
+}
+function renderMedia(){
+ const media=state.media||{};const mode=typeof media.lowBandwidth==='boolean'?(media.lowBandwidth?'低带宽 · 8 kHz 单声道':'标准接收 · 原始采样率'):'等待电脑确认';
+ const bytes=Number.isSafeInteger(media.audioPayloadBytes)&&media.audioPayloadBytes>=0?(media.audioPayloadBytes/1024).toFixed(1)+' KiB':'未知';
+ const out=media.hostOutput||{},queued=Number.isSafeInteger(out.queuedPayloadBytes)?(out.queuedPayloadBytes/1024).toFixed(1)+' KiB':'未知';
+ $('mediaMetrics').textContent=mode+' · 本连接音频负载 '+bytes+' · 帧 '+(media.audioFrames??'未知')+' · 无效输入块 '+(media.skippedBlocks??'未知')+' · 主机待发 '+queued+' · 主机丢弃旧/积压音频块 '+(out.droppedAudioBlocks??'未知');
+}
+$('networkMode').onchange=()=>{lowBandwidth=$('networkMode').value==='low';mapTilesAllowed=!lowBandwidth;lastSpectrumDraw=lastMapDraw=lastStatePoll=0;mapDirty=true;stopPlayback();spectrumSamples.fill(0);spectrumCount=spectrumCursor=0;$('mapRetry').textContent=lowBandwidth?'加载地图瓦片':'重试地图';send({op:'media',lowBandwidth});requestMap();};
 async function context(){if(!audio){audio=new (window.AudioContext||window.webkitAudioContext)({sampleRate:32000});gain=audio.createGain();gain.gain.value=Number($('playback').value);gain.connect(audio.destination);}await audio.resume();return audio;}
 function playAudio(data){if(!listening||!audio||audio.state!=='running')return;const v=new DataView(data);if(v.byteLength<6||v.getUint8(0)!==241)return;const n=v.getUint8(1),rate=v.getUint16(2,true);if(n<1||n>2||rate<8000||rate>48000)return;const frames=Math.floor((v.byteLength-4)/(2*n));if(!frames)return;const b=audio.createBuffer(n,frames,rate);for(let ch=0;ch<n;ch++){const a=b.getChannelData(ch);for(let i=0;i<frames;i++)a[i]=v.getInt16(4+(i*n+ch)*2,true)/32768;}
- const now=audio.currentTime;if(nextAudio<now||nextAudio>now+.5)nextAudio=now+.12;const source=audio.createBufferSource();source.buffer=b;source.connect(gain);source.start(nextAudio);nextAudio+=frames/rate;
+ feedSpectrum(b,rate);const now=audio.currentTime;if(nextAudio<now||nextAudio>now+.5||scheduledAudio.size>=32){if(scheduledAudio.size){audioResets++;stopPlayback();}nextAudio=now+Math.max(.08,Math.min(.3,(Number($('audioBuffer').value)||120)/1000));}const source=audio.createBufferSource();source.buffer=b;source.connect(gain);scheduledAudio.add(source);source.onended=()=>{scheduledAudio.delete(source);source.disconnect();};source.start(nextAudio);nextAudio+=frames/rate;
 }
 async function prepareMic(){const ctx=await context();if(!pressed)return false;if(micStream)return true;if(!window.isSecureContext||!navigator.mediaDevices)throw Error('麦克风需要 HTTPS');const generation=++micGeneration;
  const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});if(!pressed||generation!==micGeneration){stream.getTracks().forEach(t=>t.stop());return false;}micStream=stream;micSource=ctx.createMediaStreamSource(micStream);micNode=ctx.createScriptProcessor(2048,1,1);micMute=ctx.createGain();micMute.gain.value=0;micSource.connect(micNode);micNode.connect(micMute);micMute.connect(ctx.destination);
  micNode.onaudioprocess=event=>{if(!transmitting||!pressed||socket.readyState!==WebSocket.OPEN)return;if(socket.bufferedAmount>32768){stopPtt();notice('网络发送积压，已停止发射。');return;}const input=event.inputBuffer.getChannelData(0);const step=ctx.sampleRate/32000;const values=[];for(;micPosition<input.length;micPosition+=step){const j=Math.floor(micPosition);const fraction=micPosition-j;values.push(input[j]*(1-fraction)+(input[Math.min(j+1,input.length-1)]||0)*fraction);}micPosition-=input.length;const frame=new ArrayBuffer(4+values.length*2);const view=new DataView(frame);view.setUint8(0,242);view.setUint8(1,1);view.setUint16(2,32000,true);values.forEach((x,i)=>view.setInt16(4+i*2,Math.max(-32768,Math.min(32767,Math.round(x*32767))),true));socket.send(frame);};
 return true;}
-$('ptt').addEventListener('pointerdown',async event=>{event.preventDefault();if(pressed)return;pressed=true;$('ptt').setPointerCapture(event.pointerId);try{if(!await prepareMic()||!pressed)return;micPosition=0;send({op:'pttStart'});}catch(error){stopPtt();notice('麦克风失败：'+error.message);}});
+function stopMicTest(label='已停止本机测试；未上传或保存声音。'){
+ const hadSession=micTestBusy;micTestGeneration++;micTestBusy=false;clearTimeout(micTestTimer);micTestTimer=null;
+ if(micTestStream)micTestStream.getTracks().forEach(t=>t.stop());if(micTestNode){micTestNode.onaudioprocess=null;micTestNode.disconnect();}if(micTestSource)micTestSource.disconnect();if(micTestMute)micTestMute.disconnect();micTestStream=micTestNode=micTestSource=micTestMute=null;
+ $('micTestStop').disabled=true;if(hadSession)$('micTestStatus').textContent=label;render();
+}
+$('micTestStop').onclick=()=>stopMicTest();
+$('micTest').onclick=async()=>{
+ if(micTestBusy||pressed||transmitting||micStream||document.hidden)return;
+ if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){$('micTestStatus').textContent='麦克风测试需要 HTTPS 和浏览器支持。';return;}
+ micTestBusy=true;const generation=++micTestGeneration;$('micTestStop').disabled=false;$('micTestStatus').textContent='等待本机麦克风许可…';render();
+ micTestTimer=setTimeout(()=>stopMicTest('许可等待超时；迟到的麦克风会立即关闭。'),15000);
+ try{
+  const ctx=await context();if(generation!==micTestGeneration||!micTestBusy)return;
+  const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
+  if(generation!==micTestGeneration||!micTestBusy||document.hidden){stream.getTracks().forEach(t=>t.stop());return;}
+  micTestStream=stream;micTestSource=ctx.createMediaStreamSource(stream);micTestNode=ctx.createScriptProcessor(2048,1,1);micTestMute=ctx.createGain();micTestMute.gain.value=0;micTestSource.connect(micTestNode);micTestNode.connect(micTestMute);micTestMute.connect(ctx.destination);
+  clearTimeout(micTestTimer);micTestTimer=setTimeout(()=>stopMicTest('10 秒测试完成；未上传或保存声音。'),10000);
+  $('micTestStatus').textContent='本机测量中；此时 PTT 不可用。';
+  let meterAt=0;micTestNode.onaudioprocess=event=>{
+   if(generation!==micTestGeneration||!micTestBusy||document.hidden||Date.now()-meterAt<100)return;meterAt=Date.now();
+   const samples=event.inputBuffer.getChannelData(0);let peak=0,sum=0,clips=0;
+   for(let i=0;i<Math.min(samples.length,2048);i++){const value=Number.isFinite(samples[i])?samples[i]:0;peak=Math.max(peak,Math.abs(value));sum+=value*value;if(Math.abs(value)>=.999)clips++;}
+   const count=Math.min(samples.length,2048),rms=count?Math.sqrt(sum/count):0;
+   $('micTestStatus').textContent='本机输入 '+ctx.sampleRate+' Hz · 峰值 '+(Math.min(1,peak)*100).toFixed(0)+'% · RMS '+(Math.min(1,rms)*100).toFixed(0)+'% · 当前块削波 '+clips+'；未上传。';
+  };
+ }catch(_){if(generation===micTestGeneration)stopMicTest('麦克风不可用或许可被拒绝；未发射。');}
+};
+$('ptt').addEventListener('pointerdown',async event=>{event.preventDefault();if(pressed||micTestBusy||$('ptt').disabled)return;pressed=true;$('ptt').setPointerCapture(event.pointerId);try{if(!await prepareMic()||!pressed)return;micPosition=0;send({op:'pttStart'});}catch(error){stopPtt();notice('麦克风失败：'+error.message);}});
 for(const name of ['pointerup','pointercancel','lostpointercapture'])$('ptt').addEventListener(name,()=>stopPtt());
-window.addEventListener('blur',stopPtt);document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPtt();});window.addEventListener('pagehide',()=>{stopPtt();if(micStream)micStream.getTracks().forEach(t=>t.stop());});
+window.addEventListener('blur',()=>{stopMicTest();stopPtt();cancelPositionPreview();});document.addEventListener('visibilitychange',()=>{if(document.hidden){stopMicTest();stopPtt();cancelPositionPreview();positionGeneration++;}});window.addEventListener('pagehide',()=>{stopMicTest();stopPtt();cancelPositionPreview();positionGeneration++;if(micStream)micStream.getTracks().forEach(t=>t.stop());});
 $('channel').onchange=()=>send({op:'channel',value:Number($('channel').value),vfo:'A'});
 $('scan').onclick=()=>send({op:'scan',value:!state.settings?.scan});
+let satelliteSignature='';
+function satelliteSelection(){const sat=(state.satellite?.catalog||[]).find(s=>String(s.id)===$('satellite').value);return {sat,usage:sat?.usages?.find(u=>String(u.index)===$('satelliteUsage').value)};}
+function updateSatelliteUsages(){const sat=satelliteSelection().sat;$('satelliteUsage').replaceChildren(...(sat?.usages||[]).map(u=>{const o=document.createElement('option');o.value=String(u.index);o.textContent=u.name+' · '+(u.downlinkHz/1e6).toFixed(5)+' MHz';return o;}));$('satelliteUsage').value=String(sat?.usages?.[0]?.index??'');}
+function renderSatellite(control){const st=state.satellite||{},signature=JSON.stringify(st.catalog||[]);if(signature!==satelliteSignature){satelliteSignature=signature;const previous=$('satellite').value;$('satellite').replaceChildren(...(st.catalog||[]).map(s=>{const o=document.createElement('option');o.value=String(s.id);o.textContent=s.name;return o;}));$('satellite').value=(st.catalog||[]).some(s=>String(s.id)===previous)?previous:String(st.catalog?.[0]?.id||'');updateSatelliteUsages();}
+ const {sat,usage}=satelliteSelection(),position=(st.positions||[]).find(p=>p.id===sat?.id);$('satelliteStatus').textContent=st.enabled?(st.observerKnown?'主机观测位置已就绪':'请在 Windows 配置观测位置'):'请在 Windows 开启卫星支持';
+ let preview=usage?'下行 '+(usage.downlinkHz/1e6).toFixed(5)+' MHz':'请选择卫星模式';if(position&&usage){const rx=Math.round(usage.downlinkHz*(1-position.rangeRateKmS/299792.458));preview+=' · 修正 '+(rx/1e6).toFixed(5)+' MHz · 方位 '+position.azimuthDeg.toFixed(1)+'° · 仰角 '+position.elevationDeg.toFixed(1)+'° · '+(position.fresh?'实时':'数据已过期');}$('satellitePreview').textContent=preview;
+ const own=st.tracking?.remoteClientId===clientId;$('satelliteStart').disabled=!control||!state.connected||state.txOwner!=null||!st.enabled||!st.observerKnown||!position?.fresh||!usage;$('satelliteStop').disabled=!control||!own;$('channel').disabled=$('channel').disabled||!!st.tracking;$('scan').disabled=$('scan').disabled||!!st.tracking;
+ if(st.tracking)$('satelliteStatus').textContent+=' · 跟踪 '+(st.tracking.name||'主机卫星任务')+'（接收）';
+}
+$('satellite').onchange=()=>{updateSatelliteUsages();render();};$('satelliteUsage').onchange=()=>render();
+$('satelliteStart').onclick=()=>{if(!$('satelliteStart').disabled)send({op:'satelliteStart',noradId:Number($('satellite').value),usageIndex:Number($('satelliteUsage').value)});};
+$('satelliteStop').onclick=()=>send({op:'satelliteStop'});
+
+$('squelch').onchange=()=>send({op:'squelch',value:Number($('squelch').value)});
 $('volume').onchange=()=>send({op:'volume',value:Number($('volume').value)});
 $('playback').oninput=()=>{if(gain)gain.gain.value=Number($('playback').value);};
-$('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio)gain.gain.value=0;else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
+$('spectrumPause').onclick=()=>{spectrumPaused=!spectrumPaused;$('spectrumPause').textContent=spectrumPaused?'继续图形':'暂停图形';};
+$('spectrumRange').onchange=()=>{spectrumDirty=true;};$('spectrumGain').oninput=()=>{spectrumDirty=true;};
+function mapZoomBy(delta){mapZoom=Math.max(2,Math.min(18,mapZoom+delta));mapDirty=true;requestMap();}
+$('mapZoomIn').onclick=()=>mapZoomBy(1);$('mapZoomOut').onclick=()=>mapZoomBy(-1);
+function resetMapTiles(){mapTiles.clear();mapTileGeneration++;mapTileErrors=0;mapDirty=true;}
+$('mapSource').onchange=()=>{mapSourceId=$('mapSource').value;mapTilesAllowed=!lowBandwidth;resetMapTiles();};$('mapRetry').onclick=()=>{mapTilesAllowed=true;resetMapTiles();};$('mapSearch').oninput=updateMapState;
+$('stationMap').addEventListener('pointerdown',e=>{mapDrag={x:e.clientX,y:e.clientY,c:mapProject(mapLat,mapLon,mapZoom)};mapDragged=false;$('stationMap').setPointerCapture(e.pointerId);});
+$('stationMap').addEventListener('pointermove',e=>{if(!mapDrag)return;const r=$('stationMap').getBoundingClientRect(),dx=(e.clientX-mapDrag.x)*512/r.width,dy=(e.clientY-mapDrag.y)*320/r.height;if(Math.abs(dx)+Math.abs(dy)>5)mapDragged=true;[mapLat,mapLon]=mapUnproject(mapDrag.c[0]-dx,mapDrag.c[1]-dy,mapZoom);mapDirty=true;});
+$('stationMap').addEventListener('pointerup',e=>{mapDrag=null;if(!mapDragged){const r=$('stationMap').getBoundingClientRect(),x=(e.clientX-r.left)*512/r.width,y=(e.clientY-r.top)*320/r.height;const hit=mapHits.find(h=>Math.hypot(h.x-x,h.y-y)<20);if(hit){const s=hit.items[0].station;mapLat=s.lat;mapLon=s.lon;if(hit.items.length>1)mapZoomBy(1);else{mapSelected=s.call;$('aprsDestination').value=s.call.replace(/-0$/,'');notice('已选择 '+s.call+'，可发送 APRS 消息。');}}}mapDirty=true;requestMap();});
+$('stationMap').addEventListener('pointercancel',()=>{mapDrag=null;});setInterval(drawMap,500);
+setInterval(drawSpectrum,100);
+$('listen').onclick=async()=>{try{await context();listening=!listening;send(listening?'audioon':'audiooff');$('listen').textContent=listening?'停止收听':'开启收听';if(!listening&&audio){gain.gain.value=0;stopPlayback();}else if(gain)gain.gain.value=Number($('playback').value);}catch(error){notice(error.message);}};
 $('logout').onclick=async()=>{stopPtt();clearTimeout(retry);await fetch('/logout',{method:'POST'});location.href='/login';};
-setInterval(()=>{if(!document.hidden)send({op:'state'});},2000);open();
+$('aprsSearch').oninput=renderMessages;
+$('aprsRead').onclick=()=>{aprsReadThrough=Math.max(aprsReadThrough,...(state.aprsMessages||[]).map(e=>e.id));renderMessages();};
+$('positionAcquire').onclick=()=>{cancelPositionPreview();positionDraft=null;if(!window.isSecureContext||!navigator.geolocation){render();notice('手机定位需要 HTTPS 和浏览器定位权限。');return;}const generation=++positionGeneration;render();$('positionPreview').textContent='等待定位授权…';navigator.geolocation.getCurrentPosition(p=>{if(generation!==positionGeneration||document.hidden)return;positionDraft={latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy,capturedAt:new Date(p.timestamp).toISOString(),radio:false};render();},error=>{if(generation===positionGeneration){positionDraft=null;notice('定位失败：'+error.message);render();}},{enableHighAccuracy:true,timeout:15000,maximumAge:0});};
+$('positionRadio').onclick=()=>{cancelPositionPreview();positionGeneration++;const p=state.radioPosition;if(!p||!p.locked){positionDraft=null;notice('电台尚无锁定位置。');render();return;}positionDraft={latitude:p.latitude,longitude:p.longitude,accuracy:p.accuracy>0?p.accuracy:null,capturedAt:p.receivedTime,radio:true};render();};
+$('positionSend').onclick=()=>{if($('positionSend').disabled||!positionReady())return;pendingPosition={position:{...positionDraft},expires:Date.now()+30000};$('positionConfirmText').textContent='将通过电台提交'+(positionDraft.radio?'电台':'手机')+'位置：'+positionDraft.latitude.toFixed(5)+', '+positionDraft.longitude.toFixed(5)+'。预览 30 秒后失效，确认前不会发送。';$('positionConfirmation').hidden=false;$('positionConfirm').disabled=!canConfirmPosition();};
+$('positionCancel').onclick=cancelPositionPreview;
+$('positionConfirm').onclick=()=>{if($('positionConfirm').disabled)return;if(!canConfirmPosition()){cancelPositionPreview();notice('定位或权限已变化，请重新预览。');return;}const p=pendingPosition.position;cancelPositionPreview();send({op:'aprsPosition',source:p.radio?'radio':'phone',position:p,confirmed:true});notice('已提交位置发送请求，请查看电脑处理结果。');};
+function renderShortcuts(){const value=state.aprsShortcuts||{},signature=JSON.stringify(value);if(signature===shortcutsSignature)return;shortcutsSignature=signature;
+ const options=(entries,placeholder)=>{const start=document.createElement('option');start.value='';start.textContent=placeholder;return [start,...entries];};
+ $('aprsFavorite').replaceChildren(...options((value.favorites||[]).slice(0,20).map(call=>{const option=document.createElement('option');option.value=call;option.textContent=call;return option;}),'选择呼号（仅填写草稿）'));
+ $('aprsTemplate').replaceChildren(...options((value.templates||[]).slice(0,16).map((t,i)=>{const option=document.createElement('option');option.value=String(i);option.textContent=t.name;return option;}),'选择模板（仅填写草稿）'));
+}
+function cancelAprsPreview(){pendingAprs=null;$('aprsConfirmation').hidden=true;$('aprsConfirm').disabled=true;}
+$('aprsFavorite').onchange=()=>{const call=$('aprsFavorite').value;if((state.aprsShortcuts?.favorites||[]).includes(call)){$('aprsDestination').value=call;cancelAprsPreview();}};
+$('aprsTemplate').onchange=()=>{const index=$('aprsTemplate').value;if(index==='')return;const item=(state.aprsShortcuts?.templates||[])[Number(index)];if(item){$('aprsText').value=item.text;cancelAprsPreview();}};
+$('aprsDestination').oninput=cancelAprsPreview;$('aprsText').oninput=cancelAprsPreview;$('aprsCancel').onclick=cancelAprsPreview;
+$('aprsSend').addEventListener('click',()=>{if($('aprsSend').disabled)return;const destination=$('aprsDestination').value.trim().toUpperCase(),text=$('aprsText').value;
+ if(!/^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$/.test(destination)||destination.length>9||!text.trim()||text.length>67||!(/^[\x20-\x7e]+$/).test(text)||/[{|~]/.test(text)){cancelAprsPreview();notice('请检查目标呼号与 1–67 个 ASCII 字符消息，不能含 { | ~。');return;}
+ pendingAprs={destination,text,expires:Date.now()+30000};$('aprsPreview').textContent='将通过电台提交给 '+destination+'：\n'+text+'\n确认前不会发送；预览 30 秒后失效。';$('aprsConfirmation').hidden=false;$('aprsConfirm').disabled=false;
+});
+$('aprsConfirm').onclick=()=>{if($('aprsConfirm').disabled||!pendingAprs)return;const draft=pendingAprs;if(Date.now()>draft.expires||state.controlOwner!==clientId||state.readOnly||state.emergencyStopped||!state.connected||!state.aprsAllowed||state.txOwner!=null||draft.destination!==$('aprsDestination').value.trim().toUpperCase()||draft.text!==$('aprsText').value){cancelAprsPreview();notice('草稿或权限已变化，请重新预览。');return;}cancelAprsPreview();send({op:'aprsMessage',destination:draft.destination,text:draft.text});notice('已提交请求，等待电脑处理；这不代表已发射或收到 ACK。');};
+setInterval(()=>{if(!document.hidden&&Date.now()-lastStatePoll>=(lowBandwidth?8000:2000)){lastStatePoll=Date.now();requestMap();}},500);open();
 </script></body></html>''';

@@ -34,6 +34,8 @@ import 'handlers/software_beacon_handler.dart';
 import 'handlers/airplane_handler.dart';
 import 'handlers/satellite_handler.dart';
 import 'handlers/comms_handler.dart';
+import 'handlers/rolling_voice_handler_stub.dart'
+    if (dart.library.io) 'handlers/rolling_voice_handler.dart';
 import 'handlers/morse_key_handler.dart';
 import 'handlers/bbs_handler.dart';
 import 'handlers/agwpe_handler.dart';
@@ -428,8 +430,9 @@ Future<void> _startApp(List<String> args) async {
   }
 
   // Register the software beacon handler so that, when an interval is set, the
-  // app periodically transmits its own APRS position/status beacon over the
-  // selected radio's "APRS" channel and gates it to the Internet (APRS-IS).
+  // host can explicitly approve a periodic APRS position/status task on the
+  // selected radio's APRS channel or a verified Internet-only destination.
+  // Startup and configuration edits leave the task paused.
   // Skipped on the hosted web build: the desktop host emits the beacon, so a
   // second timer here would double-beacon over the shared radio.
   if (!HostBridge.isHosted) {
@@ -482,6 +485,8 @@ Future<void> _startApp(List<String> args) async {
   final commsHandler = CommsHandler();
   commsHandler.init();
   DataBroker.addDataHandler('CommsHandler', commsHandler);
+  final rollingVoiceHandler = RollingVoiceHandler()..init();
+  DataBroker.addDataHandler('RollingVoiceHandler', rollingVoiceHandler);
 
   // Register the morse-key handler so a USB morse key (straight or paddle) can
   // be keyed in real time, rendered to a 700 Hz tone, and sent locally (test)
@@ -2268,10 +2273,12 @@ class _MainFormState extends State<MainForm>
       _regionCount = (info is Map ? info['regionCount'] as int? : null) ?? 0;
       _supportRadio =
           (info is Map ? info['supportRadio'] as bool? : null) ?? false;
-      _allChannelsLoaded = (DataBroker.getValueDynamic(
+      _allChannelsLoaded =
+          (DataBroker.getValueDynamic(
                 _currentRadioDeviceId,
                 'AllChannelsLoaded',
-              ) as bool?) ??
+              )
+              as bool?) ??
           false;
       final htStatus = DataBroker.getValueDynamic(
         _currentRadioDeviceId,

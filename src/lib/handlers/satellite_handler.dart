@@ -73,6 +73,8 @@ class SatelliteHandler {
   int? _trackRadioDeviceId;
   int? _trackNoradId;
   int _trackUsageIndex = 0;
+  bool _trackReceiveOnly = false;
+  List<SatellitePosition> _remotePositions = const [];
 
   // Cached next-pass AOS for the tracked bird, so the "Next Pass" countdown does
   // not run an SGP4 pass search every tick. Recomputed once it elapses.
@@ -166,12 +168,16 @@ class SatelliteHandler {
         (_broker.getValue<num>(_settingsDeviceId, 'SatMinElevationDeg', 10) ??
                 10)
             .toDouble();
-    _selectedNoradId =
-        _broker.getValue<int>(_settingsDeviceId, 'SelectedSatelliteId', null);
+    _selectedNoradId = _broker.getValue<int>(
+      _settingsDeviceId,
+      'SelectedSatelliteId',
+      null,
+    );
 
     // Satellite tracking is opt-in; do no work (and no network fetch) until the
     // user enables it in the Application settings.
-    if ((_broker.getValue<int>(_settingsDeviceId, 'SatelliteSupport', 0) ?? 0) ==
+    if ((_broker.getValue<int>(_settingsDeviceId, 'SatelliteSupport', 0) ??
+            0) ==
         1) {
       await _enable();
     }
@@ -239,12 +245,14 @@ class SatelliteHandler {
       final radioId = (data['radioDeviceId'] as num?)?.toInt();
       final norad = (data['noradId'] as num?)?.toInt();
       if (radioId == null || norad == null) return;
+      _trackReceiveOnly = data['receiveOnly'] == true;
       _trackRadioDeviceId = radioId;
       _trackNoradId = norad;
       _trackUsageIndex = (data['usageIndex'] as num?)?.toInt() ?? 0;
       _trackNextAosUtc = null; // force a fresh next-pass computation
       _sendTrackUpdate(); // push immediately so the radio tunes without delay
     } else {
+      _trackReceiveOnly = false;
       _trackRadioDeviceId = null;
       _trackNoradId = null;
       _trackUsageIndex = 0;
@@ -445,8 +453,10 @@ class SatelliteHandler {
       if (liveTle == null) continue;
       final usages = transponders[noradId];
       if (usages == null || !usages.any((t) => t.isWorkableFm)) continue;
-      _catalog[noradId] =
-          SatelliteInfo(tle: liveTle, transponders: _orderUsages(usages));
+      _catalog[noradId] = SatelliteInfo(
+        tle: liveTle,
+        transponders: _orderUsages(usages),
+      );
     }
   }
 
@@ -481,8 +491,16 @@ class SatelliteHandler {
   }
 
   bool _hasManualObserver() {
-    final lat = _broker.getValue<num>(_settingsDeviceId, 'SatObserverLat', null);
-    final lon = _broker.getValue<num>(_settingsDeviceId, 'SatObserverLon', null);
+    final lat = _broker.getValue<num>(
+      _settingsDeviceId,
+      'SatObserverLat',
+      null,
+    );
+    final lon = _broker.getValue<num>(
+      _settingsDeviceId,
+      'SatObserverLon',
+      null,
+    );
     return lat != null && lon != null && (lat != 0 || lon != 0);
   }
 
@@ -502,15 +520,22 @@ class SatelliteHandler {
     double? lat;
     double? lon;
     double altM = 0;
-    final mLat =
-        _broker.getValue<num>(_settingsDeviceId, 'SatObserverLat', null);
-    final mLon =
-        _broker.getValue<num>(_settingsDeviceId, 'SatObserverLon', null);
+    final mLat = _broker.getValue<num>(
+      _settingsDeviceId,
+      'SatObserverLat',
+      null,
+    );
+    final mLon = _broker.getValue<num>(
+      _settingsDeviceId,
+      'SatObserverLon',
+      null,
+    );
     if (mLat != null && mLon != null && (mLat != 0 || mLon != 0)) {
       lat = mLat.toDouble();
       lon = mLon.toDouble();
-      altM = (_broker.getValue<num>(_settingsDeviceId, 'SatObserverAltM', 0) ?? 0)
-          .toDouble();
+      altM =
+          (_broker.getValue<num>(_settingsDeviceId, 'SatObserverAltM', 0) ?? 0)
+              .toDouble();
     } else {
       final gps = _broker.getValue<GpsData>(_gpsDeviceId, 'GpsData', null);
       if (gps != null &&
@@ -614,6 +639,8 @@ class SatelliteHandler {
       store: false,
     );
 
+    _remotePositions = positions;
+    _publishRemoteState();
     // Steer a radio locked in Satellite mode toward the tracked bird.
     _sendTrackUpdate();
 
@@ -650,7 +677,7 @@ class SatelliteHandler {
     final rx = usage.correctedDownlinkHz(rate) ?? usage.downlinkHz;
     // Receive-only usages have no uplink; send 0 as the TX frequency to test
     // whether the radio accepts it (rather than parking TX on the RX freq).
-    final tx = usage.correctedUplinkHz(rate) ?? 0;
+    final tx = _trackReceiveOnly ? 0 : usage.correctedUplinkHz(rate) ?? 0;
     if (rx == null) return;
 
     // Seconds until the next pass (AOS) for the radio's "Next Pass" countdown.
@@ -673,8 +700,9 @@ class SatelliteHandler {
         }
       }
       final aos = _trackNextAosUtc;
-      secondsToNextPass =
-          aos == null ? 0 : aos.difference(now).inSeconds.clamp(0, 0xFFFF);
+      secondsToNextPass = aos == null
+          ? 0
+          : aos.difference(now).inSeconds.clamp(0, 0xFFFF);
     }
 
     _broker.dispatch(
@@ -684,7 +712,7 @@ class SatelliteHandler {
         name: info.name,
         rxFreqHz: rx,
         txFreqHz: tx,
-        txCtcssHz: usage.ctcssHz,
+        txCtcssHz: _trackReceiveOnly ? null : usage.ctcssHz,
         azimuthDeg: look.azimuthDeg,
         elevationDeg: look.elevationDeg,
         rangeKm: look.rangeKm,
@@ -731,7 +759,9 @@ class SatelliteHandler {
         );
       }
     } catch (e) {
-      debugPrint('SatelliteHandler: pass prediction failed for ${info.name}: $e');
+      debugPrint(
+        'SatelliteHandler: pass prediction failed for ${info.name}: $e',
+      );
     }
 
     _lastSelectedPasses = passes;
@@ -822,9 +852,55 @@ class SatelliteHandler {
     );
   }
 
+  void _publishRemoteState() {
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'SatelliteRemoteState',
+      store: true,
+      data: {
+        'enabled': _enabled,
+        'observerKnown': _enabled && _lastObserverKnown,
+        'catalog': _catalog.values
+            .take(128)
+            .map(
+              (s) => {
+                'id': s.noradId,
+                'name': s.name,
+                'usages': [
+                  for (var i = 0; i < s.transponders.length && i < 32; i++)
+                    if (s.transponders[i].downlinkHz != null &&
+                        s.transponders[i].mode.toUpperCase().contains('FM'))
+                      {
+                        'index': i,
+                        'name': s.transponders[i].name,
+                        'downlinkHz': s.transponders[i].downlinkHz,
+                      },
+                ],
+              },
+            )
+            .toList(),
+        'positions': _enabled
+            ? _remotePositions
+                  .take(128)
+                  .map(
+                    (p) => {
+                      'id': p.noradId,
+                      'utc': p.utc.toIso8601String(),
+                      'azimuthDeg': p.azimuthDeg,
+                      'elevationDeg': p.elevationDeg,
+                      'rangeRateKmS': p.rangeRateKmS,
+                    },
+                  )
+                  .toList()
+            : [],
+      },
+    );
+  }
+
   void _publishCatalog() {
     final list = _catalog.values.toList(growable: false);
     _lastCatalog = list;
+    _publishRemoteState();
     _broker.dispatch(
       deviceId: _settingsDeviceId,
       name: 'SatelliteCatalog',
@@ -835,6 +911,7 @@ class SatelliteHandler {
 
   void _publishObserverKnown(bool known) {
     _lastObserverKnown = known;
+    _publishRemoteState();
     _broker.dispatch(
       deviceId: _settingsDeviceId,
       name: 'SatelliteObserverKnown',

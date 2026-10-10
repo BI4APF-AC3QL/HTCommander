@@ -10,23 +10,32 @@ Linux, Android, iOS) using the platform application-support directory.
 */
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show File, FileMode, Platform;
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'diagnostic_log.dart';
 
 /// Appends timestamped diagnostics to `htcommander_crash.log` in the platform
 /// application-support directory.
 ///
 /// The logger is safe to use before [init] completes: messages logged early are
 /// buffered in memory and flushed to disk as soon as the file path resolves, so
-/// a crash during startup initialization is still captured. All file writes are
-/// synchronous and flushed so nothing is lost if the process aborts immediately
-/// afterwards.
+/// early diagnostics can be retained. Writes are asynchronous, serialized and
+/// bounded to keep disk stalls off the UI. Abrupt process termination may lose
+/// the most recent pending records.
 class CrashLogger {
-  CrashLogger._();
+  CrashLogger._() : _maxFileBytes = _maxBytes;
+
+  /// Isolated file writer used by regression tests, never changes the singleton.
+  CrashLogger.forTesting(File file, {int maxBytes = _maxBytes})
+    : _file = file,
+      _maxFileBytes = maxBytes {
+    if (maxBytes < 1024) throw ArgumentError('Crash log limit too small');
+  }
 
   /// The single shared instance.
   static final CrashLogger instance = CrashLogger._();
@@ -42,12 +51,30 @@ class CrashLogger {
 
   File? _file;
   bool _initialized = false;
+  final int _maxFileBytes;
+  Future<void> _writing = Future<void>.value();
+  int _queued = 0;
+  int droppedRecords = 0;
+  Future<void> flush() => _writing;
 
   /// Lines logged before the on-disk path resolved, flushed on [init].
   final List<String> _pending = <String>[];
 
   /// The resolved crash log file path, or null on web / before [init].
   String? get filePath => _file?.path;
+
+  Future<String> _readSafeTail(File file) async {
+    final reader = await file.open();
+    try {
+      final length = await reader.length();
+      await reader.setPosition(length > 32768 ? length - 32768 : 0);
+      return DiagnosticLog.safeCrashTail(
+        utf8.decode(await reader.read(32768), allowMalformed: true),
+      );
+    } finally {
+      await reader.close();
+    }
+  }
 
   /// Returns the last [maxChars] characters of the crash log file (trimmed to a
   /// whole-line boundary), or an empty string if the file is missing/unreadable.
@@ -57,7 +84,9 @@ class CrashLogger {
     if (file == null) return '';
     try {
       if (!await file.exists()) return '';
-      String content = await file.readAsString();
+      await flush();
+      String content = await _readSafeTail(file);
+      maxChars = maxChars.clamp(1, 32768);
       if (content.length > maxChars) {
         content = content.substring(content.length - maxChars);
         final firstNewline = content.indexOf('\n');
@@ -81,7 +110,8 @@ class CrashLogger {
     if (file == null) return '';
     try {
       if (!await file.exists()) return '';
-      final lines = (await file.readAsString()).split('\n');
+      await flush();
+      final lines = (await _readSafeTail(file)).split('\n');
       var errorIndex = -1;
       for (var i = lines.length - 1; i >= 0; i--) {
         if (lines[i].contains('[ERROR]')) {
@@ -92,9 +122,11 @@ class CrashLogger {
       if (errorIndex < 0) return '';
       final timestamped = RegExp(r'^\[\d{4}-\d\d-\d\d');
       final out = <String>[lines[errorIndex]];
-      for (var i = errorIndex + 1;
-          i < lines.length && out.length < maxLines;
-          i++) {
+      for (
+        var i = errorIndex + 1;
+        i < lines.length && out.length < maxLines;
+        i++
+      ) {
         final line = lines[i];
         // Stack frames after the first are not timestamped; a new timestamped
         // line that is not a frame marks the start of an unrelated log entry.
@@ -125,7 +157,7 @@ class CrashLogger {
     }
   }
 
-  /// Resolves the log file, rotates it if oversized, flushes any buffered lines
+  /// Resolves the log file, archives the previous launch, flushes buffered lines
   /// and writes a startup banner. Never throws: diagnostics logging must not be
   /// able to crash the app.
   Future<void> init() async {
@@ -135,13 +167,14 @@ class CrashLogger {
       final dir = await getApplicationSupportDirectory();
       final file = File('${dir.path}${Platform.pathSeparator}$_fileName');
       try {
-        if (await file.exists() && await file.length() > _maxBytes) {
+        if (await file.exists()) {
           final old = File('${file.path}.1');
           if (await old.exists()) await old.delete();
           await file.rename(old.path);
         }
       } catch (_) {
-        // Rotation is best-effort; fall through and keep using the file.
+        // Never append to a legacy raw file if archiving failed.
+        return;
       }
       _file = file;
 
@@ -151,11 +184,7 @@ class CrashLogger {
       for (final line in buffered) {
         _writeLine(line);
       }
-      String version = 'unknown';
-      try {
-        version = (await PackageInfo.fromPlatform()).version;
-      } catch (_) {}
-      _writeLine('=== HTCommander $version started on $_platformLabel ===');
+      _write('[INFO] startup');
     } catch (_) {
       // If even the application-support directory is unavailable there is
       // nowhere to log; drop silently rather than crash.
@@ -164,14 +193,11 @@ class CrashLogger {
 
   /// Records an error (with optional stack trace) to the log file.
   void logError(String message, [Object? error, StackTrace? stack]) {
-    final buffer = StringBuffer('[ERROR] $message');
-    if (error != null) buffer.write(': $error');
-    _write(buffer.toString());
-    if (stack != null) _write(stack.toString());
+    _write(DiagnosticLog.crashRecord(message, error, stack));
   }
 
   /// Records an informational line to the log file.
-  void logInfo(String message) => _write(message);
+  void logInfo(String message) => _write('[INFO] applicationDiagnostic');
 
   /// Builds a pre-filled GitHub "New Issue" URL for a report. The body embeds
   /// the app version, platform and the most recent log (the on-disk crash log
@@ -187,7 +213,7 @@ class CrashLogger {
     String promptHeader = '**What happened / what were you doing?**',
     String promptHint = '_(please describe the steps that led to the crash)_',
     String attachNote =
-        'Please attach the full crash log file to this issue (drag & drop).',
+        'Review the redacted current crash log before attaching. Older rotated logs may contain private data.',
     String? fallbackLog,
     int maxLogChars = 2000,
   }) async {
@@ -198,7 +224,7 @@ class CrashLogger {
 
     String logTail = await readTail(maxChars: maxLogChars);
     if (logTail.isEmpty && fallbackLog != null) {
-      logTail = fallbackLog.trimRight();
+      logTail = '[Legacy free-text diagnostic fallback omitted]';
       if (logTail.length > maxLogChars) {
         logTail = logTail.substring(logTail.length - maxLogChars);
       }
@@ -232,36 +258,48 @@ class CrashLogger {
         ..writeln('```')
         ..writeln();
     }
-    final path = filePath;
-    body.writeln(
-      '> $attachNote'
-      '${path != null ? '\n> It is located at: `$path`' : ''}',
-    );
+    body.writeln('> $attachNote');
 
-    final query = <String, String>{
-      'title': title,
-      'body': body.toString(),
-    };
+    final query = <String, String>{'title': title, 'body': body.toString()};
     if (label != null && label.isNotEmpty) query['labels'] = label;
 
     return Uri.https('github.com', '/$githubRepo/issues/new', query);
   }
 
   void _write(String message) {
-    final line = '[${DateTime.now().toIso8601String()}] $message';
+    final line = '[${DateTime.now().toUtc().toIso8601String()}] $message';
     _writeLine(line);
   }
 
   void _writeLine(String line) {
+    // Every caller passes a fixed metadata record. Never write arbitrary text.
     final file = _file;
     if (file == null) {
+      if (_pending.length == 64) _pending.removeAt(0);
       _pending.add(line);
       return;
     }
-    try {
-      file.writeAsStringSync('$line\n', mode: FileMode.append, flush: true);
-    } catch (_) {
-      // Never let diagnostics logging throw.
+    if (_queued >= 64) {
+      droppedRecords++;
+      return;
     }
+    _queued++;
+    _writing = _writing.then((_) async {
+      try {
+        final record =
+            '${line.length <= 2048 ? line : line.substring(0, 2048)}\n';
+        if (await file.exists() &&
+            await file.length() + record.length * 3 > _maxFileBytes) {
+          final old = File('${file.path}.1');
+          if (await old.exists()) await old.delete();
+          await file.rename(old.path);
+        }
+        await file.writeAsString(record, mode: FileMode.append, flush: true);
+      } catch (_) {
+        droppedRecords++;
+      } finally {
+        _queued--;
+      }
+    });
   }
 }

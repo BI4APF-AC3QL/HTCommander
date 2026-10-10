@@ -102,7 +102,12 @@ class BluetoothClassicMacOS {
               );
               break;
             case 'disconnected':
-              _logInfo('Control event disconnected for $address');
+              final reason = event['reason'];
+              if (reason == 'receive_queue_overflow') {
+                _logError('Control receive queue overloaded; connection ended');
+              } else {
+                _logInfo('Control event disconnected for $address');
+              }
               _connectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.disconnected,
@@ -154,7 +159,12 @@ class BluetoothClassicMacOS {
               );
               break;
             case 'disconnected':
-              _logInfo('Audio event disconnected for $address');
+              final reason = event['reason'];
+              if (reason == 'receive_queue_overflow') {
+                _logError('Audio receive queue overloaded; connection ended');
+              } else {
+                _logInfo('Audio event disconnected for $address');
+              }
               _audioConnectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.disconnected,

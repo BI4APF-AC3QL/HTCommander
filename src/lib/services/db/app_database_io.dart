@@ -221,17 +221,19 @@ class AppDatabase {
   /// import.
   @visibleForTesting
   static Future<AppDatabase> openInMemory() async {
+    return openForTesting(inMemoryDatabasePath);
+  }
+
+  /// Uses the production schema/WAL path with a caller-owned temporary file.
+  /// Allows close/reopen tests without accessing the user's application data.
+  @visibleForTesting
+  static Future<AppDatabase> openForTesting(String path) async {
+    if (_instance != null) {
+      throw StateError('Close the previous database first');
+    }
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
-    final db = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: _schemaVersion,
-        onCreate: (db, version) async {
-          await _createSchema(db);
-        },
-      ),
-    );
+    final db = await _openAt(path);
     final instance = AppDatabase._(db);
     _instance = instance;
     return instance;

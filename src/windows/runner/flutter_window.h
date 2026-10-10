@@ -7,9 +7,6 @@
 #include <memory>
 
 #include "win32_window.h"
-#include "bluetooth_classic_plugin.h"
-#include "pcm_player_plugin.h"
-#include "tts_plugin.h"
 
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
@@ -32,14 +29,7 @@ class FlutterWindow : public Win32Window {
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
 
-  // Native Bluetooth Classic plugin.
-  std::unique_ptr<BluetoothClassicPlugin> bluetooth_plugin_;
-
-  // Native Windows PCM playback plugin (waveOut).
-  std::unique_ptr<PcmPlayerPlugin> pcm_player_plugin_;
-
-  // Native Windows text-to-speech plugin (SAPI 5).
-  std::unique_ptr<TtsPlugin> tts_plugin_;
+  // App-specific native plugins belong to this controller's engine registrar.
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

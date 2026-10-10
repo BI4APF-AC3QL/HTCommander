@@ -14,6 +14,7 @@ import '../dialogs/raw_command_dialog.dart';
 import '../models/radio_models.dart';
 import '../services/bluetooth_service.dart';
 import '../services/crash_logger.dart';
+import '../services/diagnostic_log.dart';
 import '../services/data_broker_client.dart';
 import '../services/window_service.dart';
 
@@ -325,14 +326,18 @@ class _DebugTabState extends State<DebugTab>
       pos += 8 + size + (size & 1);
     }
     if (dataOffset < 0 || audioFormat != 1) return null;
-    if (dataOffset + dataLen > bytes.length) dataLen = bytes.length - dataOffset;
+    if (dataOffset + dataLen > bytes.length) {
+      dataLen = bytes.length - dataOffset;
+    }
     final pcm = Uint8List.sublistView(bytes, dataOffset, dataOffset + dataLen);
     return (pcm: pcm, sampleRate: sampleRate, channels: channels, bits: bits);
   }
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// Opens the raw command test dialog for the currently connected radio.
@@ -380,17 +385,14 @@ class _DebugTabState extends State<DebugTab>
   }
 
   Future<void> _onSaveToFile() async {
-    // Build the log content as text
-    final StringBuffer buffer = StringBuffer();
-    for (final entry in _logEntries) {
-      final timeStr = _formatTime(entry.time);
-      if (entry.isError) {
-        buffer.writeln('[$timeStr] [Error] ${entry.message}');
-      } else {
-        buffer.writeln('[$timeStr] ${entry.message}');
-      }
-    }
-    final logContent = buffer.toString();
+    final logContent = DiagnosticLog.export(
+      _logEntries.map(
+        (entry) => {
+          'time': entry.time.toUtc().toIso8601String(),
+          'isError': entry.isError,
+        },
+      ),
+    );
 
     // Generate filename with current date/time
     final now = DateTime.now();
@@ -398,7 +400,7 @@ class _DebugTabState extends State<DebugTab>
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-    final defaultFileName = 'debug_log_${dateStr}_$timeStr.txt';
+    final defaultFileName = 'debug_metadata_${dateStr}_$timeStr.json';
 
     // Show file save dialog
     String? outputPath;
@@ -573,7 +575,10 @@ class _DebugTabState extends State<DebugTab>
           height: menuItemHeight,
           padding: menuItemPadding,
           child: Row(
-            children: [const SizedBox(width: 20), Text(l10n.debugQueryDeviceNames)],
+            children: [
+              const SizedBox(width: 20),
+              Text(l10n.debugQueryDeviceNames),
+            ],
           ),
         ),
         PopupMenuItem<String>(
@@ -641,7 +646,9 @@ class _DebugTabState extends State<DebugTab>
           value: 'clear',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(children: [const SizedBox(width: 20), Text(l10n.tabClear)]),
+          child: Row(
+            children: [const SizedBox(width: 20), Text(l10n.tabClear)],
+          ),
         ),
         // macOS-only option to show built-in menus (skip on web)
         if (!kIsWeb && Platform.isMacOS) ...[

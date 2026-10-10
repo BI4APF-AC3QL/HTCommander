@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:record/record.dart' show InputDevice;
 
 import '../l10n/app_localizations.dart';
+import '../dialogs/rolling_voice_dialog.dart';
 import '../audio_rx/audio_rx_device.dart';
 import '../echolink/echolink_client.dart' show echoLinkDeviceId;
 import '../echolink/pcm_resampler.dart';
@@ -1712,7 +1713,7 @@ class _AudioTabState extends State<AudioTab>
                 const SizedBox(width: 8),
               // The only sub-menu items are spectrograph sources, which are not
               // supported on web/iOS, so the menu button is hidden there.
-              if (_audioChannelSupported)
+              if (_audioChannelSupported || (!kIsWeb && Platform.isWindows))
                 Builder(
                   builder: (context) => InkWell(
                     onTap: () => _showMenu(context),
@@ -1820,6 +1821,13 @@ class _AudioTabState extends State<AudioTab>
             ),
           ),
         ],
+        if (!kIsWeb && Platform.isWindows) ...[
+          const PopupMenuDivider(height: 8),
+          const PopupMenuItem<String>(
+            value: 'rollingVoice',
+            child: Text('接收语音循环录音…'),
+          ),
+        ],
         if (windowService.canDetach) ...[
           const PopupMenuDivider(height: 8),
           PopupMenuItem<String>(
@@ -1847,6 +1855,12 @@ class _AudioTabState extends State<AudioTab>
         return;
       }
       switch (value) {
+        case 'rollingVoice':
+          if (!context.mounted) return;
+          showDialog<void>(
+            context: context, builder: (_) => const RollingVoiceDialog(),
+          );
+          break;
         case 'sourceNone':
           _setSpectrogramSource(SpectrogramSource.none);
           break;
