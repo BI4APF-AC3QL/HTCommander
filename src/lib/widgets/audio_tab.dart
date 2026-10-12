@@ -1821,7 +1821,7 @@ class _AudioTabState extends State<AudioTab>
             ),
           ),
         ],
-        if (!kIsWeb && Platform.isWindows) ...[
+        if (!kIsWeb && (Platform.isWindows || Platform.isAndroid)) ...[
           const PopupMenuDivider(height: 8),
           const PopupMenuItem<String>(
             value: 'rollingVoice',

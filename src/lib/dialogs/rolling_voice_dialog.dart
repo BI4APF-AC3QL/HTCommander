@@ -1,3 +1,8 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/data_broker.dart';
@@ -29,6 +34,26 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
     super.dispose();
   }
 
+  Future<void> _exportClip(String folder, String name) async {
+    try {
+      final file = File('$folder${Platform.pathSeparator}$name');
+      final bytes = await file.readAsBytes();
+      await FilePicker.saveFile(
+        dialogTitle: '保存接收录音',
+        fileName: name,
+        type: FileType.custom,
+        allowedExtensions: const ['wav'],
+        bytes: bytes,
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('导出录音失败，请稍后重试。')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final enabled =
@@ -58,7 +83,9 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('启用循环录音'),
-                subtitle: const Text('跟随 Windows 所选的物理电台；需要先开启电台音频。'),
+                subtitle: Text(
+                  '跟随当前选中的物理电台；需要先开启电台音频。',
+                ),
                 value: enabled,
                 onChanged: (v) => DataBroker.dispatch(
                   deviceId: 0,
@@ -126,24 +153,25 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
                         : null,
                     child: const Text('保留最新片段'),
                   ),
-                  OutlinedButton(
-                    onPressed: folder is String
-                        ? () async {
-                            final ok = await launchUrl(
-                              Uri.directory(folder),
-                              mode: LaunchMode.externalApplication,
-                            );
-                            if (!ok && context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('无法打开目录，请复制下面的路径。'),
-                                ),
+                  if (!kIsWeb && defaultTargetPlatform != TargetPlatform.android)
+                    OutlinedButton(
+                      onPressed: folder is String
+                          ? () async {
+                              final ok = await launchUrl(
+                                Uri.directory(folder),
+                                mode: LaunchMode.externalApplication,
                               );
+                              if (!ok && context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('无法打开目录，请复制下面的路径。'),
+                                  ),
+                                );
+                              }
                             }
-                          }
-                        : null,
-                    child: const Text('打开录音目录'),
-                  ),
+                          : null,
+                      child: const Text('打开录音目录'),
+                    ),
                 ],
               ),
               if (folder is String)
@@ -156,7 +184,7 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
               ),
               const SizedBox(height: 8),
               const Text(
-                '默认最近 24 小时，循环目录最多 6 GiB，先达到的限制生效。旧片段自动删除；kept 中的保留片段最多 1 GiB，不自动覆盖。录音保留在本机，整理文件可使用目录窗口。',
+                '默认最近 24 小时，循环目录最多 6 GiB，先达到的限制生效。旧片段自动删除；kept 中的保留片段最多 1 GiB，不自动覆盖。录音只保存在本机。',
               ),
               const Divider(),
               const Text('最近完成的片段'),
@@ -167,8 +195,24 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
                       .whereType<Map>())
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Text(
-                    '${item['kept'] == true ? '已保留 · ' : ''}${item['name']} · ${((item['bytes'] as num? ?? 0) / 1024).toStringAsFixed(0)} KiB',
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${item['kept'] == true ? '已保留 · ' : ''}${item['name']} · ${((item['bytes'] as num? ?? 0) / 1024).toStringAsFixed(0)} KiB',
+                        ),
+                      ),
+                      if (!kIsWeb &&
+                          defaultTargetPlatform == TargetPlatform.android &&
+                          folder is String &&
+                          item['name'] is String)
+                        IconButton(
+                          tooltip: '导出 WAV',
+                          onPressed: () =>
+                              _exportClip(folder, item['name'] as String),
+                          icon: const Icon(Icons.save_alt),
+                        ),
+                    ],
                   ),
                 ),
             ],

@@ -21,6 +21,6 @@ HTCommander Android 版可直接通过系统蓝牙配对连接支持的电台，
 
 ## 平台边界
 
-Android 端复用桌面相同的 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink 和远程权限逻辑。桌面专属硬件适配仍取决于 Android 是否存在对应接口：Windows/Linux/macOS 的串口、AGWPE 和 Home Assistant 服务不会因为网页远控服务器移植而变成 Android 硬件接口。Android 本地语音循环录音、桌面软件更新和串口网关也不在 Android 服务常驻功能内。
+Android 端复用桌面相同的 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink 和远程权限逻辑，并支持本机接收语音循环录音。Android 录音片段可从音频设置逐条导出。桌面专属硬件适配仍取决于 Android 是否存在对应接口：Windows/Linux/macOS 的串口、AGWPE 和 Home Assistant 服务不会因为网页远控服务器移植而变成 Android 硬件接口。桌面软件更新和串口网关仍不属于 Android 端能力。
 
 持续服务需要用户显式开启网页服务。Android 显示常驻通知，并在服务期间持有部分唤醒锁以维持 LAN 响应；关闭网页服务或系统停止应用后会释放。不同厂商的省电策略、Wi-Fi 休眠和后台限制仍可能中断服务，需在目标手机实测。
