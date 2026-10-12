@@ -9,6 +9,7 @@ on:
       - 'src/pubspec.yaml'
       - 'src/pubspec.lock'
       - 'docs/android-radio-server.md'
+      - '.github/workflows/build-android.yaml'
   workflow_dispatch:
 
 permissions:
