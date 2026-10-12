@@ -415,7 +415,9 @@ class BluetoothClassicPlugin(
                 candidate
             } catch (e: Exception) {
                 lastError = e
-                Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
+                if (!disposed) {
+                    Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
+                }
                 candidate?.let { socket ->
                     synchronized(lifecycleLock) { connectingSockets.remove(socket) }
                 }
@@ -423,7 +425,7 @@ class BluetoothClassicPlugin(
                     candidate?.close()
                 } catch (_: IOException) {
                 }
-                if (SystemClock.elapsedRealtime() < deadline &&
+                if (!disposed && SystemClock.elapsedRealtime() < deadline &&
                     e !is java.net.SocketTimeoutException
                 ) {
                     try {
