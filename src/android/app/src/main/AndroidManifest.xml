@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Internet permission required for network access (Winlink/Dump1090) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keep Wi-Fi active while the user-enabled remote web server is running. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <!-- Keep connected radios and explicitly enabled server tasks available
          while the Android app is in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

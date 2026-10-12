@@ -8,9 +8,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 
 /** Keeps the in-process Flutter radio, recorder and LAN web server alive. */
 class RadioWebServerService : Service() {
@@ -18,9 +20,9 @@ class RadioWebServerService : Service() {
         private const val CHANNEL_ID = "radio_remote_server"
         private const val NOTIFICATION_ID = 8042
         private const val EXTRA_REASON = "reason"
-        private const val REASON_SERVER = "server"
-        private const val REASON_RECORDING = "recording"
-        private const val REASON_NETWORK_SERVICES = "networkServices"
+        private const val REASON_SERVER = RadioServiceReasonState.REASON_SERVER
+        private const val REASON_RECORDING = RadioServiceReasonState.REASON_RECORDING
+        private const val REASON_NETWORK_SERVICES = RadioServiceReasonState.REASON_NETWORK_SERVICES
         private const val ACTION_START = "com.htcommander.action.START_RADIO_SERVICE"
         private const val ACTION_STOP = "com.htcommander.action.STOP_RADIO_SERVER"
 
@@ -45,19 +47,9 @@ class RadioWebServerService : Service() {
 
     }
 
-    private val activeReasons = mutableSetOf<String>()
+    private val reasonState = RadioServiceReasonState()
     private var wakeLock: PowerManager.WakeLock? = null
-
-    private fun setReason(reason: String, enabled: Boolean): Boolean {
-        if (reason != REASON_SERVER &&
-            reason != REASON_RECORDING &&
-            reason != REASON_NETWORK_SERVICES
-        ) {
-            return activeReasons.isNotEmpty()
-        }
-        if (enabled) activeReasons.add(reason) else activeReasons.remove(reason)
-        return activeReasons.isNotEmpty()
-    }
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -84,10 +76,11 @@ class RadioWebServerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val reason = intent?.getStringExtra(EXTRA_REASON) ?: REASON_SERVER
         val active = when (intent?.action) {
-            ACTION_STOP -> setReason(reason, false)
-            ACTION_START -> setReason(reason, true)
-            else -> setReason(REASON_SERVER, true)
+            ACTION_STOP -> reasonState.set(reason, false)
+            ACTION_START -> reasonState.set(reason, true)
+            else -> reasonState.set(REASON_SERVER, true)
         }
+        updateWifiLock()
         if (!active) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -106,9 +99,42 @@ class RadioWebServerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        releaseWifiLock()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         super.onDestroy()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateWifiLock() {
+        if (!reasonState.shouldKeepWifiActive) {
+            releaseWifiLock()
+            return
+        }
+        if (wifiLock?.isHeld == true) return
+
+        try {
+            val manager = getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = manager.createWifiLock(
+                WifiManager.WIFI_MODE_FULL,
+                "HTCommander:RemoteServer",
+            ).apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (error: Exception) {
+            // Keep the foreground service available even on devices that deny
+            // Wi-Fi locks; Android may still maintain the network connection.
+            Log.w("HTCommander", "Could not keep Wi-Fi active for remote server", error)
+            wifiLock = null
+        }
+    }
+
+    private fun releaseWifiLock() {
+        wifiLock?.let { lock ->
+            if (lock.isHeld) lock.release()
+        }
+        wifiLock = null
     }
 
     private fun ensureNotificationChannel() {
