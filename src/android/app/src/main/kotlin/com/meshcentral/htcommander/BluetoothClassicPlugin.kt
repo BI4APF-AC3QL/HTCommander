@@ -90,6 +90,11 @@ class BluetoothClassicPlugin(
 
     private val controlConnections = ConcurrentHashMap<String, RfcommConnection>()
     private val audioConnections = ConcurrentHashMap<String, RfcommConnection>()
+    private val lifecycleLock = Any()
+    private val connectingSockets = ConcurrentHashMap.newKeySet<BluetoothSocket>()
+
+    @Volatile
+    private var disposed = false
 
     init {
         methodChannel.setMethodCallHandler(this)
@@ -142,6 +147,10 @@ class BluetoothClassicPlugin(
         address.uppercase().replace('-', ':')
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (disposed) {
+            result.error("PLUGIN_DISPOSED", "Bluetooth bridge is shutting down", null)
+            return
+        }
         when (call.method) {
             "isAvailable" -> result.success(isAvailable())
             "getPairedDevices" -> result.success(listDevices(filterCompatible = false))
@@ -170,6 +179,36 @@ class BluetoothClassicPlugin(
                 result = result,
             )
             else -> result.notImplemented()
+        }
+    }
+
+    /** Releases RFCOMM sockets and channel handlers when Flutter detaches. */
+    fun dispose() {
+        synchronized(lifecycleLock) {
+            if (disposed) return
+            disposed = true
+            methodChannel.setMethodCallHandler(null)
+            dataEventChannel.setStreamHandler(null)
+            audioEventChannel.setStreamHandler(null)
+            dataSink = null
+            audioSink = null
+
+            controlConnections.values.toList().forEach {
+                it.close(DISCONNECT_REQUESTED)
+            }
+            controlConnections.clear()
+            audioConnections.values.toList().forEach {
+                it.close(DISCONNECT_REQUESTED)
+            }
+            audioConnections.clear()
+
+            connectingSockets.toList().forEach { socket ->
+                try {
+                    socket.close()
+                } catch (_: IOException) {
+                }
+            }
+            connectingSockets.clear()
         }
     }
 
@@ -283,20 +322,45 @@ class BluetoothClassicPlugin(
                 socket = connectSocket(device, uuid)
 
                 val connection = RfcommConnection(normalized, socket, audio)
-                map[normalized] = connection
+                val existing = synchronized(lifecycleLock) {
+                    connectingSockets.remove(socket)
+                    if (disposed) {
+                        null
+                    } else {
+                        map.putIfAbsent(normalized, connection)
+                    }
+                }
+                if (disposed || existing != null) {
+                    if (existing == null) {
+                        try {
+                            socket.close()
+                        } catch (_: IOException) {
+                        }
+                        return@Thread
+                    }
+                    try {
+                        socket.close()
+                    } catch (_: IOException) {
+                    }
+                    mainHandler.post { if (!disposed) result.success(true) }
+                    return@Thread
+                }
                 // Queue the connected marker before starting the reader so a
                 // fast radio response cannot overtake it on the Flutter channel.
                 postEvent(audio, "connected", normalized, null)
                 connection.startReading()
-                mainHandler.post { result.success(true) }
+                mainHandler.post { if (!disposed) result.success(true) }
             } catch (e: Exception) {
+                socket?.let { candidate ->
+                    synchronized(lifecycleLock) { connectingSockets.remove(candidate) }
+                }
                 try {
                     socket?.close()
                 } catch (_: IOException) {
                 }
                 val message = "${e.javaClass.simpleName}: ${e.message ?: "RFCOMM connect failed"}"
                 mainHandler.post {
-                    result.error("CONNECT_FAILED", message, null)
+                    if (!disposed) result.error("CONNECT_FAILED", message, null)
                 }
             }
         }.start()
@@ -328,6 +392,7 @@ class BluetoothClassicPlugin(
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
             var candidate: BluetoothSocket? = null
             return try {
+                if (disposed) throw IOException("Bluetooth bridge is shutting down")
                 val remainingMs = deadline - SystemClock.elapsedRealtime()
                 if (remainingMs <= 0) {
                     throw java.net.SocketTimeoutException(
@@ -335,6 +400,10 @@ class BluetoothClassicPlugin(
                     )
                 }
                 candidate = factory()
+                synchronized(lifecycleLock) {
+                    if (disposed) throw IOException("Bluetooth bridge is shutting down")
+                    connectingSockets.add(candidate)
+                }
                 TimedSocketConnect.connect(
                     socket = candidate,
                     timeoutMs = minOf(CONNECT_ATTEMPT_TIMEOUT_MS, remainingMs),
@@ -347,6 +416,9 @@ class BluetoothClassicPlugin(
             } catch (e: Exception) {
                 lastError = e
                 Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
+                candidate?.let { socket ->
+                    synchronized(lifecycleLock) { connectingSockets.remove(socket) }
+                }
                 try {
                     candidate?.close()
                 } catch (_: IOException) {
@@ -448,7 +520,9 @@ class BluetoothClassicPlugin(
         data: ByteArray? = null,
         reason: String? = null,
     ) {
+        if (disposed) return
         mainHandler.post {
+            if (disposed) return@post
             val sink = if (audio) audioSink else dataSink
             val payload = HashMap<String, Any>()
             payload["event"] = event

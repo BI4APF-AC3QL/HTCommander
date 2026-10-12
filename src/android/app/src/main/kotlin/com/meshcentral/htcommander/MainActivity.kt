@@ -97,6 +97,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        bluetoothClassicPlugin?.dispose()
+        bluetoothClassicPlugin = null
         serverLifecycleChannel?.setMethodCallHandler(null)
         serverLifecycleChannel = null
         deviceLocationChannel?.setMethodCallHandler(null)
