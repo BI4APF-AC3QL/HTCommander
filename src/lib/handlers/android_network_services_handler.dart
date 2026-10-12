@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import '../services/android_server_lifecycle.dart';
-import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 
 /// Holds Android's foreground service while a TCP/MQTT integration is enabled.
