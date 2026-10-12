@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_serial_communication/flutter_serial_communication.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pasteboard/pasteboard.dart';
@@ -56,7 +57,8 @@ class _SettingsDialogState extends State<SettingsDialog>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux);
+          defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.android);
 
   late TabController _tabController;
   late AppSettings _settings;
@@ -144,8 +146,11 @@ class _SettingsDialogState extends State<SettingsDialog>
   String _allStarTestResult = '';
   bool _allStarTestOk = false;
 
-  // Serial ports available for the GPS receiver (desktop only).
+  // Desktop serial ports or Android USB-serial GPS devices.
   List<String> _availablePorts = const [];
+  final Map<String, String> _usbGpsPortLabels = {};
+  final FlutterSerialCommunication _androidUsbSerial =
+      FlutterSerialCommunication();
 
   // Available text-to-speech voices, loaded asynchronously.
   List<Map<String, String>> _voices = const [];
@@ -276,8 +281,11 @@ class _SettingsDialogState extends State<SettingsDialog>
     _avatarIcon = _settings.avatarIcon;
     _avatarImage = _settings.avatarImage;
 
-    // Enumerate serial ports for the GPS receiver dropdown (desktop only).
+    // Enumerate serial ports for the GPS receiver dropdown.
     _availablePorts = _listSerialPorts();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(_refreshAndroidUsbGpsPorts());
+    }
 
     _callSignController = TextEditingController(text: _settings.callSign);
     _winlinkPasswordController = TextEditingController(
@@ -3950,15 +3958,56 @@ class _SettingsDialogState extends State<SettingsDialog>
     );
   }
 
-  /// Returns the serial ports available on the system, or an empty list on
-  /// platforms that do not support serial access (web/mobile). Wrapped in a
-  /// try/catch because port enumeration can throw on unsupported platforms.
+  /// Returns desktop serial ports. Android USB devices are enumerated through
+  /// its asynchronous USB-host plugin instead.
   static List<String> _listSerialPorts() {
-    if (!_serialGpsSupported) return const [];
+    if (!_serialGpsSupported ||
+        defaultTargetPlatform == TargetPlatform.android) {
+      return const [];
+    }
     try {
       return SerialPort.availablePorts;
     } catch (_) {
       return const [];
+    }
+  }
+
+  Future<void> _refreshAndroidUsbGpsPorts() async {
+    try {
+      final devices = await _androidUsbSerial.getAvailableDevices();
+      if (!mounted) return;
+      setState(() {
+        _usbGpsPortLabels.clear();
+        _availablePorts = devices
+            .where((device) => device.deviceId != null)
+            .map((device) {
+              final value = 'USB:${device.deviceId}';
+              final vendor = device.vendorId?.toRadixString(16).padLeft(4, '0');
+              final product = device.productId?.toRadixString(16).padLeft(4, '0');
+              final ids = vendor != null && product != null
+                  ? ' · $vendor:$product'
+                  : '';
+              final name = [
+                    device.manufacturerName,
+                    device.productName,
+                    device.deviceName,
+                  ]
+                  .whereType<String>()
+                  .where((part) => part.trim().isNotEmpty)
+                  .toSet()
+                  .join(' ');
+              _usbGpsPortLabels[value] =
+                  '${name.isEmpty ? 'USB 串口设备' : name}$ids';
+              return value;
+            })
+            .toList(growable: false);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _availablePorts = const [];
+        _usbGpsPortLabels.clear();
+      });
     }
   }
 
@@ -3977,7 +4026,10 @@ class _SettingsDialogState extends State<SettingsDialog>
         .map(
           (p) => DropdownMenuItem(
             value: p,
-            child: Text(p, overflow: TextOverflow.ellipsis),
+            child: Text(
+              _usbGpsPortLabels[p] ?? p,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         )
         .toList();
@@ -4018,6 +4070,19 @@ class _SettingsDialogState extends State<SettingsDialog>
                               l10n.settingsSerialPort,
                               style: DialogStyles.labelStyle,
                             ),
+                            if (!kIsWeb &&
+                                defaultTargetPlatform ==
+                                    TargetPlatform.android)
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: IconButton(
+                                  icon: const Icon(Icons.refresh),
+                                  tooltip: MaterialLocalizations.of(
+                                    context,
+                                  ).refreshIndicatorSemanticLabel,
+                                  onPressed: _refreshAndroidUsbGpsPorts,
+                                ),
+                              ),
                             const SizedBox(height: 4),
                             DropdownButtonFormField<String>(
                               initialValue: _settings.gpsSerialPort,
