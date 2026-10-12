@@ -11,20 +11,18 @@ class AndroidPhoneGpsHandler {
   AndroidPhoneGpsHandler({
     bool? isAndroid,
     Stream<AndroidCoordinates> Function()? positions,
-    Future<void> Function()? startService,
-    Future<void> Function()? stopService,
+    this.startService,
+    this.stopService,
   }) : _isAndroid = isAndroid ?? Platform.isAndroid,
        _positions = positions ?? AndroidCurrentLocation.watchPosition,
-       _startService = startService,
-       _stopService = stopService,
        _broker = DataBrokerClient(),
        _lifecycle = AndroidServerLifecycle();
 
   static const _enabledKey = 'PhoneGpsTrackingEnabled';
   final bool _isAndroid;
   final Stream<AndroidCoordinates> Function() _positions;
-  final Future<void> Function()? _startService;
-  final Future<void> Function()? _stopService;
+  final Future<void> Function()? startService;
+  final Future<void> Function()? stopService;
   final DataBrokerClient _broker;
   final AndroidServerLifecycle _lifecycle;
   StreamSubscription<AndroidCoordinates>? _subscription;
@@ -36,7 +34,7 @@ class AndroidPhoneGpsHandler {
     _broker.subscribe(
       deviceId: 0,
       name: _enabledKey,
-      callback: (_, __, ___) => _apply(),
+      callback: (_, _, _) => _apply(),
     );
     _apply();
   }
@@ -52,9 +50,9 @@ class AndroidPhoneGpsHandler {
       if (desired == _active) return;
       if (desired) {
         try {
-          await (_startService?.call() ?? _lifecycle.start(reason: 'location'));
+          await (startService?.call() ?? _lifecycle.start(reason: 'location'));
           if (_disposed || !_enabled) {
-            await (_stopService?.call() ?? _lifecycle.stop(reason: 'location'));
+            await (stopService?.call() ?? _lifecycle.stop(reason: 'location'));
             return;
           }
           _subscription = _positions().listen(
@@ -72,7 +70,7 @@ class AndroidPhoneGpsHandler {
             data: 0,
           );
           try {
-            await (_stopService?.call() ??
+            await (stopService?.call() ??
                 _lifecycle.stop(reason: 'location'));
           } on Object {
             // Keep the original startup failure for the application log.
@@ -123,7 +121,7 @@ class AndroidPhoneGpsHandler {
     _subscription = null;
     if (!_active) return;
     _active = false;
-    await (_stopService?.call() ?? _lifecycle.stop(reason: 'location'));
+    await (stopService?.call() ?? _lifecycle.stop(reason: 'location'));
   }
 
   Future<void> dispose() async {
