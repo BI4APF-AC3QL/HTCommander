@@ -11,8 +11,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Internet permission required for network access (Winlink/Dump1090) -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Keep the explicitly enabled radio control server available while the
-         Android app is in the background. -->
+    <!-- Keep connected radios and explicitly enabled server tasks available
+         while the Android app is in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -63,7 +63,7 @@
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps the explicitly enabled radio control server or local receive recorder active in the background." />
+                android:value="Keeps an explicitly connected radio, radio control server, network integration, or local receive recorder active in the background." />
         </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

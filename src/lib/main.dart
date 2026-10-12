@@ -630,8 +630,8 @@ Future<void> _startApp(List<String> args) async {
     DataBroker.addDataHandler('HomeAssistantHandler', homeAssistantHandler);
   }
 
-  // Android network servers need a foreground service when the activity is
-  // backgrounded. Keep it active while AGWPE or Home Assistant is enabled.
+  // Android radio connections and network servers need a foreground service
+  // when the activity is backgrounded.
   if (!kIsWeb && Platform.isAndroid) {
     final networkServicesHandler = AndroidNetworkServicesHandler();
     networkServicesHandler.init();
