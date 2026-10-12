@@ -23,7 +23,9 @@ Android 的“设置 → 许可证 → 位置”可点“使用本机 GPS 定位
 
 ## 平台边界
 
-Android 端复用桌面相同的 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink 和远程权限逻辑，并支持本机接收语音循环录音。Android 录音片段可从音频设置逐条导出。Android 设置的“服务”选项卡还可启用 AGWPE TCP 服务器与 Home Assistant MQTT 桥接；启用任一项时，系统会显示常驻通知并保持网络服务运行。USB/串口电台适配、桌面软件更新和串口网关仍未接入 Android。USB OTG GPS 可用的芯片、设备拔插和实际定位效果仍需在目标手机与接收器上验收。
+Android 与 Windows 共用 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink、远程权限和循环语音录音逻辑。两者都通过 Bluetooth Classic RFCOMM 控制兼容电台，并可使用电台音频通道；Android 需先在系统蓝牙设置中配对。Android 端还可启用远控网页服务、AGWPE TCP 服务和 Home Assistant MQTT 桥接，后台运行时由 Android 常驻通知服务维持。
+
+平台特有项：Android 可使用 USB OTG 串口 GPS；这只用于 GPS 接收器，不提供 USB/串口电台控制。当前项目的电台传输实现没有 USB/串口电台传输或串口电台网关，因此这不是 Android 相对 Windows 的功能缺口。Android 应用通过 APK 或应用商店更新，Windows 则使用桌面更新流程。USB OTG GPS 的芯片兼容、热插拔和定位效果仍需在目标手机与接收器上验收。
 
 连接电台、网页服务、AGWPE、Home Assistant MQTT、持续手机定位或本机循环录音运行时，Android 显示常驻通知并持有部分唤醒锁；网页服务开启时还会保持 Wi-Fi 活跃，关闭网页服务后释放该锁。断开最后一台电台并关闭其他运行功能后会释放服务。清除应用最近任务不会主动停止已开启的服务；系统强制停止应用或厂商省电策略仍可能中断服务，需在目标手机实测。AGWPE 仅应在可信局域网/VPN中开放；它面向兼容客户端的 TCP 接口不提供远程登录密码保护。
 
