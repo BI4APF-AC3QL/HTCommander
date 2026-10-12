@@ -202,6 +202,8 @@
   "settingsLocationInfo": "Scegli da dove proviene la tua posizione attuale. Viene inviata alla radio e usata per APRS-IS e il tracciamento dei satelliti.",
   "settingsLocationUsePhoneGps": "Usa il GPS di questo telefono",
   "settingsLocationUsePhoneGpsHint": "Ottiene una posizione attuale e la salva come posizione manuale per radio, APRS-IS e tracciamento satellitare.",
+  "settingsLocationPhoneGpsTracking": "Segui continuamente il GPS di questo telefono",
+  "settingsLocationPhoneGpsTrackingHint": "Aggiorna la posizione salvata mentre HTCommander è in esecuzione, anche in background. Consuma batteria e può aggiornare i beacon di posizione se l'invio è consentito.",
   "settingsLocationPhoneGpsSuccess": "Posizione del telefono salvata.",
   "settingsLocationPhoneGpsFailure": "Impossibile ottenere la posizione del telefono. Controlla il permesso e attiva i servizi di localizzazione.",
   "settingsLocationSourceGps": "Dal GPS (radio o GPS seriale)",

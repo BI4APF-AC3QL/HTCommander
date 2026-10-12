@@ -120,6 +120,7 @@ class _SettingsDialogState extends State<SettingsDialog>
   bool _homeAssistantTestOk = false;
   bool _phoneGpsBusy = false;
   bool? _phoneGpsSucceeded;
+  bool _phoneGpsTrackingEnabled = false;
 
   // APRS.fi API key "Test" state.
   bool _aprsFiTesting = false;
@@ -270,6 +271,8 @@ class _SettingsDialogState extends State<SettingsDialog>
 
     // Load settings from DataBroker
     _settings = AppSettings.loadFromDataBroker();
+    _phoneGpsTrackingEnabled =
+        (_broker.getValue<int>(0, 'PhoneGpsTrackingEnabled', 0) ?? 0) == 1;
     _avatarIcon = _settings.avatarIcon;
     _avatarImage = _settings.avatarImage;
 
@@ -1000,6 +1003,12 @@ class _SettingsDialogState extends State<SettingsDialog>
     _settings.avatarIcon = _avatarIcon;
     _settings.avatarImage = _avatarImage;
     _settings.saveToDataBroker();
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'PhoneGpsTrackingEnabled',
+      data: _phoneGpsTrackingEnabled ? 1 : 0,
+      store: true,
+    );
 
     // Persist AllStarLink node-hosting configuration (device 0).
     _broker.dispatch(
@@ -1635,6 +1644,14 @@ class _SettingsDialogState extends State<SettingsDialog>
               l10n.settingsLocationUsePhoneGpsHint,
               style: _secondaryStyle(),
             ),
+            const SizedBox(height: 6),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.settingsLocationPhoneGpsTracking),
+              subtitle: Text(l10n.settingsLocationPhoneGpsTrackingHint),
+              value: _phoneGpsTrackingEnabled,
+              onChanged: _setPhoneGpsTracking,
+            ),
             if (_phoneGpsSucceeded != null)
               Text(
                 _phoneGpsSucceeded!
@@ -1728,6 +1745,22 @@ class _SettingsDialogState extends State<SettingsDialog>
     } finally {
       if (mounted) setState(() => _phoneGpsBusy = false);
     }
+  }
+
+  Future<void> _setPhoneGpsTracking(bool enabled) async {
+    if (enabled) {
+      try {
+        await AndroidCurrentLocation.requestPermission();
+      } on Object {
+        if (mounted) setState(() => _phoneGpsSucceeded = false);
+        return;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _phoneGpsTrackingEnabled = enabled;
+      if (enabled) _settings.manualLocationEnabled = true;
+    });
   }
 
   /// Small labelled read-only coordinate display used by the Location section.

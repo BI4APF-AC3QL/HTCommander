@@ -206,6 +206,8 @@
   "settingsLocationInfo": "Wählen Sie, woher Ihr aktueller Standort stammt. Er wird an das Funkgerät gesendet und für APRS-IS und die Satellitenverfolgung verwendet.",
   "settingsLocationUsePhoneGps": "GPS dieses Telefons verwenden",
   "settingsLocationUsePhoneGpsHint": "Ermittelt einmal den aktuellen Standort und speichert ihn als manuellen Standort für Funkgerät, APRS-IS und Satellitenverfolgung.",
+  "settingsLocationPhoneGpsTracking": "GPS dieses Telefons kontinuierlich verfolgen",
+  "settingsLocationPhoneGpsTrackingHint": "Aktualisiert den gespeicherten Standort, solange HTCommander läuft, auch im Hintergrund. Dies verbraucht Akku und kann Positionsbaken aktualisieren, wenn das Senden erlaubt ist.",
   "settingsLocationPhoneGpsSuccess": "Telefonstandort gespeichert.",
   "settingsLocationPhoneGpsFailure": "Telefonstandort konnte nicht ermittelt werden. Prüfen Sie die Standortberechtigung und aktivieren Sie die Standortdienste.",
   "settingsLocationSourceGps": "Vom GPS (Funkgerät oder serielles GPS)",

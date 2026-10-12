@@ -40,6 +40,7 @@ import 'handlers/morse_key_handler.dart';
 import 'handlers/bbs_handler.dart';
 import 'handlers/agwpe_handler.dart';
 import 'handlers/android_network_services_handler.dart';
+import 'handlers/android_phone_gps_handler.dart';
 import 'handlers/web_server_handler.dart';
 import 'handlers/home_assistant_handler.dart';
 import 'handlers/debug_log_handler.dart';
@@ -547,6 +548,13 @@ Future<void> _startApp(List<String> args) async {
   final locationHandler = LocationHandler();
   locationHandler.init();
   DataBroker.addDataHandler('LocationHandler', locationHandler);
+
+  // Android can provide live phone GPS fixes through the same persisted
+  // location source used by the radio, APRS-IS and satellite tracker.
+  if (Platform.isAndroid) {
+    final phoneGpsHandler = AndroidPhoneGpsHandler()..init();
+    DataBroker.addDataHandler('AndroidPhoneGpsHandler', phoneGpsHandler);
+  }
 
   // Register the BBS handler so that the BBS tab can activate a bulletin-board /
   // Winlink server on a radio. It creates per-radio BBS instances on CreateBbs,

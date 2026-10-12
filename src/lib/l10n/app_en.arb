@@ -571,6 +571,8 @@
   "settingsLocationInfo": "Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.",
   "settingsLocationUsePhoneGps": "Use this phone's GPS",
   "settingsLocationUsePhoneGpsHint": "Gets one current fix and saves it as your manual location for the radio, APRS-IS and satellite tracking.",
+  "settingsLocationPhoneGpsTracking": "Continuously track this phone's GPS",
+  "settingsLocationPhoneGpsTrackingHint": "Keeps updating your saved location while HTCommander runs, including in the background. This uses battery and may update radio or APRS position beacons when their send permissions are enabled.",
   "settingsLocationPhoneGpsSuccess": "Phone location saved.",
   "settingsLocationPhoneGpsFailure": "Could not get phone location. Check location permission and turn on location services.",
   "settingsLocationSourceGps": "From GPS (radio or serial GPS)",
