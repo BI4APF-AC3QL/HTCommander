@@ -77,8 +77,13 @@ class BluetoothClassicPlugin(
         private val lastGoodChannel = ConcurrentHashMap<String, Int>()
     }
 
-    /** Set by [MainActivity] so we can request runtime permissions. */
+    /** Updated by [MainActivity] so runtime permission prompts use the visible Activity. */
+    @Volatile
     var activity: Activity? = null
+
+    fun detachActivity(activity: Activity) {
+        if (this.activity === activity) this.activity = null
+    }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val methodChannel = MethodChannel(messenger, METHOD_CHANNEL)

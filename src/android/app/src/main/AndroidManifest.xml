@@ -34,7 +34,7 @@
 
     <application
         android:label="HTCommander"
-        android:name="${applicationName}"
+        android:name=".HTCommanderApplication"
         android:icon="@mipmap/ic_launcher"
         android:localeConfig="@xml/locales_config">
         <activity

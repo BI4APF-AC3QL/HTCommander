@@ -1216,12 +1216,40 @@ abstract class AppLocalizations {
   /// **'Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.'**
   String get settingsLocationInfo;
 
+  /// No description provided for @settingsLocationUsePhoneGps.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this phone\'s GPS'**
   String get settingsLocationUsePhoneGps;
 
+  /// No description provided for @settingsLocationUsePhoneGpsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Gets one current fix and saves it as your manual location for the radio, APRS-IS and satellite tracking.'**
   String get settingsLocationUsePhoneGpsHint;
 
+  /// No description provided for @settingsLocationPhoneGpsTracking.
+  ///
+  /// In en, this message translates to:
+  /// **'Continuously track this phone\'s GPS'**
+  String get settingsLocationPhoneGpsTracking;
+
+  /// No description provided for @settingsLocationPhoneGpsTrackingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Keeps updating your saved location while HTCommander runs, including in the background. This uses battery and may update radio or APRS position beacons when their send permissions are enabled.'**
+  String get settingsLocationPhoneGpsTrackingHint;
+
+  /// No description provided for @settingsLocationPhoneGpsSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone location saved.'**
   String get settingsLocationPhoneGpsSuccess;
 
+  /// No description provided for @settingsLocationPhoneGpsFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not get phone location. Check location permission and turn on location services.'**
   String get settingsLocationPhoneGpsFailure;
 
   /// No description provided for @settingsLocationSourceGps.

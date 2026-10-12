@@ -603,12 +603,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.';
 
   @override
-  @override
-  String get settingsLocationUsePhoneGps => "Use this phone's GPS";
+  String get settingsLocationUsePhoneGps => 'Use this phone\'s GPS';
 
   @override
   String get settingsLocationUsePhoneGpsHint =>
       'Gets one current fix and saves it as your manual location for the radio, APRS-IS and satellite tracking.';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'Continuously track this phone\'s GPS';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Keeps updating your saved location while HTCommander runs, including in the background. This uses battery and may update radio or APRS position beacons when their send permissions are enabled.';
 
   @override
   String get settingsLocationPhoneGpsSuccess => 'Phone location saved.';
@@ -616,6 +623,8 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsLocationPhoneGpsFailure =>
       'Could not get phone location. Check location permission and turn on location services.';
+
+  @override
   String get settingsLocationSourceGps => 'From GPS (radio or serial GPS)';
 
   @override

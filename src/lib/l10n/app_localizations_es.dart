@@ -604,7 +604,6 @@ class AppLocalizationsEs extends AppLocalizations {
       'Elija de dónde proviene su ubicación actual. Se envía a la radio y se usa para APRS-IS y el seguimiento de satélites.';
 
   @override
-  @override
   String get settingsLocationUsePhoneGps => 'Usar el GPS de este teléfono';
 
   @override
@@ -612,11 +611,22 @@ class AppLocalizationsEs extends AppLocalizations {
       'Obtiene una posición actual y la guarda como ubicación manual para la radio, APRS-IS y el seguimiento de satélites.';
 
   @override
-  String get settingsLocationPhoneGpsSuccess => 'Ubicación del teléfono guardada.';
+  String get settingsLocationPhoneGpsTracking =>
+      'Seguir continuamente el GPS de este teléfono';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Actualiza la ubicación guardada mientras HTCommander está en ejecución, también en segundo plano. Consume batería y puede actualizar las balizas de posición si el envío está permitido.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess =>
+      'Ubicación del teléfono guardada.';
 
   @override
   String get settingsLocationPhoneGpsFailure =>
       'No se pudo obtener la ubicación del teléfono. Compruebe el permiso de ubicación y active los servicios de ubicación.';
+
+  @override
   String get settingsLocationSourceGps => 'Desde GPS (radio o GPS serie)';
 
   @override

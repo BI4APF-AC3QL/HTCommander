@@ -600,7 +600,6 @@ class AppLocalizationsJa extends AppLocalizations {
       '現在の位置の取得元を選択します。無線機に送信され、APRS-IS と衛星追跡に使用されます。';
 
   @override
-  @override
   String get settingsLocationUsePhoneGps => 'この端末の GPS を使用';
 
   @override
@@ -608,11 +607,20 @@ class AppLocalizationsJa extends AppLocalizations {
       '現在位置を一度取得し、無線機、APRS-IS、衛星追跡に使う手動位置として保存します。';
 
   @override
+  String get settingsLocationPhoneGpsTracking => 'この端末の GPS を継続して追跡';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'HTCommander の実行中はバックグラウンドでも保存位置を更新します。電池を消費し、送信が許可されている場合は無線機または APRS の位置ビーコンが更新されることがあります。';
+
+  @override
   String get settingsLocationPhoneGpsSuccess => '端末の位置を保存しました。';
 
   @override
   String get settingsLocationPhoneGpsFailure =>
       '端末の位置を取得できません。位置情報の権限を確認し、位置情報サービスを有効にしてください。';
+
+  @override
   String get settingsLocationSourceGps => 'GPS から（無線機またはシリアル GPS）';
 
   @override

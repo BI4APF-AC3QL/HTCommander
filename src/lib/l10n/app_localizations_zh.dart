@@ -592,7 +592,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsLocationInfo => '选择当前位置的来源。它会发送到电台，并用于 APRS-IS 和卫星跟踪。';
 
   @override
-  @override
   String get settingsLocationUsePhoneGps => '使用本机 GPS 定位';
 
   @override
@@ -600,11 +599,19 @@ class AppLocalizationsZh extends AppLocalizations {
       '获取一次当前位置，并将其保存为手动位置，供电台、APRS-IS 和卫星跟踪使用。';
 
   @override
+  String get settingsLocationPhoneGpsTracking => '持续使用手机 GPS 定位';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'HTCommander 运行期间持续更新保存的位置，包括切到后台时。此功能会增加耗电；若已允许电台或 APRS 信标发送，位置更新可能影响信标内容。';
+
+  @override
   String get settingsLocationPhoneGpsSuccess => '已保存手机位置。';
 
   @override
-  String get settingsLocationPhoneGpsFailure =>
-      '无法获取手机位置。请检查定位权限并开启系统定位服务。';
+  String get settingsLocationPhoneGpsFailure => '无法获取手机位置。请检查定位权限并开启系统定位服务。';
+
+  @override
   String get settingsLocationSourceGps => '来自 GPS（电台或串行 GPS）';
 
   @override
