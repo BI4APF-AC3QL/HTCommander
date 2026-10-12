@@ -569,6 +569,10 @@
 
   "settingsLocation": "Location",
   "settingsLocationInfo": "Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.",
+  "settingsLocationUsePhoneGps": "Use this phone's GPS",
+  "settingsLocationUsePhoneGpsHint": "Gets one current fix and saves it as your manual location for the radio, APRS-IS and satellite tracking.",
+  "settingsLocationPhoneGpsSuccess": "Phone location saved.",
+  "settingsLocationPhoneGpsFailure": "Could not get phone location. Check location permission and turn on location services.",
   "settingsLocationSourceGps": "From GPS (radio or serial GPS)",
   "settingsLocationSourceManual": "Set manually",
   "settingsLocationLatitude": "Latitude",

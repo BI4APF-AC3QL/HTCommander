@@ -605,6 +605,19 @@ class AppLocalizationsHi extends AppLocalizations {
       'चुनें कि आपका वर्तमान स्थान कहाँ से आता है। इसे रेडियो को भेजा जाता है और APRS-IS तथा उपग्रह ट्रैकिंग के लिए उपयोग किया जाता है।';
 
   @override
+  @override
+  String get settingsLocationUsePhoneGps => 'इस फ़ोन का GPS उपयोग करें';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'एक वर्तमान स्थान प्राप्त करके उसे रेडियो, APRS-IS और उपग्रह ट्रैकिंग के लिए मैन्युअल स्थान के रूप में सहेजता है।';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => 'फ़ोन का स्थान सहेजा गया।';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'फ़ोन का स्थान नहीं मिल सका। स्थान अनुमति जाँचें और स्थान सेवाएँ चालू करें।';
   String get settingsLocationSourceGps => 'GPS से (रेडियो या सीरियल GPS)';
 
   @override

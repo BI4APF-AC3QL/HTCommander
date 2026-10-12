@@ -27,6 +27,7 @@ import '../services/locale_controller.dart';
 import '../services/mqtt/mqtt_client_facade.dart';
 import '../services/theme_controller.dart';
 import '../services/tts_service.dart';
+import '../services/android_current_location.dart';
 import '../services/winlink_gateway_service.dart';
 import '../services/sherpa_model_manager.dart';
 import '../widgets/contact_avatar.dart';
@@ -117,6 +118,8 @@ class _SettingsDialogState extends State<SettingsDialog>
   bool _homeAssistantTesting = false;
   String _homeAssistantTestResult = '';
   bool _homeAssistantTestOk = false;
+  bool _phoneGpsBusy = false;
+  bool? _phoneGpsSucceeded;
 
   // APRS.fi API key "Test" state.
   bool _aprsFiTesting = false;
@@ -1615,6 +1618,35 @@ class _SettingsDialogState extends State<SettingsDialog>
           Text(l10n.settingsLocation, style: _sectionTitleStyle()),
           const SizedBox(height: 8),
           Text(l10n.settingsLocationInfo, style: _secondaryStyle()),
+          if (!kIsWeb && Platform.isAndroid) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _phoneGpsBusy ? null : _usePhoneGps,
+              icon: _phoneGpsBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location, size: 18),
+              label: Text(l10n.settingsLocationUsePhoneGps),
+            ),
+            Text(
+              l10n.settingsLocationUsePhoneGpsHint,
+              style: _secondaryStyle(),
+            ),
+            if (_phoneGpsSucceeded != null)
+              Text(
+                _phoneGpsSucceeded!
+                    ? l10n.settingsLocationPhoneGpsSuccess
+                    : l10n.settingsLocationPhoneGpsFailure,
+                style: TextStyle(
+                  color: _phoneGpsSucceeded!
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.error,
+                ),
+              ),
+          ],
           const SizedBox(height: 8),
           RadioGroup<bool>(
             groupValue: manual,
@@ -1674,6 +1706,28 @@ class _SettingsDialogState extends State<SettingsDialog>
         ],
       ),
     );
+  }
+
+  Future<void> _usePhoneGps() async {
+    setState(() {
+      _phoneGpsBusy = true;
+      _phoneGpsSucceeded = null;
+    });
+    try {
+      final position = await AndroidCurrentLocation.getCurrentPosition();
+      if (!mounted) return;
+      setState(() {
+        _settings
+          ..manualLatitude = position.latitude
+          ..manualLongitude = position.longitude
+          ..manualLocationEnabled = true;
+        _phoneGpsSucceeded = true;
+      });
+    } on Object {
+      if (mounted) setState(() => _phoneGpsSucceeded = false);
+    } finally {
+      if (mounted) setState(() => _phoneGpsBusy = false);
+    }
   }
 
   /// Small labelled read-only coordinate display used by the Location section.

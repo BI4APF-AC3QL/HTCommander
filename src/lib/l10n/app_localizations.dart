@@ -1216,6 +1216,14 @@ abstract class AppLocalizations {
   /// **'Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.'**
   String get settingsLocationInfo;
 
+  String get settingsLocationUsePhoneGps;
+
+  String get settingsLocationUsePhoneGpsHint;
+
+  String get settingsLocationPhoneGpsSuccess;
+
+  String get settingsLocationPhoneGpsFailure;
+
   /// No description provided for @settingsLocationSourceGps.
   ///
   /// In en, this message translates to:

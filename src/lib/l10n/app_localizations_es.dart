@@ -604,6 +604,19 @@ class AppLocalizationsEs extends AppLocalizations {
       'Elija de dónde proviene su ubicación actual. Se envía a la radio y se usa para APRS-IS y el seguimiento de satélites.';
 
   @override
+  @override
+  String get settingsLocationUsePhoneGps => 'Usar el GPS de este teléfono';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Obtiene una posición actual y la guarda como ubicación manual para la radio, APRS-IS y el seguimiento de satélites.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => 'Ubicación del teléfono guardada.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'No se pudo obtener la ubicación del teléfono. Compruebe el permiso de ubicación y active los servicios de ubicación.';
   String get settingsLocationSourceGps => 'Desde GPS (radio o GPS serie)';
 
   @override

@@ -592,6 +592,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsLocationInfo => '选择当前位置的来源。它会发送到电台，并用于 APRS-IS 和卫星跟踪。';
 
   @override
+  @override
+  String get settingsLocationUsePhoneGps => '使用本机 GPS 定位';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      '获取一次当前位置，并将其保存为手动位置，供电台、APRS-IS 和卫星跟踪使用。';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => '已保存手机位置。';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      '无法获取手机位置。请检查定位权限并开启系统定位服务。';
   String get settingsLocationSourceGps => '来自 GPS（电台或串行 GPS）';
 
   @override

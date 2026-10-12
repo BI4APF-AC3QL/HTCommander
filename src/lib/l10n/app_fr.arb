@@ -204,6 +204,10 @@
 
   "settingsLocation": "Position",
   "settingsLocationInfo": "Choisissez la provenance de votre position actuelle. Elle est envoyée à la radio et utilisée pour l'APRS-IS et le suivi des satellites.",
+  "settingsLocationUsePhoneGps": "Utiliser le GPS de ce téléphone",
+  "settingsLocationUsePhoneGpsHint": "Récupère une position actuelle et l'enregistre comme position manuelle pour la radio, APRS-IS et le suivi des satellites.",
+  "settingsLocationPhoneGpsSuccess": "Position du téléphone enregistrée.",
+  "settingsLocationPhoneGpsFailure": "Impossible d'obtenir la position du téléphone. Vérifiez l'autorisation et activez les services de localisation.",
   "settingsLocationSourceGps": "Depuis le GPS (radio ou GPS série)",
   "settingsLocationSourceManual": "Définir manuellement",
   "settingsLocationLatitude": "Latitude",

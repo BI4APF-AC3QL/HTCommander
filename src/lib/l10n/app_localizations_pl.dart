@@ -607,6 +607,19 @@ class AppLocalizationsPl extends AppLocalizations {
       'Wybierz źródło swojej bieżącej lokalizacji. Jest ona wysyłana do radia i używana w APRS-IS oraz do śledzenia satelitów.';
 
   @override
+  @override
+  String get settingsLocationUsePhoneGps => 'Użyj GPS tego telefonu';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Pobiera aktualną pozycję i zapisuje ją jako lokalizację ręczną dla radia, APRS-IS i śledzenia satelitów.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => 'Zapisano lokalizację telefonu.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'Nie można pobrać lokalizacji telefonu. Sprawdź uprawnienia i włącz usługi lokalizacji.';
   String get settingsLocationSourceGps => 'Z GPS (radio lub GPS szeregowy)';
 
   @override
