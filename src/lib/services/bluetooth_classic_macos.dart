@@ -72,6 +72,26 @@ class BluetoothClassicMacOS {
     _broker.logError('[BT-ClassicBridge] $msg');
   }
 
+  void _logDisconnect(String channel, String address, Object? rawReason) {
+    final reason = rawReason is String ? rawReason : null;
+    if (reason == null || reason.isEmpty || reason == 'user_requested') {
+      _logInfo('$channel event disconnected for $address');
+      return;
+    }
+    if (reason == 'receive_queue_overflow' ||
+        reason == 'control_queue_overflow' ||
+        reason == 'read_failed' ||
+        reason == 'write_failed') {
+      _logError('$channel link ended; reason=$reason');
+      return;
+    }
+    if (reason == 'remote_closed') {
+      _logInfo('$channel link ended; peer closed RFCOMM');
+      return;
+    }
+    _logInfo('$channel event disconnected for $address');
+  }
+
   Uint8List? _coerceBytes(dynamic data) {
     if (data is Uint8List) return data;
     if (data is List) {
@@ -102,12 +122,7 @@ class BluetoothClassicMacOS {
               );
               break;
             case 'disconnected':
-              final reason = event['reason'];
-              if (reason == 'receive_queue_overflow') {
-                _logError('Control receive queue overloaded; connection ended');
-              } else {
-                _logInfo('Control event disconnected for $address');
-              }
+              _logDisconnect('Control', address, event['reason']);
               _connectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.disconnected,
@@ -159,12 +174,7 @@ class BluetoothClassicMacOS {
               );
               break;
             case 'disconnected':
-              final reason = event['reason'];
-              if (reason == 'receive_queue_overflow') {
-                _logError('Audio receive queue overloaded; connection ended');
-              } else {
-                _logInfo('Audio event disconnected for $address');
-              }
+              _logDisconnect('Audio', address, event['reason']);
               _audioConnectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.disconnected,

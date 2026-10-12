@@ -46,6 +46,12 @@ class BluetoothClassicPlugin(
         private const val DATA_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_data"
         private const val AUDIO_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_audio"
         private const val MAX_WRITE_BYTES = 64 * 1024
+        private const val DISCONNECT_REQUESTED = "user_requested"
+        private const val DISCONNECT_REMOTE_CLOSED = "remote_closed"
+        private const val DISCONNECT_READ_FAILED = "read_failed"
+        private const val DISCONNECT_WRITE_FAILED = "write_failed"
+        private const val DISCONNECT_CONTROL_QUEUE_OVERFLOW =
+            "control_queue_overflow"
 
         // Standard Serial Port Profile (control / GAIA).
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -386,7 +392,7 @@ class BluetoothClassicPlugin(
         if (address == null) return
         val normalized = normalizeAddress(address)
         val map = if (audio) audioConnections else controlConnections
-        map.remove(normalized)?.close()
+        map.remove(normalized)?.close(DISCONNECT_REQUESTED)
     }
 
     private fun send(
@@ -412,13 +418,20 @@ class BluetoothClassicPlugin(
         if (!accepted) result.success(false)
     }
 
-    private fun postEvent(audio: Boolean, event: String, address: String, data: ByteArray?) {
+    private fun postEvent(
+        audio: Boolean,
+        event: String,
+        address: String,
+        data: ByteArray? = null,
+        reason: String? = null,
+    ) {
         mainHandler.post {
             val sink = if (audio) audioSink else dataSink
             val payload = HashMap<String, Any>()
             payload["event"] = event
             payload["address"] = address
             if (data != null) payload["data"] = data
+            if (reason != null) payload["reason"] = reason
             sink?.success(payload)
         }
     }
@@ -446,13 +459,15 @@ class BluetoothClassicPlugin(
                 val input = try {
                     socket.inputStream
                 } catch (e: IOException) {
-                    handleClosed()
+                    handleClosed(DISCONNECT_READ_FAILED)
                     return@Thread
                 }
+                var closeReason = DISCONNECT_REMOTE_CLOSED
                 while (!closed) {
                     val count = try {
                         input.read(buffer)
                     } catch (e: IOException) {
+                        closeReason = DISCONNECT_READ_FAILED
                         break
                     }
                     if (count < 0) break
@@ -460,7 +475,7 @@ class BluetoothClassicPlugin(
                         enqueueData(buffer.copyOf(count))
                     }
                 }
-                handleClosed()
+                handleClosed(closeReason)
             }.apply { isDaemon = true; start() }
         }
 
@@ -475,7 +490,7 @@ class BluetoothClassicPlugin(
                 BoundedBluetoothEventQueue.OfferResult.REJECTED -> {
                     if (!audio) {
                         Log.w(TAG, "Control event queue overflow; closing RFCOMM connection")
-                        handleClosed()
+                        handleClosed(DISCONNECT_CONTROL_QUEUE_OVERFLOW)
                     }
                 }
                 BoundedBluetoothEventQueue.OfferResult.ACCEPTED,
@@ -545,13 +560,13 @@ class BluetoothClassicPlugin(
                 socket.outputStream.flush()
                 true
             } catch (_: IOException) {
-                handleClosed()
+                handleClosed(DISCONNECT_WRITE_FAILED)
                 false
             }
         }
 
         @Synchronized
-        private fun handleClosed() {
+        private fun handleClosed(reason: String) {
             if (closed) return
             closed = true
             pendingData.clear()
@@ -563,11 +578,11 @@ class BluetoothClassicPlugin(
             } catch (_: IOException) {
             }
             writer.close()
-            postEvent(audio, "disconnected", address, null)
+            postEvent(audio, "disconnected", address, reason = reason)
         }
 
         @Synchronized
-        fun close() {
+        fun close(reason: String = DISCONNECT_REQUESTED) {
             if (closed) return
             closed = true
             pendingData.clear()
@@ -577,7 +592,7 @@ class BluetoothClassicPlugin(
             } catch (_: IOException) {
             }
             writer.close()
-            postEvent(audio, "disconnected", address, null)
+            postEvent(audio, "disconnected", address, reason = reason)
         }
     }
 }
