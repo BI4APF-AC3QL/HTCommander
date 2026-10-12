@@ -73,7 +73,7 @@ jobs:
 
       - name: Test bounded Android Bluetooth writer
         working-directory: src/android
-        run: ./gradlew testDebugUnitTest
+        run: ./gradlew :app:testDebugUnitTest
 
       - name: Build signed Android App Bundle
         working-directory: src
