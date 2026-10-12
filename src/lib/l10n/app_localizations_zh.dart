@@ -1237,7 +1237,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connectBluetoothOffTitle => '蓝牙不可用';
 
   @override
-  String get connectBluetoothOffBody => '蓝牙不可用或已禁用。\n\n请在设备设置中启用蓝牙后重试。';
+  String get connectBluetoothOffBody =>
+      '蓝牙不可用或已禁用。\n\n请在设备设置中打开蓝牙；如果使用 Android 12 或更高版本，请在应用权限中允许 HTCommander 访问“附近的设备”，然后重试。';
 
   @override
   String get radioConnectionTitle => '电台连接';

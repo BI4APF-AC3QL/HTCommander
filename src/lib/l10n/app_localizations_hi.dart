@@ -1285,7 +1285,7 @@ class AppLocalizationsHi extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'ब्लूटूथ उपलब्ध नहीं है या अक्षम है।\n\nकृपया अपने डिवाइस की सेटिंग्स में ब्लूटूथ सक्षम करें और पुनः प्रयास करें।';
+      'ब्लूटूथ उपलब्ध नहीं है या बंद है।\n\nडिवाइस सेटिंग में ब्लूटूथ चालू करें। Android 12 या उसके बाद के संस्करण में ऐप अनुमतियों में HTCommander को आस-पास के डिवाइस देखने की अनुमति भी दें, फिर पुनः प्रयास करें।';
 
   @override
   String get radioConnectionTitle => 'रेडियो कनेक्शन';

@@ -1295,7 +1295,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Le Bluetooth n\'est pas disponible ou est désactivé.\n\nVeuillez activer le Bluetooth dans les paramètres de votre appareil et réessayer.';
+      'Le Bluetooth n\'est pas disponible ou est désactivé.\n\nActivez le Bluetooth dans les paramètres de l\'appareil. Sous Android 12 ou version ultérieure, autorisez aussi HTCommander à accéder aux appareils à proximité dans les autorisations de l\'application, puis réessayez.';
 
   @override
   String get radioConnectionTitle => 'Connexion radio';

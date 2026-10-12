@@ -1255,7 +1255,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Bluetooth を利用できないか、無効になっています。\n\nデバイスの設定で Bluetooth を有効にしてから再試行してください。';
+      'Bluetooth を利用できないか、無効になっています。\n\nデバイスの設定で Bluetooth を有効にしてください。Android 12 以降では、アプリの権限で HTCommander に「付近のデバイス」へのアクセスも許可してから、もう一度お試しください。';
 
   @override
   String get radioConnectionTitle => '無線機の接続';

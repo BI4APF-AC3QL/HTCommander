@@ -422,7 +422,7 @@
   "connectAllConnectedTitle": "全部已连接",
   "connectAllConnectedBody": "所有检测到的电台设备均已连接。",
   "connectBluetoothOffTitle": "蓝牙不可用",
-  "connectBluetoothOffBody": "蓝牙不可用或已禁用。\n\n请在设备设置中启用蓝牙后重试。",
+  "connectBluetoothOffBody": "蓝牙不可用或已禁用。\n\n请在设备设置中打开蓝牙；如果使用 Android 12 或更高版本，请在应用权限中允许 HTCommander 访问“附近的设备”，然后重试。",
 
   "radioConnectionTitle": "电台连接",
   "radioConnectionEmpty": "未找到兼容的电台。\n请确保您的电台已开机且蓝牙已启用。",

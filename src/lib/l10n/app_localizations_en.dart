@@ -1277,7 +1277,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Bluetooth is not available or is turned off.\n\nPlease enable Bluetooth in your device settings and try again.';
+      'Bluetooth is not available or is turned off.\n\nPlease turn on Bluetooth in your device settings. On Android 12 or later, also allow HTCommander access to Nearby devices in app permissions, then try again.';
 
   @override
   String get radioConnectionTitle => 'Radio Connection';

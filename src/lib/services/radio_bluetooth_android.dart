@@ -1,6 +1,7 @@
 part of 'bluetooth_service.dart';
 
 Future<bool> _checkBluetoothAndroid() async {
+  if (!await _ensureAndroidBluetoothPermissions()) return false;
   return _checkBluetoothBleAdapter();
 }
 
@@ -12,13 +13,15 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesAndroid(
   BluetoothService service, {
   required Duration timeout,
 }) async {
-  // Android 12+ (API 31+) requires the BLUETOOTH_CONNECT (and BLUETOOTH_SCAN)
-  // runtime permissions before paired devices can be enumerated. On first run
-  // these are not yet granted, so request them up-front and await the user's
-  // response. Without this the native plugin returns an empty list on the same
-  // call that triggers the permission dialog, and the user sees "No compatible
-  // radios found" with no chance to retry.
-  await _ensureAndroidBluetoothPermissions();
+  // Android 12+ (API 31+) requires BLUETOOTH_CONNECT before paired Classic
+  // devices can be enumerated. Scan permission is optional because discovery
+  // cancellation is only a connection-speed optimization.
+  if (!await _ensureAndroidBluetoothPermissions()) {
+    service._broker.logError(
+      '[Android] Bluetooth Connect permission was not granted',
+    );
+    return const [];
+  }
 
   // Android uses Bluetooth Classic (RFCOMM/SPP) for the radio control channel.
   // Compatible radios must be paired (bonded) in the Android Bluetooth settings;
@@ -26,22 +29,17 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesAndroid(
   return _findCompatibleDevicesClassic(service);
 }
 
-/// Requests the runtime Bluetooth permissions needed to enumerate and connect
-/// to paired Classic devices on Android 12+, waiting for the user's response.
+/// Requests the runtime Bluetooth Connect permission needed to enumerate and
+/// connect to paired Classic devices on Android 12+, waiting for the user's
+/// response. Bluetooth Scan is not required for bonded-device enumeration.
 ///
-/// Failures are swallowed: if the plugin is unavailable or throws, the native
-/// side still requests permissions as a fallback and the caller handles the
-/// resulting (possibly empty) device list.
-Future<void> _ensureAndroidBluetoothPermissions() async {
-  try {
-    await [
-      Permission.bluetoothConnect,
-      Permission.bluetoothScan,
-    ].request();
-  } catch (_) {
-    // Ignore; the native plugin requests permissions as a fallback.
-  }
-}
+/// A missing permission plugin or a denied request is reported as unavailable;
+/// callers can then show their normal Bluetooth-unavailable guidance.
+Future<bool> _ensureAndroidBluetoothPermissions() =>
+    AndroidBluetoothPermissions.ensureConnect(
+      status: () => Permission.bluetoothConnect.status,
+      request: () => Permission.bluetoothConnect.request(),
+    );
 
 Future<int?> _connectToRadioAndroid(
   BluetoothService service,
