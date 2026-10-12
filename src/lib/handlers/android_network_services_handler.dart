@@ -7,15 +7,24 @@ import '../services/data_broker_client.dart';
 /// The Android Activity remains the Flutter engine host; the service only keeps
 /// that process eligible to run while the app is backgrounded.
 class AndroidNetworkServicesHandler {
-  AndroidNetworkServicesHandler()
+  AndroidNetworkServicesHandler({
+    Future<void> Function()? startService,
+    Future<void> Function()? stopService,
+  })
     : _broker = DataBrokerClient(),
-      _lifecycle = AndroidServerLifecycle();
+      _lifecycle = AndroidServerLifecycle(),
+      _startService = startService,
+      _stopService = stopService;
 
   final DataBrokerClient _broker;
   final AndroidServerLifecycle _lifecycle;
+  final Future<void> Function()? _startService;
+  final Future<void> Function()? _stopService;
   Future<void> _transition = Future<void>.value();
   bool _active = false;
   bool _disposed = false;
+  Timer? _retryTimer;
+  var _retryDelay = const Duration(seconds: 2);
 
   void init() {
     _broker.subscribeMultiple(
@@ -34,33 +43,65 @@ class AndroidNetworkServicesHandler {
 
   void _apply() {
     if (_disposed) return;
-    final desired = _shouldRun;
-    if (desired == _active) return;
-    _active = desired;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _transition = _transition
         .catchError((Object _) {})
         .then((_) async {
+          if (_disposed) return;
+          final desired = _shouldRun;
+          if (desired == _active) return;
           try {
             if (desired) {
-              await _lifecycle.start(reason: 'networkServices');
+              await (_startService?.call() ??
+                  _lifecycle.start(reason: 'networkServices'));
             } else {
-              await _lifecycle.stop(reason: 'networkServices');
+              await (_stopService?.call() ??
+                  _lifecycle.stop(reason: 'networkServices'));
             }
+            _active = desired;
+            _retryDelay = const Duration(seconds: 2);
           } catch (error) {
             _broker.logError(
               'Android network-services background service failed: $error',
             );
+            _scheduleRetry();
           }
         });
   }
 
+  void _scheduleRetry() {
+    if (_disposed || _retryTimer != null) return;
+    final delay = _retryDelay;
+    _retryDelay = Duration(
+      seconds: (_retryDelay.inSeconds * 2).clamp(2, 60).toInt(),
+    );
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      _apply();
+    });
+  }
+
   Future<void> dispose() async {
+    if (_disposed) return _transition;
     _disposed = true;
-    if (!_active) return;
-    _active = false;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _broker.dispose();
     _transition = _transition
         .catchError((Object _) {})
-        .then((_) => _lifecycle.stop(reason: 'networkServices'));
+        .then((_) async {
+          if (!_active) return;
+          try {
+            await (_stopService?.call() ??
+                _lifecycle.stop(reason: 'networkServices'));
+            _active = false;
+          } catch (error) {
+            _broker.logError(
+              'Android network-services background service failed to stop: $error',
+            );
+          }
+        });
     await _transition;
   }
 }
