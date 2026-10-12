@@ -71,4 +71,4 @@ APRS message backfill uses the [aprs.fi](https://aprs.fi) API, courtesy of Heikk
 Repeater directory search is powered by [RepeaterBook](https://www.repeaterbook.com). Data courtesy of RepeaterBook.com. RepeaterBook access requires each user to generate their own personal API token for HTCommander.
 # Windows phone remote control / 手机远程操控
 
-This fork includes authenticated phone browser control and audio, optional guarded PTT, and a configurable portable HTTPS gateway. Start with [简单配置方法](简单配置方法.md), then see [the complete guide](docs/phone-remote-control.md). Windows test releases bundle both applications; remote access and transmit are disabled by default.
+This fork includes authenticated phone browser control and audio, optional guarded PTT, a configurable portable HTTPS gateway, and an Android mode that connects to a radio and hosts LAN remote control. Start with [简单配置方法](简单配置方法.md), then see the [Windows phone guide](docs/phone-remote-control.md) or [Android radio/server guide](docs/android-radio-server.md). Remote access and transmit are disabled by default.

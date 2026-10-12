@@ -604,10 +604,15 @@ Future<void> _startApp(List<String> args) async {
     DataBroker.addDataHandler('AgwpeHandler', agwpeHandler);
   }
 
-  // Register the web server handler (desktop only) so that, when enabled in
-  // settings, the Flutter web UI is served over HTTP. Not available on
-  // web/iOS/Android.
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // Register the radio web server on desktop and Android. Android can host
+  // the built-in remote page on the LAN while this same app controls its local
+  // Bluetooth radio; an Android foreground service keeps the opted-in server
+  // alive when the activity is backgrounded.
+  if (!kIsWeb &&
+      (Platform.isWindows ||
+          Platform.isLinux ||
+          Platform.isMacOS ||
+          Platform.isAndroid)) {
     final webServerHandler = WebServerHandler();
     webServerHandler.init();
     DataBroker.addDataHandler('WebServerHandler', webServerHandler);

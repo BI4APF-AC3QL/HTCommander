@@ -568,10 +568,15 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              _text(
-                '同一 Wi-Fi：使用上方电脑 IP。外网：电脑和手机使用同一 VPN，或配置 HTTPS 反向代理并填写上方外网地址。手机麦克风必须使用 HTTPS。Windows 防火墙需要允许此应用的相应网络访问。',
-                'Same Wi-Fi: use the PC IP above. Internet: join the same VPN or configure an HTTPS reverse proxy and enter its public origin. Browser microphone requires HTTPS. Allow the app through Windows Firewall on the intended network.',
-              ),
+              Platform.isAndroid
+                  ? _text(
+                      '同一 Wi-Fi：另一台手机访问上方本机 IP 和端口。Android 会在服务开启期间显示常驻通知并保持服务运行，可能增加耗电；关闭网页服务即可停止。外网请使用 VPN 或 HTTPS 反向代理。浏览器麦克风和定位需要 HTTPS；局域网 HTTP 下可使用电台控制和收听。',
+                      'On the same Wi-Fi, open the local IP and port above on another device. Android shows an ongoing notification and keeps the server active while enabled, which can use more battery; turn the web server off to stop it. Use a VPN or HTTPS reverse proxy for outside access. Browser microphone and location need HTTPS; radio control and listening work over LAN HTTP.',
+                    )
+                  : _text(
+                      '同一 Wi-Fi：使用上方电脑 IP。外网：电脑和手机使用同一 VPN，或配置 HTTPS 反向代理并填写上方外网地址。手机麦克风必须使用 HTTPS。Windows 防火墙需要允许此应用的相应网络访问。',
+                      'Same Wi-Fi: use the PC IP above. Internet: join the same VPN or configure an HTTPS reverse proxy and enter its public origin. Browser microphone requires HTTPS. Allow the app through Windows Firewall on the intended network.',
+                    ),
             ),
             if (_status.isNotEmpty) Text(_status),
             if (_error != null)

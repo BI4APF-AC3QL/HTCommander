@@ -24,7 +24,8 @@ import 'dart:convert';
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 import '../aprs/aprs_packet.dart';
 import '../models/aircraft.dart';
@@ -38,6 +39,7 @@ import '../services/web/web_server.dart';
 import '../services/web/remote_access_config.dart';
 import '../services/web/remote_radio_controller.dart';
 import '../services/web/remote_media.dart';
+import '../services/android_server_lifecycle.dart';
 import '../winlink/winlink_mail.dart';
 
 /// Manages the lifecycle of the [WebServer] and bridges WebSocket clients to the
@@ -54,6 +56,8 @@ class WebServerHandler {
   Timer? _rebindTimer;
 
   final DataBrokerClient _broker;
+  final AndroidServerLifecycle _androidServerLifecycle =
+      AndroidServerLifecycle();
 
   WebServer? _server;
   int? get boundPort => _server?.boundPort;
@@ -891,7 +895,33 @@ class WebServerHandler {
         _remote.audit(client.id, 'writeDenied', 'denied');
     server.onBinaryMessage = _onBinaryMessage;
     _server = server;
-    server.start().then((ok) {
+    () async {
+      if (_disposed || !_enabled || _server != server) {
+        server.dispose();
+        return;
+      }
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          await _androidServerLifecycle.start();
+        } catch (error) {
+          await _androidServerLifecycle.stop();
+          if (_server == server) _server = null;
+          server.dispose();
+          _broker.dispatch(
+            deviceId: 0,
+            name: 'webServerStatus',
+            data: 'Android foreground service failed: $error',
+            store: false,
+          );
+          return;
+        }
+        if (_disposed || !_enabled || _server != server) {
+          await _androidServerLifecycle.stop();
+          server.dispose();
+          return;
+        }
+      }
+      final ok = await server.start();
       if (_disposed || _server != server) {
         server.dispose();
         return;
@@ -907,8 +937,11 @@ class WebServerHandler {
       if (!ok) {
         _server = null;
         server.dispose();
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          await _androidServerLifecycle.stop();
+        }
       }
-    });
+    }();
     // Mirror all host PCM playback (radio, transmit, EchoLink, AllStarLink) to
     // opted-in browsers. Desktop only; the web build never plays local audio.
     if (!kIsWeb) PcmPlayer.playbackTap = _onHostPcm;
@@ -916,21 +949,27 @@ class WebServerHandler {
 
   Future<void> _stopServer() async {
     final server = _server;
-    if (server == null) return;
-    if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
-    _remote.recallControl();
-    _audioClients.clear();
-    _mediaClients.clear();
-    _receiveEncoder.reset();
-    _broker.dispatch(
-      deviceId: 0,
-      name: 'CancelRemoteAprs',
-      data: null,
-      store: false,
-    );
-    _server = null;
-    await server.stop();
-    server.dispose();
+    if (server != null) {
+      if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
+      _remote.recallControl();
+      _audioClients.clear();
+      _mediaClients.clear();
+      _receiveEncoder.reset();
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'CancelRemoteAprs',
+        data: null,
+        store: false,
+      );
+      _server = null;
+      await server.stop();
+      server.dispose();
+    }
+    if ((!_enabled || _disposed) &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      await _androidServerLifecycle.stop();
+    }
   }
 
   void _onClientDisconnected(WebSocketClient client) {

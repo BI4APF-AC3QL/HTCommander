@@ -11,6 +11,11 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Internet permission required for network access (Winlink/Dump1090) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keep the explicitly enabled radio control server available while the
+         Android app is in the background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Required by SpeechRecognizer even when audio is fed via a file
          descriptor (EXTRA_AUDIO_SOURCE) rather than the microphone. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -50,6 +55,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".RadioWebServerService"
+            android:description="Keeps the user-enabled HTCommander radio control server active while the app is in the background."
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="true">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintains an explicitly enabled local radio control web server and its Bluetooth-connected radio session." />
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

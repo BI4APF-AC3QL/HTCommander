@@ -1,6 +1,14 @@
 name: Build Android
 
 on:
+  push:
+    branches: [main, 'feature/remote-aprs-dashboard']
+    paths:
+      - 'src/lib/**'
+      - 'src/android/**'
+      - 'src/pubspec.yaml'
+      - 'src/pubspec.lock'
+      - 'docs/android-radio-server.md'
   workflow_dispatch:
 
 permissions:
