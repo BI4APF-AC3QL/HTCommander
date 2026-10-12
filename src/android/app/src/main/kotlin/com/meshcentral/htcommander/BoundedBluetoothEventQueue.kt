@@ -16,6 +16,8 @@ internal class BoundedBluetoothEventQueue(
 
     private val chunks = ArrayDeque<ByteArray>()
     private var bytes = 0
+    private var droppedChunks = 0L
+    private var droppedBytes = 0L
 
     init {
         require(maxChunks > 0)
@@ -34,7 +36,10 @@ internal class BoundedBluetoothEventQueue(
             (chunks.size >= maxChunks || bytes + data.size > maxBytes)
         ) {
             if (!dropOldest) return OfferResult.REJECTED
-            bytes -= chunks.removeFirst().size
+            val removed = chunks.removeFirst()
+            bytes -= removed.size
+            droppedChunks++
+            droppedBytes += removed.size
             dropped = true
         }
 
@@ -64,4 +69,10 @@ internal class BoundedBluetoothEventQueue(
 
     @Synchronized
     fun queuedChunks(): Int = chunks.size
+
+    @Synchronized
+    fun droppedChunkCount(): Long = droppedChunks
+
+    @Synchronized
+    fun droppedByteCount(): Long = droppedBytes
 }

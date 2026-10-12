@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
@@ -52,6 +53,7 @@ class BluetoothClassicPlugin(
         private const val DISCONNECT_WRITE_FAILED = "write_failed"
         private const val DISCONNECT_CONTROL_QUEUE_OVERFLOW =
             "control_queue_overflow"
+        private const val AUDIO_OVERRUN_REPORT_INTERVAL_MS = 5_000L
 
         // Standard Serial Port Profile (control / GAIA).
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -452,6 +454,10 @@ class BluetoothClassicPlugin(
         private var closed = false
         private var readThread: Thread? = null
         private var dataDeliveryScheduled = false
+        private var audioOverrunReportPending = false
+        private var lastAudioOverrunReportAtMs = 0L
+        private var audioDropsReportedChunks = 0L
+        private var audioDropsReportedBytes = 0L
 
         fun startReading() {
             readThread = Thread {
@@ -501,11 +507,64 @@ class BluetoothClassicPlugin(
                         pendingData.clear()
                         return
                     }
+                    if (audio &&
+                        pendingData.droppedChunkCount() > audioDropsReportedChunks
+                    ) {
+                        reportAudioOverrunIfNeeded()
+                    }
                     if (dataDeliveryScheduled) return
                     dataDeliveryScheduled = true
                     mainHandler.post { deliverNextData() }
                 }
             }
+        }
+
+        /** Reports intentionally discarded playback backlog to the Dart log. */
+        private fun reportAudioOverrunIfNeeded() {
+            if (audioOverrunReportPending) return
+            val now = SystemClock.elapsedRealtime()
+            val delayMs = if (lastAudioOverrunReportAtMs == 0L) {
+                0L
+            } else {
+                (AUDIO_OVERRUN_REPORT_INTERVAL_MS -
+                    (now - lastAudioOverrunReportAtMs)).coerceAtLeast(0L)
+            }
+            audioOverrunReportPending = true
+            mainHandler.postDelayed(
+                {
+                    val payload = synchronized(this) {
+                        audioOverrunReportPending = false
+                        if (closed) return@synchronized null
+                        val nowAtReport = SystemClock.elapsedRealtime()
+                        val sink = audioSink
+                        if (sink == null) {
+                            // Keep the throttle active but retain the counts so
+                            // a later listener can see the accumulated loss.
+                            lastAudioOverrunReportAtMs = nowAtReport
+                            return@synchronized null
+                        }
+                        val totalChunks = pendingData.droppedChunkCount()
+                        val totalBytes = pendingData.droppedByteCount()
+                        val droppedChunks = totalChunks - audioDropsReportedChunks
+                        val droppedBytes = totalBytes - audioDropsReportedBytes
+                        if (droppedChunks <= 0) return@synchronized null
+                        audioDropsReportedChunks = totalChunks
+                        audioDropsReportedBytes = totalBytes
+                        lastAudioOverrunReportAtMs = nowAtReport
+                        Pair(
+                            sink,
+                            mapOf(
+                                "event" to "buffer_overrun",
+                                "address" to address,
+                                "droppedChunks" to droppedChunks,
+                                "droppedBytes" to droppedBytes,
+                            ),
+                        )
+                    }
+                    if (payload != null) payload.first.success(payload.second)
+                },
+                delayMs,
+            )
         }
 
         private fun deliverNextData() {

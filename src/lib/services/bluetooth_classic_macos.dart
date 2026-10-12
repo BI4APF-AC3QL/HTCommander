@@ -184,6 +184,16 @@ class BluetoothClassicMacOS {
               _audioDataControllers[address]?.close();
               _audioDataControllers.remove(address);
               break;
+            case 'buffer_overrun':
+              final chunks = event['droppedChunks'];
+              final bytes = event['droppedBytes'];
+              if (chunks is int && bytes is int && chunks > 0 && bytes >= 0) {
+                _logError(
+                  'Audio receive backlog: Android discarded $chunks stale '
+                  'chunk(s), $bytes byte(s), to catch up with live playback.',
+                );
+              }
+              break;
             case 'data':
               final bytes = _coerceBytes(event['data']);
               if (bytes != null) {
