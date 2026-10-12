@@ -163,8 +163,9 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   /// Settings tabs in display order. On the web the radio is used over the BLE
   /// control channel only, so the audio-centric "Comms" tab and the
-  /// internet-service "Servers" / "Map" tabs are hidden. On Android/iOS the
-  /// "Servers" tab is hidden. All tabs remain visible on desktop platforms.
+  /// internet-service "Servers" / "Map" tabs are hidden. iOS hides the
+  /// "Servers" tab because it cannot host the app's TCP services. Android and
+  /// desktop expose the network services their platforms can run.
   List<String> get _visibleTabs {
     const all = [
       'License',
@@ -190,8 +191,7 @@ class _SettingsDialogState extends State<SettingsDialog>
           )
           .toList();
     }
-    if (defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS) {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
       return all.where((t) => t != 'Servers').toList();
     }
     return all;

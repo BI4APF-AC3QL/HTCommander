@@ -1,8 +1,8 @@
 import 'package:flutter/services.dart';
 
-/// Keeps the Android process alive while the user has explicitly enabled the
-/// in-app LAN remote-control server. The foreground service is Android-only;
-/// other platforms simply ignore a missing plugin.
+/// Keeps the Android process alive while a foreground radio, network server,
+/// or local recording feature is explicitly enabled. Other platforms simply
+/// ignore a missing plugin.
 class AndroidServerLifecycle {
   static const MethodChannel _channel = MethodChannel(
     'com.htcommander/server_lifecycle',

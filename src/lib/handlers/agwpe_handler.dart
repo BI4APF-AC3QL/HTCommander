@@ -15,8 +15,8 @@ Flutter radio stack:
     info (`G`), sends UNPROTO frames (`M`), and bridges connected-mode sessions
     (`C` / `d` / `D`) to an [AX25Session].
 
-The AGWPE feature is desktop-only; on the web the [AgwpeServer] facade resolves
-to an inert stub.
+The AGWPE feature is available on desktop and Android; on the web and iOS the
+[AgwpeServer] facade is not started (the web build uses an inert stub).
 */
 
 import 'dart:typed_data';

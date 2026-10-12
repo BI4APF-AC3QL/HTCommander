@@ -20,6 +20,7 @@ class RadioWebServerService : Service() {
         private const val EXTRA_REASON = "reason"
         private const val REASON_SERVER = "server"
         private const val REASON_RECORDING = "recording"
+        private const val REASON_NETWORK_SERVICES = "networkServices"
         private const val ACTION_START = "com.htcommander.action.START_RADIO_SERVICE"
         private const val ACTION_STOP = "com.htcommander.action.STOP_RADIO_SERVER"
 
@@ -48,7 +49,10 @@ class RadioWebServerService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
 
     private fun setReason(reason: String, enabled: Boolean): Boolean {
-        if (reason != REASON_SERVER && reason != REASON_RECORDING) {
+        if (reason != REASON_SERVER &&
+            reason != REASON_RECORDING &&
+            reason != REASON_NETWORK_SERVICES
+        ) {
             return activeReasons.isNotEmpty()
         }
         if (enabled) activeReasons.add(reason) else activeReasons.remove(reason)
@@ -69,9 +73,9 @@ class RadioWebServerService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // A LAN listener cannot respond while Android suspends the CPU. Acquire
-        // this only while the user has enabled the server, and release it from
-        // onDestroy or an explicit stop.
+        // Network services and the recorder cannot respond while Android
+        // suspends the CPU. Acquire only while a user-enabled feature is active
+        // and release it from onDestroy or an explicit stop.
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HTCommander:RadioServer")
             .apply { setReferenceCounted(false); acquire() }
@@ -138,7 +142,7 @@ class RadioWebServerService : Service() {
         return builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("HTCommander 电台服务运行中")
-            .setContentText("电台远控或接收录音正在后台运行；点此返回应用管理。")
+            .setContentText("电台远控、网络服务或接收录音正在运行；点此返回应用管理。")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(openApp)
             .setOngoing(true)

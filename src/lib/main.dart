@@ -39,6 +39,7 @@ import 'handlers/rolling_voice_handler_stub.dart'
 import 'handlers/morse_key_handler.dart';
 import 'handlers/bbs_handler.dart';
 import 'handlers/agwpe_handler.dart';
+import 'handlers/android_network_services_handler.dart';
 import 'handlers/web_server_handler.dart';
 import 'handlers/home_assistant_handler.dart';
 import 'handlers/debug_log_handler.dart';
@@ -594,11 +595,12 @@ Future<void> _startApp(List<String> args) async {
     DataBroker.addDataHandler('WinlinkClient', winlinkClient);
   }
 
-  // Register the AGWPE server handler (desktop only) so that, when enabled in
+  // Register the AGWPE server handler on desktop and Android so that, when enabled in
   // settings, an AGW Packet Engine (AGWPE) TCP server is exposed for external
   // packet applications. It bridges monitoring, UNPROTO and connected-mode
-  // sessions to the radio. Not available on web/iOS/Android.
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // sessions to the radio. Not available on web/iOS.
+  if (!kIsWeb &&
+      (Platform.isWindows || Platform.isLinux || Platform.isMacOS || Platform.isAndroid)) {
     final agwpeHandler = AgwpeHandler();
     agwpeHandler.init();
     DataBroker.addDataHandler('AgwpeHandler', agwpeHandler);
@@ -618,13 +620,25 @@ Future<void> _startApp(List<String> args) async {
     DataBroker.addDataHandler('WebServerHandler', webServerHandler);
   }
 
-  // Register the Home Assistant handler (desktop only) so that, when enabled in
+  // Register the Home Assistant handler on desktop and Android so that, when enabled in
   // settings, each connected radio is exposed to Home Assistant over MQTT using
-  // auto-discovery for monitoring and control. Not available on web/iOS/Android.
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // auto-discovery for monitoring and control. Not available on web/iOS.
+  if (!kIsWeb &&
+      (Platform.isWindows || Platform.isLinux || Platform.isMacOS || Platform.isAndroid)) {
     final homeAssistantHandler = HomeAssistantHandler();
     homeAssistantHandler.init();
     DataBroker.addDataHandler('HomeAssistantHandler', homeAssistantHandler);
+  }
+
+  // Android network servers need a foreground service when the activity is
+  // backgrounded. Keep it active while AGWPE or Home Assistant is enabled.
+  if (!kIsWeb && Platform.isAndroid) {
+    final networkServicesHandler = AndroidNetworkServicesHandler();
+    networkServicesHandler.init();
+    DataBroker.addDataHandler(
+      'AndroidNetworkServicesHandler',
+      networkServicesHandler,
+    );
   }
 
   // Mirror the preferred radio's channel list and incoming APRS messages to the
