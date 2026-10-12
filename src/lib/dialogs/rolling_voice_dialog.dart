@@ -64,6 +64,7 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
     final status = raw is Map ? raw : const {};
     final folder = status['folder'];
     final labels = {
+      'android_service_failed': 'Android 前台服务未能启动，无法保证后台录音。',
       'storage_open_failed': '无法打开录音目录，请检查权限和磁盘。',
       'worker_stopped': '录音后台已退出，请关闭开关后重新开启。',
       'storage_write_failed': '录音写入失败，已停止后台录音。',
@@ -182,6 +183,11 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
               const Text(
                 '32 kHz / 16 位 / 单声道 WAV；按分钟、信道和电台分段。只记录收到的非数据音频，静噪关闭时噪声也会记录；空闲时间不补静音，不录手机麦克风或本机发射。',
               ),
+              if (!kIsWeb &&
+                  defaultTargetPlatform == TargetPlatform.android) ...[
+                const SizedBox(height: 8),
+                const Text('录音开启时 Android 会显示常驻服务通知并保持后台处理，耗电会增加。关闭录音后服务通知会随其他服务状态一并结束。'),
+              ],
               const SizedBox(height: 8),
               const Text(
                 '默认最近 24 小时，循环目录最多 6 GiB，先达到的限制生效。旧片段自动删除；kept 中的保留片段最多 1 GiB，不自动覆盖。录音只保存在本机。',

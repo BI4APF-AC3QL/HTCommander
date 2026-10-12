@@ -31,11 +31,13 @@ class MainActivity : FlutterActivity() {
                 try {
                     when (call.method) {
                         "start" -> {
-                            RadioWebServerService.start(applicationContext)
+                            val reason = call.argument<String>("reason") ?: "server"
+                            RadioWebServerService.start(applicationContext, reason)
                             result.success(true)
                         }
                         "stop" -> {
-                            RadioWebServerService.stop(applicationContext)
+                            val reason = call.argument<String>("reason") ?: "server"
+                            RadioWebServerService.stop(applicationContext, reason)
                             result.success(true)
                         }
                         else -> result.notImplemented()

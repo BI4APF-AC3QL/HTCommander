@@ -8,17 +8,17 @@ class AndroidServerLifecycle {
     'com.htcommander/server_lifecycle',
   );
 
-  Future<void> start() async {
+  Future<void> start({String reason = 'server'}) async {
     try {
-      await _channel.invokeMethod<void>('start');
+      await _channel.invokeMethod<void>('start', {'reason': reason});
     } on MissingPluginException {
       // The desktop and web implementations do not register this channel.
     }
   }
 
-  Future<void> stop() async {
+  Future<void> stop({String reason = 'server'}) async {
     try {
-      await _channel.invokeMethod<void>('stop');
+      await _channel.invokeMethod<void>('stop', {'reason': reason});
     } on MissingPluginException {
       // The desktop and web implementations do not register this channel.
     }

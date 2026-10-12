@@ -60,10 +60,10 @@
             android:description="@string/radio_web_server_service_description"
             android:exported="false"
             android:foregroundServiceType="specialUse"
-            android:stopWithTask="true">
+            android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Maintains an explicitly enabled local radio control web server and its Bluetooth-connected radio session." />
+                android:value="Keeps the explicitly enabled radio control server or local receive recorder active in the background." />
         </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

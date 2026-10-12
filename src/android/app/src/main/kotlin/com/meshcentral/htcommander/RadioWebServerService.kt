@@ -12,15 +12,29 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 
-/** Keeps the in-process Flutter radio and LAN web server alive while in use. */
+/** Keeps the in-process Flutter radio, recorder and LAN web server alive. */
 class RadioWebServerService : Service() {
     companion object {
         private const val CHANNEL_ID = "radio_remote_server"
         private const val NOTIFICATION_ID = 8042
+        private const val EXTRA_REASON = "reason"
+        private const val REASON_SERVER = "server"
+        private const val REASON_RECORDING = "recording"
+        private const val ACTION_START = "com.htcommander.action.START_RADIO_SERVICE"
         private const val ACTION_STOP = "com.htcommander.action.STOP_RADIO_SERVER"
 
-        fun start(context: Context) {
+        fun start(context: Context, reason: String = REASON_SERVER) {
+            startCommand(context, ACTION_START, reason)
+        }
+
+        fun stop(context: Context, reason: String = REASON_SERVER) {
+            startCommand(context, ACTION_STOP, reason)
+        }
+
+        private fun startCommand(context: Context, action: String, reason: String) {
             val intent = Intent(context, RadioWebServerService::class.java)
+                .setAction(action)
+                .putExtra(EXTRA_REASON, reason)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -28,14 +42,18 @@ class RadioWebServerService : Service() {
             }
         }
 
-        fun stop(context: Context) {
-            context.startService(
-                Intent(context, RadioWebServerService::class.java).setAction(ACTION_STOP),
-            )
-        }
     }
 
+    private val activeReasons = mutableSetOf<String>()
     private var wakeLock: PowerManager.WakeLock? = null
+
+    private fun setReason(reason: String, enabled: Boolean): Boolean {
+        if (reason != REASON_SERVER && reason != REASON_RECORDING) {
+            return activeReasons.isNotEmpty()
+        }
+        if (enabled) activeReasons.add(reason) else activeReasons.remove(reason)
+        return activeReasons.isNotEmpty()
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -60,7 +78,13 @@ class RadioWebServerService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val reason = intent?.getStringExtra(EXTRA_REASON) ?: REASON_SERVER
+        val active = when (intent?.action) {
+            ACTION_STOP -> setReason(reason, false)
+            ACTION_START -> setReason(reason, true)
+            else -> setReason(REASON_SERVER, true)
+        }
+        if (!active) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
             } else {
@@ -70,8 +94,8 @@ class RadioWebServerService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        // The HTTP listener and radio bridge live in Flutter's main isolate.
-        // A restarted notification-only service cannot restore them safely.
+        // The HTTP listener, recorder and radio bridge live in Flutter's main
+        // isolate. A restarted notification-only service cannot restore them.
         return START_NOT_STICKY
     }
 
@@ -90,7 +114,7 @@ class RadioWebServerService : Service() {
             "HTCommander 电台服务",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "电台连接和手机远程控制服务运行时显示"
+            description = "电台远控服务器或接收录音运行时显示"
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -114,7 +138,7 @@ class RadioWebServerService : Service() {
         return builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("HTCommander 电台服务运行中")
-            .setContentText("手机远程控制服务已开启；点此返回应用管理。")
+            .setContentText("电台远控或接收录音正在后台运行；点此返回应用管理。")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(openApp)
             .setOngoing(true)

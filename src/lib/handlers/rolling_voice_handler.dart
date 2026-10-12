@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
+import '../services/android_server_lifecycle.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../services/recording/rolling_voice_recorder.dart';
@@ -10,10 +12,12 @@ class RollingVoiceHandler {
   RollingVoiceHandler({this.folderProvider});
   final Future<String> Function()? folderProvider;
   final _broker = DataBrokerClient();
+  final _androidLifecycle = AndroidServerLifecycle();
   late final RollingVoiceRecorder _recorder = RollingVoiceRecorder(
     onState: _state,
   );
   bool _disposed = false;
+  bool _androidServiceRequested = false;
   int _revision = 0;
   String? _folder;
   Map<String, Object?> _last = {};
@@ -67,6 +71,7 @@ class RollingVoiceHandler {
     if (_disposed) return;
     if (_broker.getValue<bool>(0, 'RollingVoiceEnabled', false) != true) {
       await _recorder.stop();
+      await _stopAndroidService();
       if (revision == _revision) {
         _state({'running': false, 'folder': _folder, 'retentionHours': _hours});
       }
@@ -77,6 +82,17 @@ class RollingVoiceHandler {
       return;
     }
     _state({'running': false, 'starting': true});
+    if (Platform.isAndroid && !_androidServiceRequested) {
+      try {
+        await _androidLifecycle.start(reason: 'recording');
+        _androidServiceRequested = true;
+      } catch (_) {
+        if (revision == _revision) {
+          _state({'running': false, 'error': 'android_service_failed'});
+        }
+        return;
+      }
+    }
     try {
       _folder ??= folderProvider != null
           ? await folderProvider!()
@@ -84,10 +100,17 @@ class RollingVoiceHandler {
       if (_disposed || revision != _revision) return;
       await _recorder.start(_folder!, _hours);
     } catch (_) {
+      await _stopAndroidService();
       if (revision == _revision) {
         _state({'running': false, 'error': 'storage_open_failed'});
       }
     }
+  }
+
+  Future<void> _stopAndroidService() async {
+    if (!Platform.isAndroid || !_androidServiceRequested) return;
+    _androidServiceRequested = false;
+    await _androidLifecycle.stop(reason: 'recording');
   }
 
   void _audio(int id, String name, Object? value) {
@@ -144,7 +167,7 @@ class RollingVoiceHandler {
       _revision++;
       _broker.dispose();
     }
-    return _recorder.stop();
+    return _recorder.stop().whenComplete(_stopAndroidService);
   }
 
   void dispose() => unawaited(close());
