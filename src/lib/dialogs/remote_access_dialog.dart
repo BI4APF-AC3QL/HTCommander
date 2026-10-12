@@ -93,12 +93,12 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
   Future<void> _loadAddresses() async {
     if (kIsWeb) return;
     try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-      );
+      final interfaces = await NetworkInterface.list();
       final addresses = interfaces
           .expand((i) => i.addresses)
-          .where((a) => !a.isLinkLocal && !a.isLoopback)
+          .where(
+            (a) => !a.isLinkLocal && !a.isLoopback && !a.isMulticast,
+          )
           .map((a) => a.address)
           .toSet()
           .toList();

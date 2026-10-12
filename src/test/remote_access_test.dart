@@ -76,6 +76,34 @@ void main() {
     expect(server.boundPort, isNull);
     server.dispose();
   });
+  test('remote server accepts IPv6 LAN clients', () async {
+    final server = WebServer(
+      0,
+      remoteConfig: const RemoteAccessConfig(
+        enabled: true,
+        password: 'a-long-test-password',
+      ),
+    );
+    expect(await server.start(), true);
+    final http = HttpClient();
+    try {
+      final request = await http.getUrl(
+        Uri(
+          scheme: 'http',
+          host: '::1',
+          port: server.boundPort!,
+          path: '/login',
+        ),
+      );
+      final response = await request.close();
+      expect(response.statusCode, HttpStatus.ok);
+      expect(await utf8.decoder.bind(response).join(), contains('HTCommander'));
+    } finally {
+      http.close(force: true);
+      await server.stop();
+      server.dispose();
+    }
+  });
   test('real HTTP login protects static files, websocket and logout', () async {
     final server = WebServer(
       0,

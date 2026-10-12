@@ -230,12 +230,7 @@ class WebServer {
         final external = remoteConfig.externalOrigin;
         if (external != null) _allowedHosts.add(Uri.parse(external).host);
       }
-      final listener = await HttpServer.bind(
-        remoteConfig.enabled
-            ? InternetAddress.anyIPv4
-            : InternetAddress.loopbackIPv4,
-        port,
-      );
+      final listener = await _bindListener();
       if (generation != _generation) {
         await listener.close(force: true);
         return false;
@@ -254,6 +249,25 @@ class WebServer {
       _broker.logError('[WebServer] Failed to start on port $port: $ex');
       _running = false;
       return false;
+    }
+  }
+
+  Future<HttpServer> _bindListener() async {
+    if (!remoteConfig.enabled) {
+      return HttpServer.bind(InternetAddress.loopbackIPv4, port);
+    }
+
+    // Prefer a dual-stack IPv6 socket so IPv6-only LANs and public IPv6
+    // deployments can reach the server. Fall back to IPv4 for machines where
+    // IPv6 is disabled at the OS level.
+    try {
+      return await HttpServer.bind(
+        InternetAddress.anyIPv6,
+        port,
+        v6Only: false,
+      );
+    } on SocketException {
+      return HttpServer.bind(InternetAddress.anyIPv4, port);
     }
   }
 
