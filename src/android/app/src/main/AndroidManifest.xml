@@ -57,7 +57,7 @@
         </activity>
         <service
             android:name=".RadioWebServerService"
-            android:description="Keeps the user-enabled HTCommander radio control server active while the app is in the background."
+            android:description="@string/radio_web_server_service_description"
             android:exported="false"
             android:foregroundServiceType="specialUse"
             android:stopWithTask="true">

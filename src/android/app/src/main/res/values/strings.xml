@@ -1,0 +1,3 @@
+<resources>
+    <string name="radio_web_server_service_description">Keeps the user-enabled HTCommander radio control server active while the app is in the background.</string>
+</resources>
