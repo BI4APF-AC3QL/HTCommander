@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_serial_communication/flutter_serial_communication.dart';
@@ -56,7 +54,7 @@ void main() {
       expect(usb.disconnectCount, 1);
       expect(DataBroker.getValue<String>(1, 'GpsStatus'), 'PortError');
     } finally {
-      await handler.dispose();
+      handler.dispose();
       await input.close();
       await connectionStatus.close();
       debugDefaultTargetPlatformOverride = previousPlatform;

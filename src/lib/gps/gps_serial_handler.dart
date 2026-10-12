@@ -7,6 +7,7 @@ Ported from the C# `HTCommander.Gps.GpsSerialHandler` class.
 */
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
@@ -29,11 +30,9 @@ import 'gps_data.dart';
 class GpsSerialHandler {
   GpsSerialHandler({
     FlutterSerialCommunication? androidUsbSerial,
-    Stream<Uint8List> Function()? androidUsbData,
-    Stream<bool> Function()? androidUsbConnectionStatus,
-  }) : _androidUsbSerial = androidUsbSerial ?? FlutterSerialCommunication(),
-       _androidUsbData = androidUsbData,
-       _androidUsbConnectionStatus = androidUsbConnectionStatus;
+    this._androidUsbData,
+    this._androidUsbConnectionStatus,
+  }) : _androidUsbSerial = androidUsbSerial ?? FlutterSerialCommunication();
 
   /// Device id that owns persisted application settings.
   static const int _settingsDeviceId = 0;
