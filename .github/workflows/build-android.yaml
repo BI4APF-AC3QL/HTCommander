@@ -71,7 +71,7 @@ jobs:
         working-directory: src
         run: flutter build apk --release
 
-      - name: Test bounded Android Bluetooth writer
+      - name: Test bounded Android Bluetooth queues
         working-directory: src/android
         run: ./gradlew :app:testDebugUnitTest
 

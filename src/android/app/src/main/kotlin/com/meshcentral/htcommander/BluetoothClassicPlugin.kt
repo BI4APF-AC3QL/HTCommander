@@ -274,9 +274,10 @@ class BluetoothClassicPlugin(
 
                 val connection = RfcommConnection(normalized, socket, audio)
                 map[normalized] = connection
-                connection.startReading()
-
+                // Queue the connected marker before starting the reader so a
+                // fast radio response cannot overtake it on the Flutter channel.
                 postEvent(audio, "connected", normalized, null)
+                connection.startReading()
                 mainHandler.post { result.success(true) }
             } catch (e: Exception) {
                 try {
@@ -432,10 +433,12 @@ class BluetoothClassicPlugin(
             capacity = 32,
             threadName = "HTCommander-BT-${address.takeLast(5)}",
         )
+        private val pendingData = BoundedBluetoothEventQueue(dropOldest = audio)
 
         @Volatile
         private var closed = false
         private var readThread: Thread? = null
+        private var dataDeliveryScheduled = false
 
         fun startReading() {
             readThread = Thread {
@@ -454,11 +457,76 @@ class BluetoothClassicPlugin(
                     }
                     if (count < 0) break
                     if (count > 0) {
-                        postEvent(audio, "data", address, buffer.copyOf(count))
+                        enqueueData(buffer.copyOf(count))
                     }
                 }
                 handleClosed()
             }.apply { isDaemon = true; start() }
+        }
+
+        /**
+         * Keep the Android main-handler queue bounded while Flutter consumes
+         * RFCOMM events. Control data is lossless and disconnects on overflow;
+         * for audio, stale queued chunks are discarded to favor live playback.
+         */
+        private fun enqueueData(data: ByteArray) {
+            if (closed) return
+            when (pendingData.offer(data)) {
+                BoundedBluetoothEventQueue.OfferResult.REJECTED -> {
+                    if (!audio) {
+                        Log.w(TAG, "Control event queue overflow; closing RFCOMM connection")
+                        handleClosed()
+                    }
+                }
+                BoundedBluetoothEventQueue.OfferResult.ACCEPTED,
+                BoundedBluetoothEventQueue.OfferResult.DROPPED_OLDEST -> synchronized(this) {
+                    if (closed) {
+                        // close() may have cleared the queue between the read
+                        // loop's initial check and offer().
+                        pendingData.clear()
+                        return
+                    }
+                    if (dataDeliveryScheduled) return
+                    dataDeliveryScheduled = true
+                    mainHandler.post { deliverNextData() }
+                }
+            }
+        }
+
+        private fun deliverNextData() {
+            if (closed) {
+                pendingData.clear()
+                synchronized(this) { dataDeliveryScheduled = false }
+                return
+            }
+            val data = pendingData.poll()
+            if (data == null) {
+                synchronized(this) {
+                    dataDeliveryScheduled = false
+                    // A reader may have enqueued between poll() and this lock.
+                    if (!closed && !pendingData.isEmpty()) {
+                        dataDeliveryScheduled = true
+                        mainHandler.post { deliverNextData() }
+                    }
+                }
+                return
+            }
+
+            val sink = if (audio) audioSink else dataSink
+            sink?.success(mapOf("event" to "data", "address" to address, "data" to data))
+
+            synchronized(this) {
+                if (closed) {
+                    pendingData.clear()
+                    dataDeliveryScheduled = false
+                } else if (pendingData.isEmpty()) {
+                    dataDeliveryScheduled = false
+                } else {
+                    // Drain one chunk per main-loop turn so a burst cannot hold
+                    // up Android input, notifications, or Flutter frame work.
+                    mainHandler.post { deliverNextData() }
+                }
+            }
         }
 
         fun enqueueWrite(data: ByteArray, completion: (Boolean) -> Unit): Boolean {
@@ -486,6 +554,8 @@ class BluetoothClassicPlugin(
         private fun handleClosed() {
             if (closed) return
             closed = true
+            pendingData.clear()
+            synchronized(this) { dataDeliveryScheduled = false }
             val map = if (audio) audioConnections else controlConnections
             map.remove(address)
             try {
@@ -500,6 +570,8 @@ class BluetoothClassicPlugin(
         fun close() {
             if (closed) return
             closed = true
+            pendingData.clear()
+            synchronized(this) { dataDeliveryScheduled = false }
             try {
                 socket.close()
             } catch (_: IOException) {
