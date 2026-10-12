@@ -108,22 +108,26 @@ void main() {
   testWidgets('Android dialog offers WAV export instead of opening a folder', (
     tester,
   ) async {
+    final originalPlatform = debugDefaultTargetPlatformOverride;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    set(0, 'RollingVoiceStatus', {
-      'running': true,
-      'folder': '/app/support/rolling-voice',
-      'files': 1,
-      'keptFiles': 0,
-      'recent': [
-        {'name': 'rx_123_2_abcd1234_0.wav', 'bytes': 4096, 'kept': false},
-      ],
-    });
-    await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: RollingVoiceDialog())),
-    );
-    expect(find.byTooltip('导出 WAV'), findsOneWidget);
-    expect(find.text('打开录音目录'), findsNothing);
-    expect(tester.takeException(), isNull);
+    try {
+      set(0, 'RollingVoiceStatus', {
+        'running': true,
+        'folder': '/app/support/rolling-voice',
+        'files': 1,
+        'keptFiles': 0,
+        'recent': [
+          {'name': 'rx_123_2_abcd1234_0.wav', 'bytes': 4096, 'kept': false},
+        ],
+      });
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: RollingVoiceDialog())),
+      );
+      expect(find.byTooltip('导出 WAV'), findsOneWidget);
+      expect(find.text('打开录音目录'), findsNothing);
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = originalPlatform;
+    }
   });
 }
