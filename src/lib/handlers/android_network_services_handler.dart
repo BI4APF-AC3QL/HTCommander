@@ -8,13 +8,11 @@ import '../services/data_broker_client.dart';
 /// that process eligible to run while the app is backgrounded.
 class AndroidNetworkServicesHandler {
   AndroidNetworkServicesHandler({
-    Future<void> Function()? startService,
-    Future<void> Function()? stopService,
+    this._startService,
+    this._stopService,
   })
     : _broker = DataBrokerClient(),
-      _lifecycle = AndroidServerLifecycle(),
-      _startService = startService,
-      _stopService = stopService;
+      _lifecycle = AndroidServerLifecycle();
 
   final DataBrokerClient _broker;
   final AndroidServerLifecycle _lifecycle;
