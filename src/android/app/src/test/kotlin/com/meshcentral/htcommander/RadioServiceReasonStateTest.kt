@@ -12,6 +12,9 @@ class RadioServiceReasonStateTest {
         assertTrue(state.set(RadioServiceReasonState.REASON_RECORDING, true))
         assertFalse(state.shouldKeepWifiActive)
 
+        assertTrue(state.set(RadioServiceReasonState.REASON_RADIO, true))
+        assertFalse(state.shouldKeepWifiActive)
+
         assertTrue(state.set(RadioServiceReasonState.REASON_NETWORK_SERVICES, true))
         assertFalse(state.shouldKeepWifiActive)
 
@@ -22,6 +25,7 @@ class RadioServiceReasonStateTest {
         assertFalse(state.shouldKeepWifiActive)
 
         assertTrue(state.set(RadioServiceReasonState.REASON_NETWORK_SERVICES, false))
+        assertTrue(state.set(RadioServiceReasonState.REASON_RADIO, false))
         assertFalse(state.set(RadioServiceReasonState.REASON_RECORDING, false))
     }
 }

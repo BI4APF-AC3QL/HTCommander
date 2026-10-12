@@ -23,6 +23,7 @@ import '../radio/websocket_transport.dart';
 import '../models/aircraft.dart';
 import '../models/station_info.dart';
 import '../winlink/winlink_mail.dart';
+import 'android_server_lifecycle.dart';
 import 'bluetooth_classic_macos.dart';
 import 'data_broker.dart';
 import 'data_broker_client.dart';
@@ -72,6 +73,9 @@ class BluetoothService {
   BluetoothService._internal();
 
   final DataBrokerClient _broker = DataBrokerClient();
+  final AndroidServerLifecycle _androidServerLifecycle =
+      AndroidServerLifecycle();
+  Future<void> _androidRadioServiceTail = Future<void>.value();
 
   // Connected radios: deviceId -> RadioTransport (BLE or Classic)
   final Map<int, RadioTransport> _connectedRadios = {};
@@ -114,6 +118,32 @@ class BluetoothService {
   /// radios the user connected to. Used to auto-reconnect on the next launch.
   /// MAC addresses are stored upper-cased.
   static const String previouslyConnectedRadiosKey = 'PreviouslyConnectedRadios';
+
+  /// Keep Android awake while at least one local radio connection is active.
+  Future<void> _syncAndroidRadioService() {
+    if (!Platform.isAndroid) return Future<void>.value();
+    _androidRadioServiceTail = _androidRadioServiceTail.then((_) async {
+      // Read the current maps when this queued update runs. If connects and
+      // disconnects overlap, the final foreground-service intent then matches
+      // the live radio set instead of a stale snapshot.
+      final connected =
+          _connectedRadios.isNotEmpty || _classicConnections.isNotEmpty;
+      try {
+        if (connected) {
+          await _androidServerLifecycle.start(reason: 'radio');
+        } else {
+          await _androidServerLifecycle.stop(reason: 'radio');
+        }
+      } catch (error) {
+        // Foreground-service startup must not turn a working radio link into a
+        // failed connection.
+        _broker.logError(
+          '[Android] Could not update radio foreground service: $error',
+        );
+      }
+    });
+    return _androidRadioServiceTail;
+  }
 
   // Track if Bluetooth has been initialized
   static bool _bluetoothInitialized = false;
@@ -661,6 +691,7 @@ class BluetoothService {
         store: true,
       );
       _publishConnectedRadios();
+      await _syncAndroidRadioService();
       return;
     }
 
@@ -677,6 +708,7 @@ class BluetoothService {
       );
       _publishConnectedRadios();
     }
+    await _syncAndroidRadioService();
   }
 
   /// Start watching [transport] for an unsolicited disconnect of the radio at
@@ -737,6 +769,7 @@ class BluetoothService {
       store: true,
     );
     _publishConnectedRadios();
+    await _syncAndroidRadioService();
   }
 
   /// Disconnect a radio by MAC address
@@ -965,6 +998,8 @@ class BluetoothService {
 
     // Clear Classic connections (transports already disposed above)
     _classicConnections.clear();
+
+    await _syncAndroidRadioService();
 
     _broker.dispose();
   }

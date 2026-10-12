@@ -144,7 +144,7 @@ class RadioWebServerService : Service() {
             "HTCommander 电台服务",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "电台远控服务器或接收录音运行时显示"
+            description = "电台连接、远控服务器或接收录音运行时显示"
             setShowBadge(false)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -168,7 +168,7 @@ class RadioWebServerService : Service() {
         return builder
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle("HTCommander 电台服务运行中")
-            .setContentText("电台远控、网络服务或接收录音正在运行；点此返回应用管理。")
+            .setContentText("电台连接、远控、网络服务或接收录音正在运行；点此返回应用管理。")
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(openApp)
             .setOngoing(true)

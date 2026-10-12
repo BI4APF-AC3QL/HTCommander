@@ -14,11 +14,13 @@ internal class RadioServiceReasonState {
         get() = REASON_SERVER in activeReasons
 
     companion object {
+        const val REASON_RADIO = "radio"
         const val REASON_SERVER = "server"
         const val REASON_RECORDING = "recording"
         const val REASON_NETWORK_SERVICES = "networkServices"
 
         private val VALID_REASONS = setOf(
+            REASON_RADIO,
             REASON_SERVER,
             REASON_RECORDING,
             REASON_NETWORK_SERVICES,

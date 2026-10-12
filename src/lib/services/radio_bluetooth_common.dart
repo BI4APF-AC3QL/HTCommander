@@ -326,6 +326,7 @@ Future<int?> _connectToRadioClassicImpl(
       store: true,
     );
     service._publishConnectedRadios();
+    await service._syncAndroidRadioService();
     return deviceId;
   } catch (e) {
     service._broker.logError(
@@ -431,6 +432,7 @@ Future<int?> _connectToRadioBleImpl(
       store: true,
     );
     service._publishConnectedRadios();
+    await service._syncAndroidRadioService();
     return deviceId;
   } catch (_) {
     return null;
