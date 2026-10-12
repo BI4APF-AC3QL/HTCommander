@@ -70,8 +70,9 @@ class GpsSerialHandler {
           0) ==
       1;
 
-  /// Whether serial port access is available on the current platform.
-  static bool get _serialSupported =>
+  /// Whether serial GPS access is available on the current platform.
+  /// Keep UI visibility and handler registration on the same platform matrix.
+  static bool get isSupported =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.macOS ||
@@ -81,7 +82,7 @@ class GpsSerialHandler {
   /// Initializes the handler: subscribes to broker events and applies the
   /// current settings. Safe to call once at startup.
   void init() {
-    if (!_serialSupported) {
+    if (!isSupported) {
       // Serial GPS is supported on desktop and Android USB host.
       _broker.dispatch(
         deviceId: _gpsDeviceId,
@@ -655,7 +656,7 @@ class GpsSerialHandler {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    if (_serialSupported) _stopPort();
+    if (isSupported) _stopPort();
     _broker.dispose();
   }
 }

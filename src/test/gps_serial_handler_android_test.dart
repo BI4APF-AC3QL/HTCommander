@@ -11,6 +11,20 @@ import 'package:htcommander/services/data_broker.dart';
 void main() {
   tearDown(DataBroker.reset);
 
+  test('serial GPS platform support includes Android and desktop only', () {
+    final previousPlatform = debugDefaultTargetPlatformOverride;
+    try {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      expect(GpsSerialHandler.isSupported, isTrue);
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      expect(GpsSerialHandler.isSupported, isTrue);
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      expect(GpsSerialHandler.isSupported, isFalse);
+    } finally {
+      debugDefaultTargetPlatformOverride = previousPlatform;
+    }
+  });
+
   test('Android USB GPS opens selected device and decodes NMEA bytes', () async {
     final previousPlatform = debugDefaultTargetPlatformOverride;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;

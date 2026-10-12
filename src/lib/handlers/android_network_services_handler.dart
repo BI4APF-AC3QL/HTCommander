@@ -4,8 +4,8 @@ import '../services/android_server_lifecycle.dart';
 import '../services/data_broker_client.dart';
 
 /// Holds Android's foreground service while a radio or TCP/MQTT service is active.
-/// The Android Activity remains the Flutter engine host; the service keeps that
-/// process eligible to run while the app is backgrounded.
+/// The application-owned Flutter engine keeps the Dart radio and server handlers
+/// alive; this service keeps the process eligible to run in the background.
 class AndroidNetworkServicesHandler {
   AndroidNetworkServicesHandler({this._startService, this._stopService})
     : _broker = DataBrokerClient(),

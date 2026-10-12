@@ -735,11 +735,7 @@ Future<void> _restoreMainWindowSize() async {
   await windowManager.waitUntilReadyToShow(windowOptions);
 }
 
-bool get _serialGpsSupported =>
-    !kIsWeb &&
-    (defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.linux);
+bool get _serialGpsSupported => GpsSerialHandler.isSupported;
 
 const double _narrowDialogBreakpoint = 700;
 

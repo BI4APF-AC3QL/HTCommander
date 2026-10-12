@@ -40,6 +40,7 @@ import 'contact_logo_picker_dialog.dart';
 import 'echolink_create_account_dialog.dart';
 import 'image_crop_dialog.dart';
 import 'location_picker_dialog.dart';
+import '../gps/gps_serial_handler.dart';
 
 /// Settings dialog with tabbed interface
 class SettingsDialog extends StatefulWidget {
@@ -53,12 +54,7 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog>
     with SingleTickerProviderStateMixin {
-  static bool get _serialGpsSupported =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux ||
-          defaultTargetPlatform == TargetPlatform.android);
+  static bool get _serialGpsSupported => GpsSerialHandler.isSupported;
 
   late TabController _tabController;
   late AppSettings _settings;
