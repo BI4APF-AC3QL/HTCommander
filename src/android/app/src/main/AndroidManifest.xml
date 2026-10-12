@@ -60,7 +60,7 @@
             android:name=".RadioWebServerService"
             android:description="@string/radio_web_server_service_description"
             android:exported="false"
-            android:foregroundServiceType="specialUse|location"
+            android:foregroundServiceType="specialUse"
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
