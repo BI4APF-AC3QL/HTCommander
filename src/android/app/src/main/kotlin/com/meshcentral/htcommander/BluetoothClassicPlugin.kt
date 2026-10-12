@@ -47,6 +47,8 @@ class BluetoothClassicPlugin(
         private const val DATA_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_data"
         private const val AUDIO_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_audio"
         private const val MAX_WRITE_BYTES = 64 * 1024
+        private const val CONNECT_ATTEMPT_TIMEOUT_MS = 8_000L
+        private const val CONNECT_TOTAL_TIMEOUT_MS = 45_000L
         private const val DISCONNECT_REQUESTED = "user_requested"
         private const val DISCONNECT_REMOTE_CLOSED = "remote_closed"
         private const val DISCONNECT_READ_FAILED = "read_failed"
@@ -321,12 +323,25 @@ class BluetoothClassicPlugin(
     ): BluetoothSocket {
         var lastError: Exception? = null
         val address = device.address
+        val deadline = SystemClock.elapsedRealtime() + CONNECT_TOTAL_TIMEOUT_MS
 
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
             var candidate: BluetoothSocket? = null
             return try {
+                val remainingMs = deadline - SystemClock.elapsedRealtime()
+                if (remainingMs <= 0) {
+                    throw java.net.SocketTimeoutException(
+                        "RFCOMM connection attempts exceeded ${CONNECT_TOTAL_TIMEOUT_MS}ms",
+                    )
+                }
                 candidate = factory()
-                candidate.connect()
+                TimedSocketConnect.connect(
+                    socket = candidate,
+                    timeoutMs = minOf(CONNECT_ATTEMPT_TIMEOUT_MS, remainingMs),
+                    threadName = "HTCommander-BT-connect-${address.takeLast(5)}",
+                    connect = { it.connect() },
+                    close = { it.close() },
+                )
                 Log.i(TAG, "RFCOMM connected via $label")
                 candidate
             } catch (e: Exception) {
@@ -336,9 +351,15 @@ class BluetoothClassicPlugin(
                     candidate?.close()
                 } catch (_: IOException) {
                 }
-                try {
-                    Thread.sleep(250)
-                } catch (_: InterruptedException) {
+                if (SystemClock.elapsedRealtime() < deadline &&
+                    e !is java.net.SocketTimeoutException
+                ) {
+                    try {
+                        Thread.sleep(250)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return null
+                    }
                 }
                 null
             }
