@@ -45,6 +45,7 @@ class BluetoothClassicPlugin(
         private const val METHOD_CHANNEL = "com.htcommander/bluetooth_classic"
         private const val DATA_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_data"
         private const val AUDIO_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_audio"
+        private const val MAX_WRITE_BYTES = 64 * 1024
 
         // Standard Serial Port Profile (control / GAIA).
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -141,16 +142,22 @@ class BluetoothClassicPlugin(
                 disconnect(call.argument<String>("address"), audio = false)
                 result.success(true)
             }
-            "send" -> result.success(
-                send(call.argument<String>("address"), call.argument("data"), audio = false),
+            "send" -> send(
+                call.argument<String>("address"),
+                call.argument("data"),
+                audio = false,
+                result = result,
             )
             "connectAudio" -> connectAudio(call.argument<String>("address"), result)
             "disconnectAudio" -> {
                 disconnect(call.argument<String>("address"), audio = true)
                 result.success(true)
             }
-            "sendAudio" -> result.success(
-                send(call.argument<String>("address"), call.argument("data"), audio = true),
+            "sendAudio" -> send(
+                call.argument<String>("address"),
+                call.argument("data"),
+                audio = true,
+                result = result,
             )
             else -> result.notImplemented()
         }
@@ -381,12 +388,27 @@ class BluetoothClassicPlugin(
         map.remove(normalized)?.close()
     }
 
-    private fun send(address: String?, data: ByteArray?, audio: Boolean): Boolean {
-        if (address == null || data == null) return false
+    private fun send(
+        address: String?,
+        data: ByteArray?,
+        audio: Boolean,
+        result: MethodChannel.Result,
+    ) {
+        if (address == null || data == null || data.size > MAX_WRITE_BYTES) {
+            result.success(false)
+            return
+        }
         val normalized = normalizeAddress(address)
         val map = if (audio) audioConnections else controlConnections
-        val connection = map[normalized] ?: return false
-        return connection.write(data)
+        val connection = map[normalized]
+        if (connection == null) {
+            result.success(false)
+            return
+        }
+        val accepted = connection.enqueueWrite(data) { written ->
+            mainHandler.post { result.success(written) }
+        }
+        if (!accepted) result.success(false)
     }
 
     private fun postEvent(audio: Boolean, event: String, address: String, data: ByteArray?) {
@@ -406,6 +428,11 @@ class BluetoothClassicPlugin(
         private val socket: BluetoothSocket,
         private val audio: Boolean,
     ) {
+        private val writer = BoundedSerialExecutor(
+            capacity = 32,
+            threadName = "HTCommander-BT-${address.takeLast(5)}",
+        )
+
         @Volatile
         private var closed = false
         private var readThread: Thread? = null
@@ -434,18 +461,28 @@ class BluetoothClassicPlugin(
             }.apply { isDaemon = true; start() }
         }
 
-        fun write(data: ByteArray): Boolean {
+        fun enqueueWrite(data: ByteArray, completion: (Boolean) -> Unit): Boolean {
+            if (closed) return false
+            val payload = data.copyOf()
+            return writer.execute {
+                val written = writeNow(payload)
+                mainHandler.post { completion(written) }
+            }
+        }
+
+        private fun writeNow(data: ByteArray): Boolean {
             if (closed) return false
             return try {
-                val output = socket.outputStream
-                output.write(data)
-                output.flush()
+                socket.outputStream.write(data)
+                socket.outputStream.flush()
                 true
-            } catch (e: IOException) {
+            } catch (_: IOException) {
+                handleClosed()
                 false
             }
         }
 
+        @Synchronized
         private fun handleClosed() {
             if (closed) return
             closed = true
@@ -455,9 +492,11 @@ class BluetoothClassicPlugin(
                 socket.close()
             } catch (_: IOException) {
             }
+            writer.close()
             postEvent(audio, "disconnected", address, null)
         }
 
+        @Synchronized
         fun close() {
             if (closed) return
             closed = true
@@ -465,6 +504,7 @@ class BluetoothClassicPlugin(
                 socket.close()
             } catch (_: IOException) {
             }
+            writer.close()
             postEvent(audio, "disconnected", address, null)
         }
     }

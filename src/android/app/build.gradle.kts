@@ -80,4 +80,5 @@ dependencies {
     implementation("androidx.car.app:app:1.7.0")
     // Core-library desugaring support for flutter_local_notifications.
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    testImplementation("junit:junit:4.13.2")
 }
