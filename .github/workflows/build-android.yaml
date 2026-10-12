@@ -30,19 +30,37 @@ jobs:
           channel: stable
           flutter-version: '3.47.5'
 
-      - name: Decode Android keystore
-        working-directory: src/android/app
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > upload-keystore.jks
-
-      - name: Create key.properties
-        working-directory: src/android
+      - name: Configure Android signing
         run: |
-          cat > key.properties <<EOF
-          storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          storeFile=upload-keystore.jks
-          EOF
+          signing_values=(
+            "$ANDROID_KEYSTORE_BASE64"
+            "$ANDROID_STORE_PASSWORD"
+            "$ANDROID_KEY_PASSWORD"
+            "$ANDROID_KEY_ALIAS"
+          )
+          configured_count=0
+          for value in "${signing_values[@]}"; do
+            if [[ -n "$value" ]]; then
+              configured_count=$((configured_count + 1))
+            fi
+          done
+
+          if [[ "$configured_count" -eq 0 ]]; then
+            echo "Android signing secrets are not configured; test artifacts will use the debug key."
+          elif [[ "$configured_count" -ne "${#signing_values[@]}" ]]; then
+            echo "::error::Android signing secrets are incomplete. Configure all four secrets or remove them all."
+            exit 1
+          else
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > src/android/app/upload-keystore.jks
+            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=app/upload-keystore.jks\n' \
+              "$ANDROID_STORE_PASSWORD" "$ANDROID_KEY_PASSWORD" "$ANDROID_KEY_ALIAS" \
+              > src/android/key.properties
+          fi
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
 
       - name: Install dependencies
         working-directory: src
