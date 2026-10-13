@@ -48,13 +48,13 @@ void main() {
       ),
     );
 
+    final updateLabel = AppLocalizations.of(
+      tester.element(find.text('Open About')),
+    ).aboutCheckForUpdates;
+
     await tester.tap(find.text('Open About'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text(AppLocalizations.of(tester.element(find.text('Open About')))
-          .aboutCheckForUpdates),
-      findsOneWidget,
-    );
+    expect(find.text(updateLabel), findsOneWidget);
   });
 }
