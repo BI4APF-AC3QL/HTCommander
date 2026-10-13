@@ -15,10 +15,11 @@ import 'package:htcommander/services/data_broker.dart';
 /// This also guards Android-only sections such as the hosted server, phone
 /// location and speech-recognition setup from regressing as desktop settings
 /// evolve.
-void _expectNoLayoutException(
+void _recordLayoutException(
   WidgetTester tester,
   String reason,
   List<FlutterErrorDetails> reportedErrors,
+  List<String> failures,
 ) {
   final exception = tester.takeException();
   if (exception == null) {
@@ -32,7 +33,7 @@ void _expectNoLayoutException(
   final details = exception is FlutterError
       ? exception.toStringDeep()
       : exception.toString();
-  fail('$reason:\n$diagnostics\n$details');
+  failures.add('$reason:\n$diagnostics\n$details');
 }
 
 void main() {
@@ -44,6 +45,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final reportedErrors = <FlutterErrorDetails>[];
+    final layoutFailures = <String>[];
     final previousErrorHandler = FlutterError.onError;
     FlutterError.onError = (details) {
       reportedErrors.add(details);
@@ -72,7 +74,12 @@ void main() {
         ),
       );
       await tester.pump();
-      _expectNoLayoutException(tester, 'initial build', reportedErrors);
+      _recordLayoutException(
+        tester,
+        'initial build',
+        reportedErrors,
+        layoutFailures,
+      );
 
       // Android supports the same shared application tabs as desktop, plus
       // its own native service and phone-location controls within those tabs.
@@ -90,8 +97,14 @@ void main() {
         await tester.tap(tabs.at(i), warnIfMissed: false);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        _expectNoLayoutException(tester, 'tab index $i', reportedErrors);
+        _recordLayoutException(
+          tester,
+          'tab index $i',
+          reportedErrors,
+          layoutFailures,
+        );
       }
+      if (layoutFailures.isNotEmpty) fail(layoutFailures.join('\n\n'));
     } finally {
       FlutterError.onError = previousErrorHandler;
       debugDefaultTargetPlatformOverride = null;

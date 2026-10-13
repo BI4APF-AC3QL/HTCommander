@@ -3717,6 +3717,7 @@ class _SettingsDialogState extends State<SettingsDialog>
           const SizedBox(height: 4),
           DropdownButtonFormField<AllStarRegMethod>(
             initialValue: _allStarRegMethod,
+            isExpanded: true,
             decoration: _inputDecoration(),
             items: [
               DropdownMenuItem(
