@@ -5,7 +5,7 @@ This is a Amateur Radio (HAM Radio) multiplatform tool for the EchoLink and UV-P
 ![image](https://github.com/Ylianst/HTCommanderEx/blob/main/docs/images/htcommander.png?raw=true)
 An Amateur radio license is required to transmit using this software. You can get [information on a license here](https://www.arrl.org/getting-licensed).
 
-> **本分支远控测试版：**下方“Installation”链接指向上游正式版，不包含本分支的 Windows/Android 远控主机功能。当前测试包（2026-10-13）：[Windows x64](https://github.com/BI4APF-AC3QL/HTCommander/releases/tag/test-windows-38422600910-1)｜[Android APK（各架构）](https://github.com/BI4APF-AC3QL/HTCommander/releases/tag/test-android-38422600884-1)；[全部测试版 Releases](https://github.com/BI4APF-AC3QL/HTCommander/releases)。请按[安卓电台与服务端说明](docs/android-radio-server.md)或[Windows 简单配置方法](简单配置方法.md)设置。安卓包尚未通过真实手机连接 N7500 的验收。
+> **本分支远控测试版：**下方“Installation”链接指向上游正式版，不包含本分支的 Windows/Android 远控主机功能。当前测试包（2026-10-14，代码提交 `dba3550`）：[Windows x64](https://github.com/BI4APF-AC3QL/HTCommander/releases/tag/test-windows-38428512617-1)｜[Android APK（各架构）](https://github.com/BI4APF-AC3QL/HTCommander/releases/tag/test-android-38428512680-1)；[全部测试版 Releases](https://github.com/BI4APF-AC3QL/HTCommander/releases)。请按[安卓电台与服务端说明](docs/android-radio-server.md)或[Windows 简单配置方法](简单配置方法.md)设置。安卓包尚未通过真实手机连接 N7500 的验收。
 
 ### Radio Support
 
