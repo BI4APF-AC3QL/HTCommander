@@ -210,8 +210,16 @@ class BluetoothService {
 
   /// Connect to a radio by MAC address
   /// Returns the device ID if successful, or null if failed
-  Future<int?> connectToRadio(String macAddress, String friendlyName) async {
-    final int? deviceId = await _connectToRadioPlatform(macAddress, friendlyName);
+  Future<int?> connectToRadio(
+    String macAddress,
+    String friendlyName, {
+    BluetoothType bluetoothType = BluetoothType.classic,
+  }) async {
+    final int? deviceId = await _connectToRadioPlatform(
+      macAddress,
+      friendlyName,
+      bluetoothType,
+    );
     if (deviceId != null) {
       // Remember this radio so it can be auto-reconnected on the next launch.
       _rememberConnectedRadio(macAddress);
@@ -631,6 +639,7 @@ class BluetoothService {
   Future<int?> _connectToRadioPlatform(
     String macAddress,
     String friendlyName,
+    BluetoothType bluetoothType,
   ) async {
     if (kIsWeb) {
       return _connectToRadioWeb(this, macAddress, friendlyName);
@@ -642,7 +651,12 @@ class BluetoothService {
       return _connectToRadioMacos(this, macAddress, friendlyName);
     }
     if (Platform.isAndroid) {
-      return _connectToRadioAndroid(this, macAddress, friendlyName);
+      return _connectToRadioAndroid(
+        this,
+        macAddress,
+        friendlyName,
+        bluetoothType,
+      );
     }
     if (Platform.isIOS) {
       return _connectToRadioIos(this, macAddress, friendlyName);
@@ -830,9 +844,11 @@ class BluetoothService {
   Future<Radio?> reconnectAfterReboot(
     String macAddress,
     String friendlyName, {
+    BluetoothType? bluetoothType,
     Duration rebootDelay = const Duration(seconds: 18),
     Duration timeout = const Duration(seconds: 90),
   }) async {
+    final transportType = bluetoothType ?? _bluetoothTypeForMac(macAddress);
     await disconnectRadioByMac(macAddress);
     await Future<void>.delayed(rebootDelay);
 
@@ -840,7 +856,11 @@ class BluetoothService {
     while (DateTime.now().isBefore(deadline)) {
       int? newId;
       try {
-        newId = await connectToRadio(macAddress, friendlyName);
+        newId = await connectToRadio(
+          macAddress,
+          friendlyName,
+          bluetoothType: transportType,
+        );
       } catch (_) {
         newId = null;
       }
@@ -858,6 +878,21 @@ class BluetoothService {
       await Future<void>.delayed(const Duration(seconds: 2));
     }
     return null;
+  }
+
+  BluetoothType _bluetoothTypeForMac(String macAddress) {
+    final normalized = macAddress.toUpperCase();
+    for (final entry in _connectedRadios.entries) {
+      if (entry.value.connectedDevice?.id.toUpperCase() == normalized) {
+        return entry.value.connectedDevice!.type;
+      }
+    }
+    if (_classicConnections.values.any(
+      (mac) => mac.toUpperCase() == normalized,
+    )) {
+      return BluetoothType.classic;
+    }
+    return BluetoothType.classic;
   }
 
   /// Publish the connected radios list to the DataBroker.

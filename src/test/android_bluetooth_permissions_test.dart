@@ -67,4 +67,62 @@ void main() {
       expect(granted, isFalse);
     });
   });
+
+  group('Android BLE scan permission', () {
+    test('Android 12+ requests Bluetooth Scan only', () async {
+      var scanRequests = 0;
+      var locationRequests = 0;
+      final granted = await AndroidBluetoothPermissions.ensureScan(
+        sdkInt: 31,
+        scanStatus: () async => PermissionStatus.denied,
+        requestScan: () async {
+          scanRequests++;
+          return PermissionStatus.granted;
+        },
+        locationStatus: () async => PermissionStatus.denied,
+        requestLocation: () async {
+          locationRequests++;
+          return PermissionStatus.granted;
+        },
+      );
+
+      expect(granted, isTrue);
+      expect(scanRequests, 1);
+      expect(locationRequests, 0);
+    });
+
+    test('Android 11 and older request location for BLE scanning', () async {
+      var scanRequests = 0;
+      var locationRequests = 0;
+      final granted = await AndroidBluetoothPermissions.ensureScan(
+        sdkInt: 30,
+        scanStatus: () async => PermissionStatus.denied,
+        requestScan: () async {
+          scanRequests++;
+          return PermissionStatus.granted;
+        },
+        locationStatus: () async => PermissionStatus.denied,
+        requestLocation: () async {
+          locationRequests++;
+          return PermissionStatus.granted;
+        },
+      );
+
+      expect(granted, isTrue);
+      expect(scanRequests, 0);
+      expect(locationRequests, 1);
+    });
+
+    test('permission denial allows caller to preserve Classic discovery', () async {
+      final granted = await AndroidBluetoothPermissions.ensureScan(
+        sdkInt: 33,
+        scanStatus: () async => PermissionStatus.denied,
+        requestScan: () async => PermissionStatus.permanentlyDenied,
+        locationStatus: () async => PermissionStatus.denied,
+        requestLocation: () async => PermissionStatus.granted,
+      );
+
+      expect(granted, isFalse);
+    });
+  });
 }

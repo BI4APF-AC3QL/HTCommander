@@ -1634,7 +1634,11 @@ class _MainFormState extends State<MainForm>
     for (final device in compatibleDevices) {
       _broker.logInfo('Auto-reconnecting to ${device.name}...');
       try {
-        await bluetoothService.connectToRadio(device.mac, device.name);
+        await bluetoothService.connectToRadio(
+          device.mac,
+          device.name,
+          bluetoothType: device.bluetoothType,
+        );
       } catch (e) {
         _broker.logError('Auto-reconnect to ${device.name} failed: $e');
       }
@@ -4720,6 +4724,7 @@ class _MainFormState extends State<MainForm>
         final deviceId = await bluetoothService.connectToRadio(
           device.mac,
           device.name,
+          bluetoothType: device.bluetoothType,
         );
 
         if (!mounted) return;
@@ -4808,6 +4813,7 @@ class _MainFormState extends State<MainForm>
           name: customName.isNotEmpty ? customName : device.name,
           mac: device.id,
           bluetoothName: device.name,
+          bluetoothType: device.type,
         ),
       );
     }

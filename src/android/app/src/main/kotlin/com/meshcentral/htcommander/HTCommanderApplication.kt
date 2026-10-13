@@ -38,6 +38,14 @@ class HTCommanderApplication : android.app.Application() {
         }
         AndroidSpeechToTextPlugin(appContext, messenger)
 
+        MethodChannel(messenger, "com.htcommander/android_device")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getSdkInt" -> result.success(android.os.Build.VERSION.SDK_INT)
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(messenger, "com.htcommander/device_location")
             .setMethodCallHandler { call, result ->
                 if (call.method != "getCurrentPosition") {

@@ -113,6 +113,7 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesClassic(
 Future<List<DiscoveredDevice>> _findCompatibleDevicesBle(
   BluetoothService service, {
   required Duration timeout,
+  bool androidUsesFineLocation = false,
   required bool useServiceScanFilter,
   required bool matchByName,
   required bool returnEarlyOnFirstMatch,
@@ -123,7 +124,7 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesBle(
   try {
     await FlutterBluePlus.startScan(
       timeout: timeout,
-      androidUsesFineLocation: true,
+      androidUsesFineLocation: androidUsesFineLocation,
       withServices: useServiceScanFilter ? kRadioBleControlServices : const [],
       webOptionalServices: kRadioBleOptionalServices,
     );

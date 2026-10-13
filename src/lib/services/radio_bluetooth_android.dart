@@ -14,8 +14,8 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesAndroid(
   required Duration timeout,
 }) async {
   // Android 12+ (API 31+) requires BLUETOOTH_CONNECT before paired Classic
-  // devices can be enumerated. Scan permission is optional because discovery
-  // cancellation is only a connection-speed optimization.
+  // devices can be enumerated. BLE scanning is attempted separately below so
+  // a denied scan permission does not hide bonded Classic radios.
   if (!await _ensureAndroidBluetoothPermissions()) {
     service._broker.logError(
       '[Android] Bluetooth Connect permission was not granted',
@@ -23,10 +23,52 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesAndroid(
     return const [];
   }
 
-  // Android uses Bluetooth Classic (RFCOMM/SPP) for the radio control channel.
-  // Compatible radios must be paired (bonded) in the Android Bluetooth settings;
-  // they are enumerated from the bonded device list by the native plugin.
-  return _findCompatibleDevicesClassic(service);
+  // Keep bonded Classic radios (including the VR-N7500) available, then add
+  // compatible BLE radios for devices that expose the GATT control service.
+  final classic = await _findCompatibleDevicesClassic(service);
+  final sdkInt = await AndroidBluetoothPermissions.sdkInt();
+  if (sdkInt == null) {
+    service._broker.logInfo(
+      '[Android] Could not read API level; keeping Classic results only',
+    );
+    return classic;
+  }
+
+  final scanAllowed = await AndroidBluetoothPermissions.ensureScan(
+    sdkInt: sdkInt,
+    scanStatus: () => Permission.bluetoothScan.status,
+    requestScan: () => Permission.bluetoothScan.request(),
+    locationStatus: () => Permission.locationWhenInUse.status,
+    requestLocation: () => Permission.locationWhenInUse.request(),
+  );
+  if (!scanAllowed) {
+    service._broker.logInfo(
+      '[Android] BLE scan permission not granted; keeping Classic results',
+    );
+    return classic;
+  }
+
+  final ble = await _findCompatibleDevicesBle(
+    service,
+    timeout: timeout,
+    useServiceScanFilter: true,
+    matchByName: false,
+    returnEarlyOnFirstMatch: false,
+    androidUsesFineLocation: sdkInt < 31,
+  );
+  final devicesByAddress = <String, DiscoveredDevice>{};
+  String key(String id) => id
+      .toUpperCase()
+      .replaceAll(RegExp(r'[^0-9A-F]'), '');
+  // Classic has priority when the same physical radio is visible through both
+  // transports. This preserves N7500's bonded RFCOMM control path.
+  for (final device in ble) {
+    devicesByAddress[key(device.id)] = device;
+  }
+  for (final device in classic) {
+    devicesByAddress[key(device.id)] = device;
+  }
+  return devicesByAddress.values.toList(growable: false);
 }
 
 /// Requests the runtime Bluetooth Connect permission needed to enumerate and
@@ -45,8 +87,15 @@ Future<int?> _connectToRadioAndroid(
   BluetoothService service,
   String macAddress,
   String friendlyName,
+  BluetoothType bluetoothType,
 ) async {
-  // Android connects over Bluetooth Classic (RFCOMM/SPP) via the native plugin,
-  // reusing the shared Classic connect flow (control channel).
+  if (bluetoothType == BluetoothType.ble) {
+    return _connectToRadioBleImpl(
+      service,
+      macAddress,
+      friendlyName,
+      webFastMode: false,
+    );
+  }
   return _connectToRadioClassicImpl(service, macAddress, friendlyName);
 }
