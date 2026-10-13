@@ -32,9 +32,9 @@ import java.util.concurrent.ConcurrentHashMap
  *   - EventChannel  `com.htcommander/bluetooth_classic_audio`  (BS AOC audio)
  *
  * The control channel (SPP, 0x1101) carries GAIA framed commands. The audio
- * channel uses the vendor "BS AOC" 128-bit UUID. RFCOMM channel numbers are
- * resolved by UUID via SDP (Android's createRfcommSocketToServiceRecord), never
- * by a hardcoded channel number. See docs/radio-bluetooth.md.
+ * channel uses the vendor "BS AOC" 128-bit UUID. Connections try a previously
+ * successful RFCOMM channel, then UUID/SDP, then a bounded channel scan for
+ * radios whose firmware advertises an unusable SDP channel.
  */
 class BluetoothClassicPlugin(
     private val context: Context,
@@ -444,15 +444,20 @@ class BluetoothClassicPlugin(
             }
         }
 
-        val insecureByChannel = device.javaClass.getMethod(
-            "createInsecureRfcommSocket",
-            Int::class.javaPrimitiveType,
-        )
+        // This is a hidden Android API and may be absent or blocked by an OEM.
+        // It is only a compatibility fallback: failure to resolve it must not
+        // prevent the public UUID/SDP socket APIs below from being attempted.
+        val insecureByChannel = RfcommChannelMethod.find(device.javaClass)
+        if (insecureByChannel == null) {
+            Log.w(TAG, "Insecure RFCOMM channel fallback unavailable; trying SDP")
+        }
 
-        fun tryChannel(channel: Int): BluetoothSocket? =
-            attempt("insecure-ch$channel") {
-                insecureByChannel.invoke(device, channel) as BluetoothSocket
+        fun tryChannel(channel: Int): BluetoothSocket? {
+            val channelFactory = insecureByChannel ?: return null
+            return attempt("insecure-ch$channel") {
+                channelFactory.invoke(device, channel) as BluetoothSocket
             }?.also { lastGoodChannel[address] = channel }
+        }
 
         // 0. Fast path: reuse the channel that last worked for this radio so we
         //    skip the full scan on reconnect.
