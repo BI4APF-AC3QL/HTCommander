@@ -12,9 +12,9 @@ Android 的“设置 → 许可证 → 位置”可点“使用本机 GPS 定位
 
 ## 首次连接电台
 
-1. 在 Android 系统蓝牙设置中与电台完成配对。
-2. 打开 HTCommander，授予蓝牙“附近设备”权限。
-3. 进入电台连接页面，选择已配对的电台并连接。只有应用内显示已连接并取得电台状态后，才表示控制链路建立。
+1. 打开电台并启用蓝牙。使用 Bluetooth Classic 的电台（例如 VR-N7500）需先在 Android 系统蓝牙设置中配对；BLE 电台可由 HTCommander 扫描发现。
+2. 打开 HTCommander 并允许蓝牙权限。Android 12 及以上需允许“附近的设备”；较早系统扫描 BLE 时可能还需定位权限。
+3. 进入电台连接页面，选择发现的电台并连接。只有应用内显示已连接并取得电台状态后，才表示控制链路建立。
 4. Android 版支持系统蓝牙连接和应用现有电台控制、APRS、地图、卫星、音频及日志页面。AGWPE 是可在 Android 上运行的 TCP 网络服务。Android 还可使用 USB OTG 串口 GPS：在设置 → 地图中刷新设备、选择 USB 串口并设定波特率；首次打开时按系统提示授权。支持范围取决于 USB 串口芯片和手机 OTG 供电。USB/串口电台连接仍未接入 Android，不能由 RFCOMM 蓝牙替代。
 
 ## Android 接收语音转文字
@@ -33,7 +33,7 @@ Android 13 及以上优先使用系统离线语音识别；Android 12 及更早�
 
 ## 平台边界
 
-Android 与 Windows 共用 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink、远程权限和循环语音录音逻辑。两者都通过 Bluetooth Classic RFCOMM 控制兼容电台，并可使用电台音频通道；Android 需先在系统蓝牙设置中配对。语音识别也处理同一接收音频流，但 Android 使用系统识别或 Android ARM64 离线回退模型。Android 端还可启用远控网页服务、AGWPE TCP 服务和 Home Assistant MQTT 桥接，后台运行时由 Android 常驻通知服务维持。
+Android 与 Windows 共用 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink、远程权限和循环语音录音逻辑。安卓可扫描 BLE 电台，也可通过 Bluetooth Classic RFCOMM 控制已配对电台；VR-N7500 继续使用 Classic。两者可使用电台音频通道。语音识别也处理同一接收音频流，但 Android 使用系统识别或 Android ARM64 离线回退模型。Android 端还可启用远控网页服务、AGWPE TCP 服务和 Home Assistant MQTT 桥接，后台运行时由 Android 常驻通知服务维持。
 
 平台特有项：Android 可使用 USB OTG 串口 GPS；这只用于 GPS 接收器，不提供 USB/串口电台控制。当前项目的电台传输实现没有 USB/串口电台传输或串口电台网关，因此这不是 Android 相对 Windows 的功能缺口。Android 应用通过 APK 或应用商店更新，Windows 则使用桌面更新流程。USB OTG GPS 的芯片兼容、热插拔和定位效果仍需在目标手机与接收器上验收。
 

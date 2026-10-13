@@ -1254,7 +1254,7 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Android では、このスマートフォンとペア設定済みの Bluetooth Classic 無線機のみ表示されます。先に Android の Bluetooth 設定で無線機をペア設定し、アプリに戻って再試行してください。Android 12 以降では、HTCommander に付近のデバイスへのアクセスも許可してください。';
+      'Android は対応する BLE 無線機をスキャンします。Bluetooth Classic 無線機は Android の Bluetooth 設定で事前にペア設定してください。Android 12 以降では「付近のデバイス」へのアクセスを許可してください。古いバージョンでは BLE スキャンに位置情報の許可も必要な場合があります。';
 
   @override
   String get connectAllConnectedTitle => 'すべて接続済み';

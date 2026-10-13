@@ -421,7 +421,7 @@
   "connectScanError": "搜索蓝牙设备失败：{error}",
   "connectNoRadiosTitle": "未找到电台",
   "connectNoRadiosBody": "未找到兼容的电台设备。\n\n请确保您的电台已开机且蓝牙已启用。",
-  "connectNoRadiosAndroidBody": "Android 只会列出已与本机配对的蓝牙经典电台。请先在 Android 蓝牙设置中与电台配对，再返回本应用重试。Android 12 及以上版本还需允许 HTCommander 访问附近的设备。",
+  "connectNoRadiosAndroidBody": "Android 会扫描支持的 BLE 电台。使用经典蓝牙的电台需先在 Android 蓝牙设置中配对。Android 12 及以上请允许访问“附近的设备”；较早版本扫描 BLE 可能还需要定位权限。",
   "connectAllConnectedTitle": "全部已连接",
   "connectAllConnectedBody": "所有检测到的电台设备均已连接。",
   "connectBluetoothOffTitle": "蓝牙不可用",

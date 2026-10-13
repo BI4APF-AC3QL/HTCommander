@@ -1283,7 +1283,7 @@ class AppLocalizationsHi extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Android केवल इस फ़ोन के साथ पहले से पेयर किए गए Bluetooth Classic रेडियो दिखाता है। पहले Android Bluetooth सेटिंग में रेडियो पेयर करें, फिर वापस आकर दोबारा प्रयास करें। Android 12 या बाद के संस्करण में HTCommander को Nearby devices की अनुमति भी दें।';
+      'Android समर्थित BLE रेडियो खोजता है। Bluetooth Classic रेडियो को पहले Android Bluetooth सेटिंग में पेयर करें। Android 12 या नए संस्करण में Nearby devices की अनुमति दें; पुराने संस्करणों में BLE स्कैन के लिए लोकेशन अनुमति भी आवश्यक हो सकती है।';
 
   @override
   String get connectAllConnectedTitle => 'सभी कनेक्ट हैं';

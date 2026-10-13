@@ -1290,7 +1290,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Android solo muestra radios Bluetooth Classic ya emparejadas con este teléfono. Empareje primero la radio en los ajustes de Bluetooth de Android y vuelva a intentarlo. En Android 12 o posterior, permita también que HTCommander acceda a los dispositivos cercanos.';
+      'Android busca radios BLE compatibles. Las radios Bluetooth Classic deben emparejarse primero en los ajustes de Bluetooth de Android. En Android 12 o posterior, permita el acceso a dispositivos cercanos; en versiones anteriores, el escaneo BLE también puede requerir permiso de ubicación.';
 
   @override
   String get connectAllConnectedTitle => 'Todas conectadas';

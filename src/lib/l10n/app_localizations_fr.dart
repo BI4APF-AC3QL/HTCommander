@@ -1293,7 +1293,7 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Android affiche uniquement les radios Bluetooth Classic déjà associées à ce téléphone. Associez la radio dans les paramètres Bluetooth du système Android, puis revenez et réessayez. Sous Android 12 ou version ultérieure, autorisez également HTCommander à accéder aux appareils à proximité.';
+      'Android recherche les radios BLE compatibles. Les radios Bluetooth Classic doivent d\'abord être associées dans les paramètres Bluetooth d\'Android. Sous Android 12 ou version ultérieure, autorisez l\'accès aux appareils à proximité ; les versions antérieures peuvent aussi demander l\'autorisation de localisation pour le scan BLE.';
 
   @override
   String get connectAllConnectedTitle => 'Toutes connectées';

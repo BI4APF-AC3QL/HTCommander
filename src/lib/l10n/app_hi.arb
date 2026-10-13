@@ -421,7 +421,7 @@
   "connectScanError": "ब्लूटूथ डिवाइस खोजने में विफल: {error}",
   "connectNoRadiosTitle": "कोई रेडियो नहीं मिला",
   "connectNoRadiosBody": "कोई संगत रेडियो डिवाइस नहीं मिला।\n\nसुनिश्चित करें कि आपका रेडियो चालू है और ब्लूटूथ सक्षम है।",
-  "connectNoRadiosAndroidBody": "Android केवल इस फ़ोन के साथ पहले से पेयर किए गए Bluetooth Classic रेडियो दिखाता है। पहले Android Bluetooth सेटिंग में रेडियो पेयर करें, फिर वापस आकर दोबारा प्रयास करें। Android 12 या बाद के संस्करण में HTCommander को Nearby devices की अनुमति भी दें।",
+  "connectNoRadiosAndroidBody": "Android समर्थित BLE रेडियो खोजता है। Bluetooth Classic रेडियो को पहले Android Bluetooth सेटिंग में पेयर करें। Android 12 या नए संस्करण में Nearby devices की अनुमति दें; पुराने संस्करणों में BLE स्कैन के लिए लोकेशन अनुमति भी आवश्यक हो सकती है।",
   "connectAllConnectedTitle": "सभी कनेक्ट हैं",
   "connectAllConnectedBody": "सभी पहचाने गए रेडियो डिवाइस पहले से कनेक्ट हैं।",
   "connectBluetoothOffTitle": "ब्लूटूथ उपलब्ध नहीं है",

@@ -1293,7 +1293,7 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Android wyświetla tylko radia Bluetooth Classic sparowane już z tym telefonem. Najpierw sparuj radio w ustawieniach Bluetooth Androida, a potem wróć i spróbuj ponownie. W Androidzie 12 lub nowszym zezwól też aplikacji HTCommander na dostęp do urządzeń w pobliżu.';
+      'Android wyszukuje obsługiwane radiotelefony BLE. Radiotelefony Bluetooth Classic trzeba najpierw sparować w ustawieniach Bluetooth Androida. W Androidzie 12 lub nowszym zezwól na dostęp do urządzeń w pobliżu; starsze wersje mogą wymagać także uprawnienia lokalizacji do skanowania BLE.';
 
   @override
   String get connectAllConnectedTitle => 'Wszystkie połączone';

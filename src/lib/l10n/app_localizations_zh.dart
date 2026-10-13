@@ -1237,7 +1237,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Android 只会列出已与本机配对的蓝牙经典电台。请先在 Android 蓝牙设置中与电台配对，再返回本应用重试。Android 12 及以上版本还需允许 HTCommander 访问附近的设备。';
+      'Android 会扫描支持的 BLE 电台。使用经典蓝牙的电台需先在 Android 蓝牙设置中配对。Android 12 及以上请允许访问“附近的设备”；较早版本扫描 BLE 可能还需要定位权限。';
 
   @override
   String get connectAllConnectedTitle => '全部已连接';

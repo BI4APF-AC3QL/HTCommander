@@ -1299,7 +1299,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get connectNoRadiosAndroidBody =>
-      'Unter Android werden nur bereits mit diesem Telefon gekoppelte Bluetooth-Classic-Funkgeräte angezeigt. Koppeln Sie Ihr Funkgerät zuerst in den Android-Bluetooth-Einstellungen und versuchen Sie es danach erneut. Unter Android 12 oder höher muss HTCommander außerdem auf Geräte in der Nähe zugreifen dürfen.';
+      'Android sucht nach unterstützten BLE-Funkgeräten. Bluetooth-Classic-Funkgeräte müssen zuerst in den Android-Bluetooth-Einstellungen gekoppelt werden. Erlauben Sie unter Android 12 oder höher den Zugriff auf Geräte in der Nähe; bei älteren Versionen kann für BLE-Scans zusätzlich der Standortzugriff erforderlich sein.';
 
   @override
   String get connectAllConnectedTitle => 'Alle verbunden';

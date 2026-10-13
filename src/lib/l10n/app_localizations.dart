@@ -2383,7 +2383,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectNoRadiosAndroidBody.
   ///
   /// In en, this message translates to:
-  /// **'Android lists only Bluetooth Classic radios already paired with this phone. Pair your radio in Android Bluetooth settings, then return and try again. On Android 12 or later, allow HTCommander access to Nearby devices.'**
+  /// **'Android scans for supported BLE radios. Pair Classic radios in Android Bluetooth settings. Allow Nearby devices on Android 12 or later; BLE scanning on older versions may also require location permission.'**
   String get connectNoRadiosAndroidBody;
 
   /// No description provided for @connectAllConnectedTitle.

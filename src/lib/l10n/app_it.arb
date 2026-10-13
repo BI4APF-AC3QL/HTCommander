@@ -413,7 +413,7 @@
   "connectScanError": "Ricerca dei dispositivi Bluetooth non riuscita: {error}",
   "connectNoRadiosTitle": "Nessuna radio trovata",
   "connectNoRadiosBody": "Non è stato trovato alcun dispositivo radio compatibile.\n\nAssicurati che la tua radio sia accesa e che il Bluetooth sia abilitato.",
-  "connectNoRadiosAndroidBody": "Android mostra solo le radio Bluetooth Classic già associate a questo telefono. Associa prima la radio nelle impostazioni Bluetooth di Android, poi torna qui e riprova. Su Android 12 o versioni successive, autorizza HTCommander a usare i dispositivi nelle vicinanze.",
+  "connectNoRadiosAndroidBody": "Android cerca le radio BLE supportate. Le radio Bluetooth Classic devono prima essere associate nelle impostazioni Bluetooth di Android. Su Android 12 o versioni successive, consenti l'accesso ai dispositivi nelle vicinanze; le versioni precedenti potrebbero richiedere anche il permesso di posizione per la scansione BLE.",
   "connectAllConnectedTitle": "Tutte connesse",
   "connectAllConnectedBody": "Tutti i dispositivi radio rilevati sono già connessi.",
   "connectBluetoothOffTitle": "Bluetooth non disponibile",
