@@ -37,77 +37,83 @@ void _recordLayoutException(
 }
 
 void main() {
-  testWidgets('Android settings expose the shared tabs on a phone screen', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    tester.view.physicalSize = const Size(393, 852);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final reportedErrors = <FlutterErrorDetails>[];
-    final layoutFailures = <String>[];
-    final previousErrorHandler = FlutterError.onError;
-    FlutterError.onError = (details) {
-      reportedErrors.add(details);
-      previousErrorHandler?.call(details);
-    };
+  for (final width in <double>[393, 320]) {
+    final locale = width == 320 ? const Locale('zh') : const Locale('en');
+    testWidgets(
+      'Android settings fit ${width.toInt()}dp ${locale.languageCode}',
+      (tester) async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        tester.view.physicalSize = Size(width, 852);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final reportedErrors = <FlutterErrorDetails>[];
+        final layoutFailures = <String>[];
+        final previousErrorHandler = FlutterError.onError;
+        FlutterError.onError = (details) {
+          reportedErrors.add(details);
+          previousErrorHandler?.call(details);
+        };
 
-    void set(String name, Object? data) =>
-        DataBroker.dispatch(deviceId: 0, name: name, data: data, store: true);
+        void set(String name, Object? data) =>
+            DataBroker.dispatch(deviceId: 0, name: name, data: data, store: true);
 
-    set('CallSign', 'KK7ABC');
-    set('AprsIsEnabled', 1);
-    set('AprsIsServer', 'aprs.example.net');
-    set('AprsIsPort', 14580);
-    set('AprsIsPasscode', '12345');
-    set('ManualLocationEnabled', 1);
-    set('ManualLatitude', 47.6062);
-    set('ManualLongitude', -122.3321);
+        set('CallSign', 'KK7ABC');
+        set('AprsIsEnabled', 1);
+        set('AprsIsServer', 'aprs.example.net');
+        set('AprsIsPort', 14580);
+        set('AprsIsPasscode', '12345');
+        set('ManualLocationEnabled', 1);
+        set('ManualLatitude', 47.6062);
+        set('ManualLongitude', -122.3321);
 
-    try {
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('en'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: const Scaffold(body: Center(child: SettingsDialog())),
-        ),
-      );
-      await tester.pump();
-      _recordLayoutException(
-        tester,
-        'initial build',
-        reportedErrors,
-        layoutFailures,
-      );
+        try {
+          await tester.pumpWidget(
+            MaterialApp(
+              locale: locale,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const Scaffold(body: Center(child: SettingsDialog())),
+            ),
+          );
+          await tester.pump();
+          _recordLayoutException(
+            tester,
+            'initial build',
+            reportedErrors,
+            layoutFailures,
+          );
 
-      // Android supports the same shared application tabs as desktop, plus
-      // its own native service and phone-location controls within those tabs.
-      expect(find.byType(Tab), findsNWidgets(10));
-      expect(find.text('Servers'), findsOneWidget);
-      expect(find.text('Map'), findsOneWidget);
-      expect(find.text('Comms'), findsOneWidget);
+          // Android supports the same shared application tabs as desktop, plus
+          // its own native service and phone-location controls within those tabs.
+          expect(find.byType(Tab), findsNWidgets(10));
+          if (locale.languageCode == 'en') {
+            expect(find.text('Servers'), findsOneWidget);
+            expect(find.text('Map'), findsOneWidget);
+            expect(find.text('Comms'), findsOneWidget);
+          }
 
-      final tabs = find.byType(Tab);
-      for (var i = 0; i < tabs.evaluate().length; i++) {
-        await tester.ensureVisible(tabs.at(i));
-        // The Comms page can show an intentional loading spinner while the
-        // native speech capabilities are checked, so settling may never end.
-        await tester.pump(const Duration(milliseconds: 300));
-        await tester.tap(tabs.at(i), warnIfMissed: false);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        _recordLayoutException(
-          tester,
-          'tab index $i',
-          reportedErrors,
-          layoutFailures,
-        );
-      }
-      if (layoutFailures.isNotEmpty) fail(layoutFailures.join('\n\n'));
-    } finally {
-      FlutterError.onError = previousErrorHandler;
-      debugDefaultTargetPlatformOverride = null;
-    }
-  });
+          final tabs = find.byType(Tab);
+          for (var i = 0; i < tabs.evaluate().length; i++) {
+            await tester.ensureVisible(tabs.at(i));
+            // The Comms page can show an intentional loading spinner while the
+            // native speech capabilities are checked, so settling may never end.
+            await tester.pump(const Duration(milliseconds: 300));
+            await tester.tap(tabs.at(i), warnIfMissed: false);
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 300));
+            _recordLayoutException(
+              tester,
+              'tab index $i',
+              reportedErrors,
+              layoutFailures,
+            );
+          }
+          if (layoutFailures.isNotEmpty) fail(layoutFailures.join('\n\n'));
+        } finally {
+          FlutterError.onError = previousErrorHandler;
+          debugDefaultTargetPlatformOverride = null;
+        }
+      },
+    );
+  }
 }
