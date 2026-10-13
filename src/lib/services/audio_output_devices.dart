@@ -52,7 +52,7 @@ class AudioOutputDevices {
   /// native PCM player; use an empty id for the OS default device.
   static Future<List<AudioOutputDevice>> list() async {
     if (!isSupported) return const <AudioOutputDevice>[];
-    if (Platform.isLinux) return _listLinux();
+    if (defaultTargetPlatform == TargetPlatform.linux) return _listLinux();
     return _listNative();
   }
 
