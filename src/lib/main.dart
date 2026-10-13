@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'dialogs/about_dialog.dart';
@@ -4822,6 +4823,14 @@ class _MainFormState extends State<MainForm>
         title: Text(l10n.connectBluetoothOffTitle),
         content: Text(l10n.connectBluetoothOffBody),
         actions: [
+          if (Platform.isAndroid)
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await openAppSettings();
+              },
+              child: Text(l10n.connectOpenAppSettings),
+            ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: Text(l10n.commonOk),

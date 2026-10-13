@@ -1245,6 +1245,9 @@ class AppLocalizationsZh extends AppLocalizations {
       '蓝牙不可用或已禁用。\n\n请在设备设置中打开蓝牙；如果使用 Android 12 或更高版本，请在应用权限中允许 HTCommander 访问“附近的设备”，然后重试。';
 
   @override
+  String get connectOpenAppSettings => '打开应用设置';
+
+  @override
   String get radioConnectionTitle => '电台连接';
 
   @override

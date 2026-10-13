@@ -1308,6 +1308,9 @@ class AppLocalizationsDe extends AppLocalizations {
       'Bluetooth ist nicht verfügbar oder deaktiviert.\n\nAktivieren Sie Bluetooth in den Geräteeinstellungen. Erlauben Sie unter Android 12 oder höher außerdem in den App-Berechtigungen den Zugriff auf Geräte in der Nähe und versuchen Sie es erneut.';
 
   @override
+  String get connectOpenAppSettings => 'App-Einstellungen öffnen';
+
+  @override
   String get radioConnectionTitle => 'Funkgerät-Verbindung';
 
   @override

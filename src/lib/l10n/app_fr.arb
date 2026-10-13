@@ -424,6 +424,7 @@
   "connectAllConnectedBody": "Tous les appareils radio détectés sont déjà connectés.",
   "connectBluetoothOffTitle": "Bluetooth non disponible",
   "connectBluetoothOffBody": "Le Bluetooth n'est pas disponible ou est désactivé.\n\nActivez le Bluetooth dans les paramètres de l'appareil. Sous Android 12 ou version ultérieure, autorisez aussi HTCommander à accéder aux appareils à proximité dans les autorisations de l'application, puis réessayez.",
+  "connectOpenAppSettings": "Ouvrir les paramètres de l’application",
 
   "radioConnectionTitle": "Connexion radio",
   "radioConnectionEmpty": "Aucune radio compatible trouvée.\nAssurez-vous que votre radio est allumée et que le Bluetooth est activé.",

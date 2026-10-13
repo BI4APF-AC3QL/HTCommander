@@ -1302,6 +1302,9 @@ class AppLocalizationsPl extends AppLocalizations {
       'Bluetooth jest niedostępny lub wyłączony.\n\nWłącz Bluetooth w ustawieniach urządzenia. W systemie Android 12 lub nowszym zezwól też aplikacji HTCommander na dostęp do urządzeń w pobliżu w uprawnieniach aplikacji, a następnie spróbuj ponownie.';
 
   @override
+  String get connectOpenAppSettings => 'Otwórz ustawienia aplikacji';
+
+  @override
   String get radioConnectionTitle => 'Połączenie radiotelefonu';
 
   @override

@@ -1292,6 +1292,9 @@ class AppLocalizationsHi extends AppLocalizations {
       'ब्लूटूथ उपलब्ध नहीं है या बंद है।\n\nडिवाइस सेटिंग में ब्लूटूथ चालू करें। Android 12 या उसके बाद के संस्करण में ऐप अनुमतियों में HTCommander को आस-पास के डिवाइस देखने की अनुमति भी दें, फिर पुनः प्रयास करें।';
 
   @override
+  String get connectOpenAppSettings => 'ऐप सेटिंग खोलें';
+
+  @override
   String get radioConnectionTitle => 'रेडियो कनेक्शन';
 
   @override

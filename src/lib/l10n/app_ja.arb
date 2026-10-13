@@ -424,6 +424,7 @@
   "connectAllConnectedBody": "検出されたすべての無線機デバイスは既に接続されています。",
   "connectBluetoothOffTitle": "Bluetooth を利用できません",
   "connectBluetoothOffBody": "Bluetooth を利用できないか、無効になっています。\n\nデバイスの設定で Bluetooth を有効にしてください。Android 12 以降では、アプリの権限で HTCommander に「付近のデバイス」へのアクセスも許可してから、もう一度お試しください。",
+  "connectOpenAppSettings": "アプリの設定を開く",
 
   "radioConnectionTitle": "無線機の接続",
   "radioConnectionEmpty": "対応する無線機が見つかりません。\n無線機の電源が入っていて、Bluetooth が有効になっていることを確認してください。",

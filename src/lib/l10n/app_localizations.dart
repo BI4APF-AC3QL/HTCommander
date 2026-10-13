@@ -2398,6 +2398,12 @@ abstract class AppLocalizations {
   /// **'Bluetooth is not available or is turned off.\n\nPlease turn on Bluetooth in your device settings. On Android 12 or later, also allow HTCommander access to Nearby devices in app permissions, then try again.'**
   String get connectBluetoothOffBody;
 
+  /// No description provided for @connectOpenAppSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'App settings'**
+  String get connectOpenAppSettings;
+
   /// No description provided for @radioConnectionTitle.
   ///
   /// In en, this message translates to:

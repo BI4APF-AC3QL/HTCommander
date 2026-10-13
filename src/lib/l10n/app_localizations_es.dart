@@ -1299,6 +1299,9 @@ class AppLocalizationsEs extends AppLocalizations {
       'El Bluetooth no está disponible o está desactivado.\n\nActive el Bluetooth en los ajustes del dispositivo. En Android 12 o posterior, permita también a HTCommander acceder a los dispositivos cercanos en los permisos de la aplicación y vuelva a intentarlo.';
 
   @override
+  String get connectOpenAppSettings => 'Abrir los ajustes de la aplicación';
+
+  @override
   String get radioConnectionTitle => 'Conexión de radio';
 
   @override
