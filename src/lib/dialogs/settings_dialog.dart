@@ -2761,7 +2761,9 @@ class _SettingsDialogState extends State<SettingsDialog>
       children: [
         statusLine,
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             ElevatedButton.icon(
               onPressed: busy || status.state == SttModelState.ready
@@ -2774,7 +2776,6 @@ class _SettingsDialogState extends State<SettingsDialog>
                     : l10n.settingsDownload,
               ),
             ),
-            const SizedBox(width: 8),
             ElevatedButton.icon(
               onPressed: busy || status.state != SttModelState.ready
                   ? null

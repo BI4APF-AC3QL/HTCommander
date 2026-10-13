@@ -15,14 +15,26 @@ import 'package:htcommander/services/data_broker.dart';
 /// This also guards Android-only sections such as the hosted server, phone
 /// location and speech-recognition setup from regressing as desktop settings
 /// evolve.
-void _expectNoLayoutException(WidgetTester tester, String reason) {
+void _expectNoLayoutException(
+  WidgetTester tester,
+  String reason,
+  List<FlutterErrorDetails> reportedErrors,
+) {
   final exception = tester.takeException();
-  if (exception == null) return;
+  if (exception == null) {
+    reportedErrors.clear();
+    return;
+  }
+  final diagnostics = reportedErrors
+      .map((error) => error.toString())
+      .join('\n');
+  reportedErrors.clear();
   final details = exception is FlutterError
       ? exception.toStringDeep()
       : exception.toString();
-  fail('$reason:\n$details');
+  fail('$reason:\n$diagnostics\n$details');
 }
+
 void main() {
   testWidgets('Android settings expose the shared tabs on a phone screen', (
     tester,
@@ -31,6 +43,12 @@ void main() {
     tester.view.physicalSize = const Size(393, 852);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    final reportedErrors = <FlutterErrorDetails>[];
+    final previousErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      reportedErrors.add(details);
+      previousErrorHandler?.call(details);
+    };
 
     void set(String name, Object? data) =>
         DataBroker.dispatch(deviceId: 0, name: name, data: data, store: true);
@@ -54,7 +72,7 @@ void main() {
         ),
       );
       await tester.pump();
-      _expectNoLayoutException(tester, 'initial build');
+      _expectNoLayoutException(tester, 'initial build', reportedErrors);
 
       // Android supports the same shared application tabs as desktop, plus
       // its own native service and phone-location controls within those tabs.
@@ -70,9 +88,10 @@ void main() {
         await tester.tap(tabs.at(i), warnIfMissed: false);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        _expectNoLayoutException(tester, 'tab index $i');
+        _expectNoLayoutException(tester, 'tab index $i', reportedErrors);
       }
     } finally {
+      FlutterError.onError = previousErrorHandler;
       debugDefaultTargetPlatformOverride = null;
     }
   });
