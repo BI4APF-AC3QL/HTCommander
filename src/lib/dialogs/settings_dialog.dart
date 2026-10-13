@@ -1510,71 +1510,82 @@ class _SettingsDialogState extends State<SettingsDialog>
                   style: _sectionTitleStyle(),
                 ),
                 const SizedBox(height: 16),
-                // Call Sign & Station ID on the same line
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Call Sign
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            l10n.settingsCallSign,
-                            style: DialogStyles.labelStyle,
+                // Keep both controls wide enough to use on phone-sized screens.
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final callSign = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.settingsCallSign,
+                          style: DialogStyles.labelStyle,
+                        ),
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: _callSignController,
+                          decoration: _inputDecoration(
+                            hintText: l10n.settingsCallSignHint,
                           ),
-                          const SizedBox(height: 4),
-                          TextField(
-                            controller: _callSignController,
-                            decoration: _inputDecoration(
-                              hintText: l10n.settingsCallSignHint,
+                          textCapitalization: TextCapitalization.characters,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'[A-Za-z0-9]'),
                             ),
-                            textCapitalization: TextCapitalization.characters,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[A-Za-z0-9]'),
-                              ),
-                              TextInputFormatter.withFunction(
-                                (oldValue, newValue) => newValue.copyWith(
-                                  text: newValue.text.toUpperCase(),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // Station ID
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            l10n.settingsStationId,
-                            style: DialogStyles.labelStyle,
-                          ),
-                          const SizedBox(height: 4),
-                          DropdownButtonFormField<int>(
-                            initialValue: _settings.stationId,
-                            decoration: _inputDecoration(),
-                            items: List.generate(
-                              16,
-                              (i) => DropdownMenuItem(
-                                value: i,
-                                child: Text(
-                                  i == 0 ? l10n.settingsNone : i.toString(),
-                                ),
+                            TextInputFormatter.withFunction(
+                              (oldValue, newValue) => newValue.copyWith(
+                                text: newValue.text.toUpperCase(),
                               ),
                             ),
-                            onChanged: (value) {
-                              setState(() => _settings.stationId = value ?? 0);
-                            },
+                          ],
+                        ),
+                      ],
+                    );
+                    final stationId = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.settingsStationId,
+                          style: DialogStyles.labelStyle,
+                        ),
+                        const SizedBox(height: 4),
+                        DropdownButtonFormField<int>(
+                          initialValue: _settings.stationId,
+                          decoration: _inputDecoration(),
+                          items: List.generate(
+                            16,
+                            (i) => DropdownMenuItem(
+                              value: i,
+                              child: Text(
+                                i == 0 ? l10n.settingsNone : i.toString(),
+                              ),
+                            ),
                           ),
+                          onChanged: (value) {
+                            setState(() => _settings.stationId = value ?? 0);
+                          },
+                        ),
+                      ],
+                    );
+
+                    if (constraints.maxWidth < 400) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          callSign,
+                          const SizedBox(height: 12),
+                          stationId,
                         ],
-                      ),
-                    ),
-                  ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: callSign),
+                        const SizedBox(width: 16),
+                        Expanded(child: stationId),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
                 // Allow Transmit
