@@ -94,6 +94,10 @@ jobs:
         working-directory: src/android
         run: ./gradlew :app:testDebugUnitTest
 
+      - name: Run Android release lint
+        working-directory: src/android
+        run: ./gradlew :app:lintRelease
+
       - name: Build signed Android App Bundle
         working-directory: src
         run: flutter build appbundle --release

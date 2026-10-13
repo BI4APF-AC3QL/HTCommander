@@ -1,6 +1,7 @@
 package com.meshcentral.htcommander
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -301,6 +302,11 @@ class BluetoothClassicPlugin(
         }
     }
 
+    // queryDevices checks BLUETOOTH_CONNECT on the discovery worker immediately
+    // before reaching this code and converts a permission revocation race into
+    // an empty result. Android's lint does not follow that guard across the
+    // bounded-executor callback, so keep the suppression local to this helper.
+    @SuppressLint("MissingPermission")
     private fun listDevices(filterCompatible: Boolean): List<Map<String, Any>> {
         val adapter = bluetoothAdapter ?: return emptyList()
         val devices = mutableListOf<Map<String, Any>>()
@@ -334,6 +340,9 @@ class BluetoothClassicPlugin(
      * [BluetoothDevice.getUuids] uses the pairing-time SDP cache and does not
      * trigger a new SDP query. Returns an empty list when none match.
      */
+    // Called only from listDevices after its BLUETOOTH_CONNECT check; the
+    // caller catches SecurityException if the permission is revoked mid-query.
+    @SuppressLint("MissingPermission")
     private fun radioServiceUuids(device: BluetoothDevice): List<String> {
         val uuids = device.uuids ?: return emptyList()
         return uuids

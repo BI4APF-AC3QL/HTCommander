@@ -1,5 +1,6 @@
 package com.meshcentral.htcommander
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -68,9 +69,7 @@ class RadioWebServerService : Service() {
         // Network services and the recorder cannot respond while Android
         // suspends the CPU. Acquire only while a user-enabled feature is active
         // and release it from onDestroy or an explicit stop.
-        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HTCommander:RadioServer")
-            .apply { setReferenceCounted(false); acquire() }
+        acquireServiceWakeLock()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -103,6 +102,15 @@ class RadioWebServerService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         super.onDestroy()
+    }
+
+    // The user-enabled server/recorder must keep the CPU available for its
+    // lifetime; onDestroy releases this lock when the foreground service stops.
+    @SuppressLint("WakelockTimeout")
+    private fun acquireServiceWakeLock() {
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HTCommander:RadioServer")
+            .apply { setReferenceCounted(false); acquire() }
     }
 
     @Suppress("DEPRECATION")
