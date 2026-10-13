@@ -63,11 +63,10 @@ class BluetoothClassicPlugin(
         private val AUDIO_UUID: UUID = UUID.fromString("39144315-32FA-40DB-85ED-FBFEBA2D86E6")
 
         // Stable vendor SDP service UUIDs that uniquely identify a compatible
-        // radio. Devices are matched by these identifiers instead of by name,
-        // because names change across rebrands and can be truncated by the OS
-        // Bluetooth stack (e.g. "UV-P" instead of "UV-PRO"). Only the vendor
-        // "BS AOC" service is unique to these radios; generic services (SPP
-        // 0x1101, Generic Audio 0x1203) are intentionally excluded.
+        // radio. Generic services (SPP 0x1101, Generic Audio 0x1203) are
+        // intentionally excluded. Android sometimes has no cached SDP UUIDs
+        // for a bonded VR-N7500, so that exact model also has a narrow name
+        // fallback in listDevices() below.
         private val RADIO_SERVICE_UUIDS: Set<UUID> = setOf(AUDIO_UUID)
 
         // Remembers the RFCOMM channel that last connected for a given radio
@@ -236,7 +235,9 @@ class BluetoothClassicPlugin(
                 val address = normalizeAddress(device.address ?: continue)
                 if (seen.contains(address)) continue
                 val radioUuids = radioServiceUuids(device)
-                if (filterCompatible && radioUuids.isEmpty()) continue
+                if (filterCompatible && radioUuids.isEmpty() &&
+                    !AndroidClassicRadioIdentity.isKnownN7500Name(name)
+                ) continue
                 seen.add(address)
                 devices.add(
                     mapOf(
