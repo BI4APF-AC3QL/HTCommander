@@ -28,10 +28,9 @@ import 'speech_to_text_engine.dart';
 /// 64-bit devices can use a downloaded sherpa-onnx fallback when unavailable.
 class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   AndroidSpeechToTextEngine({
-    SpeechToTextEngine Function()? fallbackFactory,
-    Future<bool> Function(String localeId)? systemRecognizerInitializer,
-  }) : _fallbackFactory = fallbackFactory,
-       _systemRecognizerInitializer = systemRecognizerInitializer;
+    this._fallbackFactory,
+    this._systemRecognizerInitializer,
+  });
 
   static const MethodChannel _channel = MethodChannel(
     'com.htcommander/android_speech_to_text',
