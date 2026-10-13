@@ -111,6 +111,8 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.1
   zxing2: 0.2.4
+  integration_test:
+    sdk: flutter
 
 # Android arm64 and x86_64 include sherpa-onnx so 64-bit devices without
 # Android 13's raw-PCM speech-recognition API can use the desktop offline models.

@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/lib/**'
       - 'src/android/**'
+      - 'src/integration_test/**'
       - 'src/pubspec.yaml'
       - 'src/pubspec.lock'
       - 'src/tools/stage_android_web_assets.py'
@@ -154,6 +155,9 @@ jobs:
               exit 1
             fi
             echo 'HTCommander x86_64 release APK installed and remained running for 15 seconds.'
+            adb uninstall com.meshcentral.htcommander
+            cd src
+            flutter test integration_test/android_remote_server_test.dart -d emulator-5554
 
       - name: Restore pubspec after Android packaging
         if: always()
