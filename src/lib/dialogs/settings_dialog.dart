@@ -2007,6 +2007,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                 initialValue: _aprsIsCustomServer
                     ? ''
                     : _aprsIsServerController.text.trim(),
+                isExpanded: true,
                 decoration: _inputDecoration(),
                 items: _aprsIsRegionItems(l10n),
                 onChanged: hasCallSign
@@ -2098,6 +2099,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                     ).any((e) => e.value == _settings.aprsIsRangeKm)
                     ? _settings.aprsIsRangeKm
                     : 0,
+                isExpanded: true,
                 decoration: _inputDecoration(),
                 items: _aprsIsRangeItems(l10n),
                 onChanged: hasCallSign
