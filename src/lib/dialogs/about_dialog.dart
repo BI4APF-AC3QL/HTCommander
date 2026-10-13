@@ -141,8 +141,11 @@ class HTAboutDialog extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               // Action buttons
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              OverflowBar(
+                alignment: OverflowBarAlignment.end,
+                overflowAlignment: OverflowBarAlignment.end,
+                spacing: 8,
+                overflowSpacing: 4,
                 children: [
                   TextButton(
                     onPressed: () => _reportCrash(context),
