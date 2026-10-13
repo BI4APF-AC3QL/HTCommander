@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/services/data_broker.dart';
 
+class _RealHttp extends HttpOverrides {}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -52,6 +54,8 @@ void main() {
       expect(calls.map((call) => call.method), contains('start'));
       expect(calls.first.arguments, {'reason': 'server'});
 
+      final previousHttpOverrides = HttpOverrides.current;
+      HttpOverrides.global = _RealHttp();
       final http = HttpClient();
       try {
         final request = await http.getUrl(
@@ -70,6 +74,7 @@ void main() {
         );
       } finally {
         http.close(force: true);
+        HttpOverrides.global = previousHttpOverrides;
       }
 
       set('webServerEnabled', 0);
