@@ -24,42 +24,45 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(packageInfo, (call) async {
-          return <String, Object>{
-            'appName': 'HTCommander',
-            'packageName': 'com.meshcentral.htcommander',
-            'version': '0.1.0',
-            'buildNumber': '1',
-          };
-        });
+    try {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(packageInfo, (call) async {
+            return <String, Object>{
+              'appName': 'HTCommander',
+              'packageName': 'com.meshcentral.htcommander',
+              'version': '0.1.0',
+              'buildNumber': '1',
+            };
+          });
 
-    await tester.pumpWidget(
-      MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: TextButton(
-              onPressed: () => showDialog<void>(
-                context: context,
-                builder: (_) => const HTAboutDialog(),
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => const HTAboutDialog(),
+                ),
+                child: const Text('Open About'),
               ),
-              child: const Text('Open About'),
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    final updateLabel = AppLocalizations.of(
-      tester.element(find.text('Open About')),
-    ).aboutCheckForUpdates;
+      final updateLabel = AppLocalizations.of(
+        tester.element(find.text('Open About')),
+      ).aboutCheckForUpdates;
 
-    await tester.tap(find.text('Open About'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Open About'));
+      await tester.pumpAndSettle();
 
-    expect(find.text(updateLabel), findsOneWidget);
+      expect(find.text(updateLabel), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }
