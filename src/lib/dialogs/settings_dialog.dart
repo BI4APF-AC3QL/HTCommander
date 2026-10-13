@@ -1192,6 +1192,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: _settings.language,
+                  isExpanded: true,
                   decoration: _inputDecoration(),
                   items: [
                     DropdownMenuItem(
@@ -1257,6 +1258,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: _settings.themeMode,
+                  isExpanded: true,
                   decoration: _inputDecoration(),
                   items: [
                     DropdownMenuItem(
@@ -3770,6 +3772,7 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   Widget _buildServersTab() {
     final l10n = AppLocalizations.of(context);
+    final isNarrow = MediaQuery.sizeOf(context).width < 400;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -3808,11 +3811,12 @@ class _SettingsDialogState extends State<SettingsDialog>
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(left: 48),
-                  child: Row(
+                  padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       Text(l10n.settingsPort, style: DialogStyles.labelStyle),
-                      const SizedBox(width: 8),
                       SizedBox(
                         width: 100,
                         child: TextField(
@@ -3882,11 +3886,12 @@ class _SettingsDialogState extends State<SettingsDialog>
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(left: 48),
-                  child: Row(
+                  padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       Text(l10n.settingsPort, style: DialogStyles.labelStyle),
-                      const SizedBox(width: 8),
                       SizedBox(
                         width: 100,
                         child: TextField(
@@ -4128,79 +4133,89 @@ class _SettingsDialogState extends State<SettingsDialog>
                 children: [
                   Text(l10n.settingsGpsSerialPort, style: _sectionTitleStyle()),
                   const SizedBox(height: 16),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 13,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              l10n.settingsSerialPort,
-                              style: DialogStyles.labelStyle,
-                            ),
-                            if (!kIsWeb &&
-                                defaultTargetPlatform ==
-                                    TargetPlatform.android)
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: IconButton(
-                                  icon: const Icon(Icons.refresh),
-                                  tooltip: MaterialLocalizations.of(
-                                    context,
-                                  ).refreshIndicatorSemanticLabel,
-                                  onPressed: _refreshAndroidUsbGpsPorts,
-                                ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final serialPortField = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l10n.settingsSerialPort,
+                            style: DialogStyles.labelStyle,
+                          ),
+                          if (!kIsWeb &&
+                              defaultTargetPlatform == TargetPlatform.android)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: IconButton(
+                                icon: const Icon(Icons.refresh),
+                                tooltip: MaterialLocalizations.of(
+                                  context,
+                                ).refreshIndicatorSemanticLabel,
+                                onPressed: _refreshAndroidUsbGpsPorts,
                               ),
-                            const SizedBox(height: 4),
-                            DropdownButtonFormField<String>(
-                              initialValue: _settings.gpsSerialPort,
-                              isExpanded: true,
-                              decoration: _inputDecoration(),
-                              items: _gpsPortItems(),
-                              onChanged: (value) {
-                                setState(
-                                  () =>
-                                      _settings.gpsSerialPort = value ?? 'None',
-                                );
-                              },
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        flex: 7,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          const SizedBox(height: 4),
+                          DropdownButtonFormField<String>(
+                            initialValue: _settings.gpsSerialPort,
+                            isExpanded: true,
+                            decoration: _inputDecoration(),
+                            items: _gpsPortItems(),
+                            onChanged: (value) {
+                              setState(
+                                () =>
+                                    _settings.gpsSerialPort = value ?? 'None',
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                      final baudRateField = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l10n.settingsBaudRate,
+                            style: DialogStyles.labelStyle,
+                          ),
+                          const SizedBox(height: 4),
+                          DropdownButtonFormField<int>(
+                            initialValue: _settings.gpsBaudRate,
+                            isExpanded: true,
+                            decoration: _inputDecoration(),
+                            items: _baudRates
+                                .map(
+                                  (b) => DropdownMenuItem(
+                                    value: b,
+                                    child: Text(b.toString()),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(
+                                () => _settings.gpsBaudRate = value ?? 4800,
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                      if (constraints.maxWidth < 300) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              l10n.settingsBaudRate,
-                              style: DialogStyles.labelStyle,
-                            ),
-                            const SizedBox(height: 4),
-                            DropdownButtonFormField<int>(
-                              initialValue: _settings.gpsBaudRate,
-                              decoration: _inputDecoration(),
-                              items: _baudRates
-                                  .map(
-                                    (b) => DropdownMenuItem(
-                                      value: b,
-                                      child: Text(b.toString()),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) {
-                                setState(
-                                  () => _settings.gpsBaudRate = value ?? 4800,
-                                );
-                              },
-                            ),
+                            serialPortField,
+                            const SizedBox(height: 12),
+                            baudRateField,
                           ],
-                        ),
-                      ),
-                    ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 13, child: serialPortField),
+                          const SizedBox(width: 16),
+                          Expanded(flex: 7, child: baudRateField),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 8),
                   Row(
