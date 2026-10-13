@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,7 +19,19 @@ import '../services/diagnostic_log.dart';
 import '../services/web/remote_connection_models.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
-  const RemoteAccessDialog({super.key});
+  const RemoteAccessDialog({
+    super.key,
+    this.addressLoader,
+    this.networkChanges,
+  });
+
+  /// Optional seams for exercising address changes without a device network.
+  @visibleForTesting
+  final Future<List<String>> Function()? addressLoader;
+
+  @visibleForTesting
+  final Stream<List<ConnectivityResult>>? networkChanges;
+
   @override
   State<RemoteAccessDialog> createState() => _RemoteAccessDialogState();
 }
@@ -41,6 +55,9 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
   String? _error;
   String _status = '';
   List<String> _addresses = [];
+  StreamSubscription<List<ConnectivityResult>>? _networkSubscription;
+  int _addressGeneration = 0;
+  bool _loadingAddresses = false;
   bool get _zh => Localizations.localeOf(context).languageCode == 'zh';
   String _text(String zh, String en) => _zh ? zh : en;
 
@@ -88,22 +105,40 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
       },
     );
     _loadAddresses();
+    if (!kIsWeb && (Platform.isAndroid || widget.networkChanges != null)) {
+      _networkSubscription =
+          (widget.networkChanges ?? Connectivity().onConnectivityChanged)
+              .listen((_) => unawaited(_loadAddresses()), onError: (_) {});
+    }
   }
 
   Future<void> _loadAddresses() async {
     if (kIsWeb) return;
+    final generation = ++_addressGeneration;
+    if (mounted) setState(() => _loadingAddresses = true);
     try {
-      final interfaces = await NetworkInterface.list();
-      final addresses = interfaces
-          .expand((i) => i.addresses)
-          .where(
-            (a) => !a.isLinkLocal && !a.isLoopback && !a.isMulticast,
-          )
-          .map((a) => a.address)
-          .toSet()
-          .toList();
-      if (mounted) setState(() => _addresses = addresses);
-    } catch (_) {}
+      final addresses = widget.addressLoader != null
+          ? await widget.addressLoader!()
+          : await _discoverAddresses();
+      if (!mounted || generation != _addressGeneration) return;
+      setState(() {
+        _addresses = addresses;
+        _loadingAddresses = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _addressGeneration) return;
+      setState(() => _loadingAddresses = false);
+    }
+  }
+
+  Future<List<String>> _discoverAddresses() async {
+    final interfaces = await NetworkInterface.list();
+    return interfaces
+        .expand((i) => i.addresses)
+        .where((a) => !a.isLinkLocal && !a.isLoopback && !a.isMulticast)
+        .map((a) => a.address)
+        .toSet()
+        .toList();
   }
 
   Future<void> _save() async {
@@ -167,6 +202,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
 
   @override
   void dispose() {
+    unawaited(_networkSubscription?.cancel());
     _broker.dispose();
     _password.dispose();
     _origin.dispose();
@@ -529,6 +565,21 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               _text('手机连接地址', 'Phone connection addresses'),
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => unawaited(_loadAddresses()),
+                icon: const Icon(Icons.refresh),
+                label: Text(_text('刷新本机地址', 'Refresh local addresses')),
+              ),
+            ),
+            if (_addresses.isEmpty && !_loadingAddresses)
+              Text(
+                _text(
+                  '当前没有可显示的局域网地址。',
+                  'No local network address is available.',
+                ),
+              ),
             ..._addresses.map(
               (ip) => Padding(
                 padding: const EdgeInsets.only(top: 8),
