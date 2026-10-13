@@ -79,6 +79,10 @@ jobs:
           flutter build web --release --base-href / --dart-define=HTC_HOSTED=true --no-wasm-dry-run
           python tools/stage_android_web_assets.py
 
+      - name: Prepare nested hosted web assets for Android
+        working-directory: src
+        run: python tools/stage_android_web_assets.py --prepare-package
+
       - name: Build signed Android APKs by ABI
         working-directory: src
         run: flutter build apk --release --split-per-abi
@@ -117,6 +121,11 @@ jobs:
                   raise SystemExit(f'{package} is missing hosted web assets: {missing}')
               print(f'Hosted web assets verified in {package}')
           PY
+
+      - name: Restore pubspec after Android packaging
+        if: always()
+        working-directory: src
+        run: python tools/stage_android_web_assets.py --restore-package
 
       - name: Clean up signing secrets
         if: always()

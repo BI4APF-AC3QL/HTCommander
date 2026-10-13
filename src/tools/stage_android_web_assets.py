@@ -12,6 +12,47 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WEB_BUILD = PROJECT_ROOT / "build" / "web"
 ASSET_DIR = PROJECT_ROOT / "assets" / "web_app"
 PLACEHOLDER = ASSET_DIR / "placeholder.txt"
+PUBSPEC = PROJECT_ROOT / "pubspec.yaml"
+PUBSPEC_BACKUP = PROJECT_ROOT / ".dart_tool" / "htcommander-android-pubspec.yaml"
+
+
+def restore_package_manifest() -> None:
+    if not PUBSPEC_BACKUP.is_file():
+        return
+    PUBSPEC.write_bytes(PUBSPEC_BACKUP.read_bytes())
+    PUBSPEC_BACKUP.unlink()
+
+
+def prepare_package_manifest() -> None:
+    """Declare every generated web subdirectory as a Flutter asset directory.
+
+    Flutter's pubspec directory entries include files immediately within that
+    directory, but do not recursively include nested directories. The staged
+    web client has a generated tree (CanvasKit, package assets, etc.), so the
+    Android application bundle needs explicit entries for each directory.
+    Keep this change temporary so the checked-in pubspec stays stable.
+    """
+    if not (ASSET_DIR / "index.html").is_file():
+        raise SystemExit(f"No staged web client found at {ASSET_DIR}.")
+
+    restore_package_manifest()
+    original_bytes = PUBSPEC.read_bytes()
+    original = original_bytes.decode("utf-8")
+    newline = "\r\n" if "\r\n" in original else "\n"
+    marker = f"    - assets/web_app/{newline}"
+    if original.count(marker) != 1:
+        raise SystemExit("Could not find the unique assets/web_app entry in pubspec.yaml.")
+
+    asset_dirs = sorted(
+        path.relative_to(PROJECT_ROOT).as_posix() + "/"
+        for path in ASSET_DIR.rglob("*")
+        if path.is_dir()
+    )
+    additions = "".join(f"    - {directory}{newline}" for directory in asset_dirs)
+    PUBSPEC_BACKUP.parent.mkdir(parents=True, exist_ok=True)
+    PUBSPEC_BACKUP.write_bytes(original_bytes)
+    PUBSPEC.write_bytes(original.replace(marker, marker + additions).encode("utf-8"))
+    print(f"Temporarily declared {len(asset_dirs)} nested hosted web asset directories")
 
 
 def clear_staged_assets() -> None:
@@ -26,7 +67,15 @@ def clear_staged_assets() -> None:
 
 
 def main() -> None:
+    if sys.argv[1:] == ["--restore-package"]:
+        restore_package_manifest()
+        print("Restored pubspec.yaml after Android packaging")
+        return
+    if sys.argv[1:] == ["--prepare-package"]:
+        prepare_package_manifest()
+        return
     if sys.argv[1:] == ["--clean"]:
+        restore_package_manifest()
         clear_staged_assets()
         print(f"Cleared staged hosted web client from {ASSET_DIR}")
         return
