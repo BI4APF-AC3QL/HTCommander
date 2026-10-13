@@ -33,7 +33,7 @@ Android 13 及以上优先使用系统离线语音识别；Android 12 及更早�
 
 ## 平台边界
 
-Android 与 Windows 共用 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink、远程权限和循环语音录音逻辑。安卓可扫描 BLE 电台，也可通过 Bluetooth Classic RFCOMM 控制已配对电台；VR-N7500 继续使用 Classic。两者可使用电台音频通道。语音识别也处理同一接收音频流，但 Android 使用系统识别或 Android ARM64 离线回退模型。Android 端还可启用远控网页服务、AGWPE TCP 服务和 Home Assistant MQTT 桥接，后台运行时由 Android 常驻通知服务维持。
+Android 与 Windows 共用 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink、远程权限和循环语音录音逻辑。安卓可扫描 BLE 电台，也可通过 Bluetooth Classic RFCOMM 控制已配对电台；VR-N7500 继续使用 Classic。两者可使用电台音频通道。在“音频”页可刷新并选择 Android 当前可用的扬声器、有线、USB 或蓝牙输出路由；移除的设备会回退到系统默认输出。语音识别也处理同一接收音频流，但 Android 使用系统识别或 Android ARM64 离线回退模型。Android 端还可启用远控网页服务、AGWPE TCP 服务和 Home Assistant MQTT 桥接，后台运行时由 Android 常驻通知服务维持。
 
 平台特有项：Android 可使用 USB OTG 串口 GPS；这只用于 GPS 接收器，不提供 USB/串口电台控制。当前项目的电台传输实现没有 USB/串口电台传输或串口电台网关，因此这不是 Android 相对 Windows 的功能缺口。Android 应用通过 APK 或应用商店更新，Windows 则使用桌面更新流程。USB OTG GPS 的芯片兼容、热插拔和定位效果仍需在目标手机与接收器上验收。
 

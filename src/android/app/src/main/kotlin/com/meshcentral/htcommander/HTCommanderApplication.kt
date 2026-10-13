@@ -11,6 +11,7 @@ class HTCommanderApplication : android.app.Application() {
     private var retainedEngine: FlutterEngine? = null
     private var configuredEngine: FlutterEngine? = null
     private var bluetoothPlugin: BluetoothClassicPlugin? = null
+    private var pcmPlayerPlugin: AndroidPcmPlayerPlugin? = null
 
     @Synchronized
     fun provideFlutterEngine(context: Context): FlutterEngine {
@@ -36,6 +37,7 @@ class HTCommanderApplication : android.app.Application() {
         bluetoothPlugin = BluetoothClassicPlugin(appContext, messenger).also {
             it.activity = activity
         }
+        pcmPlayerPlugin = AndroidPcmPlayerPlugin(appContext, messenger)
         AndroidSpeechToTextPlugin(appContext, messenger)
 
         MethodChannel(messenger, "com.htcommander/android_device")
