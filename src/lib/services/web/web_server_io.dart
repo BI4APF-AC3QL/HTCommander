@@ -645,7 +645,7 @@ class WebServer {
       }
 
       final file = File(
-        '${dir.path}${Platform.pathSeparator}'
+        '${dir!.path}${Platform.pathSeparator}'
         '${relativePath.replaceAll('/', Platform.pathSeparator)}',
       );
       if (!file.existsSync()) {
