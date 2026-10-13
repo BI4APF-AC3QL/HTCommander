@@ -5,6 +5,8 @@ This is a Amateur Radio (HAM Radio) multiplatform tool for the EchoLink and UV-P
 ![image](https://github.com/Ylianst/HTCommanderEx/blob/main/docs/images/htcommander.png?raw=true)
 An Amateur radio license is required to transmit using this software. You can get [information on a license here](https://www.arrl.org/getting-licensed).
 
+> **本分支远控测试版：**下方“Installation”链接指向上游正式版，不包含本分支的 Windows/Android 远控主机功能。请从 [BI4APF-AC3QL 测试版 Releases](https://github.com/BI4APF-AC3QL/HTCommander/releases) 下载最新的 `test-windows-*` 或 `test-android-*` 预发布包，并按[安卓电台与服务端说明](docs/android-radio-server.md)或[Windows 简单配置方法](简单配置方法.md)设置。安卓包尚未通过真实手机连接 N7500 的验收。
+
 ### Radio Support
 
 EchoLink and the following radios should work with this application:
@@ -69,6 +71,8 @@ Map data provided by [openstreetmap.org](https://openstreetmap.org), the project
 APRS message backfill uses the [aprs.fi](https://aprs.fi) API, courtesy of Heikki Hannikainen, OH7LZB, to retrieve messages received while HTCommander was offline.
 
 Repeater directory search is powered by [RepeaterBook](https://www.repeaterbook.com). Data courtesy of RepeaterBook.com. RepeaterBook access requires each user to generate their own personal API token for HTCommander.
-# Windows phone remote control / 手机远程操控
+# Windows and Android radio remote control / 手机远程操控
 
 This fork includes authenticated phone browser control and audio, optional guarded PTT, a configurable portable HTTPS gateway, and an Android mode that connects to a radio and hosts LAN remote control. Start with [简单配置方法](简单配置方法.md), then see the [Windows phone guide](docs/phone-remote-control.md) or [Android radio/server guide](docs/android-radio-server.md). Remote access and transmit are disabled by default.
+
+To test this fork, use its [prerelease downloads](https://github.com/BI4APF-AC3QL/HTCommander/releases), not the upstream installers listed above. Choose the newest `test-windows-*` ZIP for Windows x64 or the newest `test-android-*` APK for your phone's CPU (`arm64-v8a` for most modern phones). The Android CI APK may use a temporary debug signature, so back up an existing installation before trying it. See the [Android device acceptance checklist](docs/android-device-acceptance.md) for the remaining hardware checks.
