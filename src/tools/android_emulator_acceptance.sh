@@ -35,4 +35,9 @@ echo 'HTCommander x86_64 release APK installed and remained running for 15 secon
 # remove the release install before the instrumented test installs its build.
 adb uninstall com.meshcentral.htcommander
 cd "$src_root"
-flutter test integration_test/android_remote_server_test.dart -d emulator-5554
+test -f integration_test/android_remote_server_test.dart
+flutter drive \
+  --driver=test_driver/integration_test.dart \
+  --target=integration_test/android_remote_server_test.dart \
+  --no-dds \
+  -d emulator-5554

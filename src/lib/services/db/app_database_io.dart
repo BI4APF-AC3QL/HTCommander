@@ -108,7 +108,9 @@ class AppDatabase {
         onConfigure: (db) async {
           // WAL: durable per-transaction commits with far fewer fsyncs than the
           // old flush-on-every-write flat files.
-          await db.execute('PRAGMA journal_mode=WAL');
+          // journal_mode returns a row, so sqflite's Android backend requires
+          // rawQuery rather than execute for this PRAGMA.
+          await db.rawQuery('PRAGMA journal_mode=WAL');
           await db.execute('PRAGMA synchronous=NORMAL');
         },
         onCreate: (db, version) async {

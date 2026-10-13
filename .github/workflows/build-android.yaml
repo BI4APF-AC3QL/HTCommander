@@ -7,6 +7,7 @@ on:
       - 'src/lib/**'
       - 'src/android/**'
       - 'src/integration_test/**'
+      - 'src/test_driver/**'
       - 'src/tools/android_emulator_acceptance.sh'
       - 'src/pubspec.yaml'
       - 'src/pubspec.lock'

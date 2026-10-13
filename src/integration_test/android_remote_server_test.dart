@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
 import 'package:htcommander/services/data_broker.dart';
+import 'package:htcommander/services/db/app_database.dart';
 import 'package:integration_test/integration_test.dart';
 
 void main() {
@@ -28,6 +29,11 @@ void main() {
         return DataBroker.getDataHandler<WebServerHandler>('WebServerHandler');
       });
       expect(handler, isNotNull, reason: 'the Android app must finish startup');
+      expect(
+        AppDatabase.instance,
+        isNotNull,
+        reason: 'Android SQLite initialization must succeed before startup',
+      );
 
       final server = handler!;
       HttpClient? http;
@@ -204,5 +210,6 @@ void main() {
         });
       }
     },
+    timeout: const Timeout(Duration(minutes: 5)),
   );
 }
