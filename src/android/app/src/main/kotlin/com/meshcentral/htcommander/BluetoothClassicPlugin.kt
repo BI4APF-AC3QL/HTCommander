@@ -96,6 +96,10 @@ class BluetoothClassicPlugin(
     private val audioConnections = ConcurrentHashMap<String, RfcommConnection>()
     private val lifecycleLock = Any()
     private val connectingSockets = ConcurrentHashMap.newKeySet<BluetoothSocket>()
+    private val deviceQueryExecutor = BoundedSerialExecutor(
+        capacity = 2,
+        threadName = "HTCommander-BT-discovery",
+    )
 
     @Volatile
     private var disposed = false
@@ -157,9 +161,13 @@ class BluetoothClassicPlugin(
         }
         when (call.method) {
             "isAvailable" -> result.success(isAvailable())
-            "getPairedDevices" -> result.success(listDevices(filterCompatible = false))
-            "findCompatibleDevices" -> result.success(listDevices(filterCompatible = true))
-            "getDeviceNames" -> result.success(deviceNames())
+            "getPairedDevices" -> queryDevices(result, filterCompatible = false)
+            "findCompatibleDevices" -> queryDevices(result, filterCompatible = true)
+            "getDeviceNames" -> queryDevices(
+                result,
+                filterCompatible = false,
+                namesOnly = true,
+            )
             "connect" -> openRfcomm(call.argument<String>("address"), SPP_UUID, audio = false, result)
             "disconnect" -> {
                 disconnect(call.argument<String>("address"), audio = false)
@@ -213,6 +221,7 @@ class BluetoothClassicPlugin(
                 }
             }
             connectingSockets.clear()
+            deviceQueryExecutor.close()
         }
     }
 
@@ -221,42 +230,84 @@ class BluetoothClassicPlugin(
         return adapter.isEnabled
     }
 
-    private fun listDevices(filterCompatible: Boolean): List<Map<String, Any>> {
-        val adapter = bluetoothAdapter ?: return emptyList()
-        if (!hasConnectPermission()) {
-            requestConnectPermission()
-            return emptyList()
-        }
-        val devices = mutableListOf<Map<String, Any>>()
-        val seen = mutableSetOf<String>()
-        try {
-            for (device in adapter.bondedDevices ?: emptySet()) {
-                val name = device.name ?: continue
-                val address = normalizeAddress(device.address ?: continue)
-                if (seen.contains(address)) continue
-                val radioUuids = radioServiceUuids(device)
-                if (filterCompatible && radioUuids.isEmpty() &&
-                    !AndroidClassicRadioIdentity.isKnownN7500Name(name)
-                ) continue
-                seen.add(address)
-                devices.add(
-                    mapOf(
-                        "name" to name,
-                        "address" to address,
-                        "isPaired" to true,
-                        "isConnected" to controlConnections.containsKey(address),
-                        "serviceUuids" to radioUuids,
-                    ),
-                )
+    /**
+     * BluetoothManager queries may block on the Android Bluetooth service.
+     * Keep bonded-device and SDP enumeration off Flutter's UI thread, bound
+     * queued refreshes, then deliver MethodChannel results on the main thread.
+     */
+    private fun queryDevices(
+        result: MethodChannel.Result,
+        filterCompatible: Boolean,
+        namesOnly: Boolean = false,
+    ) {
+        val accepted = deviceQueryExecutor.execute {
+            if (disposed) return@execute
+            if (!hasConnectPermission()) {
+                mainHandler.post {
+                    if (disposed) return@post
+                    requestConnectPermission()
+                    result.success(emptyList<Any>())
+                }
+                return@execute
             }
-        } catch (e: SecurityException) {
-            requestConnectPermission()
+
+            try {
+                val devices = listDevices(filterCompatible)
+                val value: Any = if (namesOnly) {
+                    devices.mapNotNull { it["name"] as? String }
+                } else {
+                    devices
+                }
+                mainHandler.post {
+                    if (!disposed) result.success(value)
+                }
+            } catch (error: SecurityException) {
+                mainHandler.post {
+                    if (disposed) return@post
+                    requestConnectPermission()
+                    result.success(emptyList<Any>())
+                }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    if (!disposed) {
+                        result.error(
+                            "DEVICE_QUERY_FAILED",
+                            error.message ?: "Could not enumerate Bluetooth devices",
+                            null,
+                        )
+                    }
+                }
+            }
         }
-        return devices
+        if (!accepted) {
+            result.error("BUSY", "Bluetooth device discovery is already busy", null)
+        }
     }
 
-    private fun deviceNames(): List<String> {
-        return listDevices(filterCompatible = false).mapNotNull { it["name"] as? String }
+    private fun listDevices(filterCompatible: Boolean): List<Map<String, Any>> {
+        val adapter = bluetoothAdapter ?: return emptyList()
+        val devices = mutableListOf<Map<String, Any>>()
+        val seen = mutableSetOf<String>()
+        for (device in adapter.bondedDevices ?: emptySet()) {
+            val name = device.name ?: continue
+            val address = normalizeAddress(device.address ?: continue)
+            if (seen.contains(address)) continue
+            val radioUuids = radioServiceUuids(device)
+            if (filterCompatible && radioUuids.isEmpty() &&
+                !AndroidClassicRadioIdentity.isKnownN7500Name(name)
+            ) continue
+            seen.add(address)
+            devices.add(
+                mapOf(
+                    "name" to name,
+                    "address" to address,
+                    "isPaired" to true,
+                    "isConnected" to controlConnections.containsKey(address),
+                    "serviceUuids" to radioUuids,
+                ),
+            )
+        }
+        return devices
     }
 
     /**
@@ -267,12 +318,7 @@ class BluetoothClassicPlugin(
      * trigger a new SDP query. Returns an empty list when none match.
      */
     private fun radioServiceUuids(device: BluetoothDevice): List<String> {
-        val uuids = try {
-            device.uuids
-        } catch (e: SecurityException) {
-            requestConnectPermission()
-            null
-        } ?: return emptyList()
+        val uuids = device.uuids ?: return emptyList()
         return uuids
             .map { it.uuid }
             .filter { it in RADIO_SERVICE_UUIDS }
