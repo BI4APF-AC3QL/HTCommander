@@ -72,6 +72,56 @@ void main() {
           await utf8.decoder.bind(response).join(),
           contains('远程访问密码'),
         );
+
+        // Android LAN hosts prefer an IPv6 dual-stack listener so phones on
+        // IPv6-only Wi-Fi can reach the login page and authenticated client.
+        final ipv6Base = Uri(
+          scheme: 'http',
+          host: '::1',
+          port: handler.boundPort!,
+        );
+        final ipv6Login = await http.getUrl(ipv6Base.replace(path: '/login'));
+        final ipv6LoginResponse = await ipv6Login.close();
+        expect(ipv6LoginResponse.statusCode, HttpStatus.ok);
+        expect(
+          await utf8.decoder.bind(ipv6LoginResponse).join(),
+          contains('远程访问密码'),
+        );
+        final csrf = ipv6LoginResponse.cookies.singleWhere(
+          (cookie) => cookie.name == 'htc_login',
+        );
+        final loginPost = await http.postUrl(ipv6Base.replace(path: '/login'));
+        loginPost.followRedirects = false;
+        loginPost.cookies.add(csrf);
+        loginPost.headers.set('origin', ipv6Base.origin);
+        loginPost.headers.contentType = ContentType(
+          'application',
+          'x-www-form-urlencoded',
+        );
+        loginPost.write(
+          Uri(
+            queryParameters: {
+              'csrf': csrf.value,
+              'password': 'android-test-password',
+            },
+          ).query,
+        );
+        final signedIn = await loginPost.close();
+        expect(signedIn.statusCode, HttpStatus.seeOther);
+        final session = signedIn.cookies.singleWhere(
+          (cookie) => cookie.name == 'htc_bridge',
+        );
+        await signedIn.drain<void>();
+        final remotePage = await http.getUrl(
+          ipv6Base.replace(path: '/remote.html'),
+        );
+        remotePage.cookies.add(session);
+        final remoteResponse = await remotePage.close();
+        expect(remoteResponse.statusCode, HttpStatus.ok);
+        expect(
+          await utf8.decoder.bind(remoteResponse).join(),
+          contains('操作权'),
+        );
       } finally {
         http.close(force: true);
         HttpOverrides.global = previousHttpOverrides;
