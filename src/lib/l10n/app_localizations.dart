@@ -2368,6 +2368,12 @@ abstract class AppLocalizations {
   /// **'No compatible radio devices were found.\n\nMake sure your radio is powered on and Bluetooth is enabled.'**
   String get connectNoRadiosBody;
 
+  /// No description provided for @connectNoRadiosAndroidBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Android lists only Bluetooth Classic radios already paired with this phone. Pair your radio in Android Bluetooth settings, then return and try again. On Android 12 or later, allow HTCommander access to Nearby devices.'**
+  String get connectNoRadiosAndroidBody;
+
   /// No description provided for @connectAllConnectedTitle.
   ///
   /// In en, this message translates to:

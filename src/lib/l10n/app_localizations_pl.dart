@@ -1284,6 +1284,10 @@ class AppLocalizationsPl extends AppLocalizations {
       'Nie znaleziono zgodnego radiotelefonu.\n\nUpewnij się, że radiotelefon jest włączony, a Bluetooth aktywny.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android wyświetla tylko radia Bluetooth Classic sparowane już z tym telefonem. Najpierw sparuj radio w ustawieniach Bluetooth Androida, a potem wróć i spróbuj ponownie. W Androidzie 12 lub nowszym zezwól też aplikacji HTCommander na dostęp do urządzeń w pobliżu.';
+
+  @override
   String get connectAllConnectedTitle => 'Wszystkie połączone';
 
   @override

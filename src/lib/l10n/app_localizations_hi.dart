@@ -1274,6 +1274,10 @@ class AppLocalizationsHi extends AppLocalizations {
       'कोई संगत रेडियो डिवाइस नहीं मिला।\n\nसुनिश्चित करें कि आपका रेडियो चालू है और ब्लूटूथ सक्षम है।';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android केवल इस फ़ोन के साथ पहले से पेयर किए गए Bluetooth Classic रेडियो दिखाता है। पहले Android Bluetooth सेटिंग में रेडियो पेयर करें, फिर वापस आकर दोबारा प्रयास करें। Android 12 या बाद के संस्करण में HTCommander को Nearby devices की अनुमति भी दें।';
+
+  @override
   String get connectAllConnectedTitle => 'सभी कनेक्ट हैं';
 
   @override

@@ -4663,7 +4663,9 @@ class _MainFormState extends State<MainForm>
       });
       _showInfoDialog(
         AppLocalizations.of(context).connectNoRadiosTitle,
-        AppLocalizations.of(context).connectNoRadiosBody,
+        Platform.isAndroid
+            ? AppLocalizations.of(context).connectNoRadiosAndroidBody
+            : AppLocalizations.of(context).connectNoRadiosBody,
       );
       return;
     }

@@ -1286,6 +1286,10 @@ class AppLocalizationsIt extends AppLocalizations {
       'Non è stato trovato alcun dispositivo radio compatibile.\n\nAssicurati che la tua radio sia accesa e che il Bluetooth sia abilitato.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android mostra solo le radio Bluetooth Classic già associate a questo telefono. Associa prima la radio nelle impostazioni Bluetooth di Android, poi torna qui e riprova. Su Android 12 o versioni successive, autorizza HTCommander a usare i dispositivi nelle vicinanze.';
+
+  @override
   String get connectAllConnectedTitle => 'Tutte connesse';
 
   @override

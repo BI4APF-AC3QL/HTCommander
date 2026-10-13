@@ -419,6 +419,7 @@
   "connectScanError": "Bluetooth デバイスの検索に失敗しました: {error}",
   "connectNoRadiosTitle": "無線機が見つかりません",
   "connectNoRadiosBody": "対応する無線機デバイスが見つかりませんでした。\n\n無線機の電源が入っていて、Bluetooth が有効になっていることを確認してください。",
+  "connectNoRadiosAndroidBody": "Android では、このスマートフォンとペア設定済みの Bluetooth Classic 無線機のみ表示されます。先に Android の Bluetooth 設定で無線機をペア設定し、アプリに戻って再試行してください。Android 12 以降では、HTCommander に付近のデバイスへのアクセスも許可してください。",
   "connectAllConnectedTitle": "すべて接続済み",
   "connectAllConnectedBody": "検出されたすべての無線機デバイスは既に接続されています。",
   "connectBluetoothOffTitle": "Bluetooth を利用できません",

@@ -1290,6 +1290,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Es wurde kein kompatibles Funkgerät gefunden.\n\nStellen Sie sicher, dass Ihr Funkgerät eingeschaltet und Bluetooth aktiviert ist.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Unter Android werden nur bereits mit diesem Telefon gekoppelte Bluetooth-Classic-Funkgeräte angezeigt. Koppeln Sie Ihr Funkgerät zuerst in den Android-Bluetooth-Einstellungen und versuchen Sie es danach erneut. Unter Android 12 oder höher muss HTCommander außerdem auf Geräte in der Nähe zugreifen dürfen.';
+
+  @override
   String get connectAllConnectedTitle => 'Alle verbunden';
 
   @override

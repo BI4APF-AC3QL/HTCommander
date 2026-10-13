@@ -1245,6 +1245,10 @@ class AppLocalizationsJa extends AppLocalizations {
       '対応する無線機デバイスが見つかりませんでした。\n\n無線機の電源が入っていて、Bluetooth が有効になっていることを確認してください。';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android では、このスマートフォンとペア設定済みの Bluetooth Classic 無線機のみ表示されます。先に Android の Bluetooth 設定で無線機をペア設定し、アプリに戻って再試行してください。Android 12 以降では、HTCommander に付近のデバイスへのアクセスも許可してください。';
+
+  @override
   String get connectAllConnectedTitle => 'すべて接続済み';
 
   @override

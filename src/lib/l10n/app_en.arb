@@ -963,6 +963,7 @@
   },
   "connectNoRadiosTitle": "No Radios Found",
   "connectNoRadiosBody": "No compatible radio devices were found.\n\nMake sure your radio is powered on and Bluetooth is enabled.",
+  "connectNoRadiosAndroidBody": "Android lists only Bluetooth Classic radios already paired with this phone. Pair your radio in Android Bluetooth settings, then return and try again. On Android 12 or later, allow HTCommander access to Nearby devices.",
   "connectAllConnectedTitle": "All Connected",
   "connectAllConnectedBody": "All detected radio devices are already connected.",
   "connectBluetoothOffTitle": "Bluetooth Not Available",

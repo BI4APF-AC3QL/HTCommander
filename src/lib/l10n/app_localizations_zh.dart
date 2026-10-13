@@ -1228,6 +1228,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connectNoRadiosBody => '未找到兼容的电台设备。\n\n请确保您的电台已开机且蓝牙已启用。';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android 只会列出已与本机配对的蓝牙经典电台。请先在 Android 蓝牙设置中与电台配对，再返回本应用重试。Android 12 及以上版本还需允许 HTCommander 访问附近的设备。';
+
+  @override
   String get connectAllConnectedTitle => '全部已连接';
 
   @override
