@@ -84,7 +84,9 @@ void main() {
       final tabs = find.byType(Tab);
       for (var i = 0; i < tabs.evaluate().length; i++) {
         await tester.ensureVisible(tabs.at(i));
-        await tester.pumpAndSettle();
+        // The Comms page can show an intentional loading spinner while the
+        // native speech capabilities are checked, so settling may never end.
+        await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(tabs.at(i), warnIfMissed: false);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
