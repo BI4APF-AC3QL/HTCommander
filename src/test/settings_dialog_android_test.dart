@@ -15,6 +15,14 @@ import 'package:htcommander/services/data_broker.dart';
 /// This also guards Android-only sections such as the hosted server, phone
 /// location and speech-recognition setup from regressing as desktop settings
 /// evolve.
+void _expectNoLayoutException(WidgetTester tester, String reason) {
+  final exception = tester.takeException();
+  if (exception == null) return;
+  final details = exception is FlutterError
+      ? exception.toStringDeep()
+      : exception.toString();
+  fail('$reason:\n$details');
+}
 void main() {
   testWidgets('Android settings expose the shared tabs on a phone screen', (
     tester,
@@ -46,7 +54,7 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(tester.takeException(), isNull, reason: 'initial build');
+      _expectNoLayoutException(tester, 'initial build');
 
       // Android supports the same shared application tabs as desktop, plus
       // its own native service and phone-location controls within those tabs.
@@ -62,7 +70,7 @@ void main() {
         await tester.tap(tabs.at(i), warnIfMissed: false);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
-        expect(tester.takeException(), isNull, reason: 'tab index $i');
+        _expectNoLayoutException(tester, 'tab index $i');
       }
     } finally {
       debugDefaultTargetPlatformOverride = null;
