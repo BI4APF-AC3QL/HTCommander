@@ -167,15 +167,21 @@ jobs:
           BUILD_SHA: ${{ github.sha }}
           BUILD_TAG: ${{ steps.android-release.outputs.tag }}
         run: |
-          cat > src/android-release-notes.md <<EOF
-          自动生成的 Android 测试包，提交：${BUILD_SHA}
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          sha = os.environ['BUILD_SHA']
+          notes = f'''自动生成的 Android 测试包，提交：{sha}
 
           下载 APK 并按处理器架构安装：大多数手机选 `app-arm64-v8a-release.apk`；较旧的 32 位 ARM 设备选 `app-armeabi-v7a-release.apk`；x86_64 设备或模拟器选 `app-x86_64-release.apk`。AAB 仅供测试分发流程使用。
 
-          包含与桌面主机一致的 Flutter 远控界面资源，并通过 Android 蓝牙队列单测和包内网页资源校验。首次连接、权限说明及服务端配置见 [Android 电台连接与远控服务器文档](https://github.com/BI4APF-AC3QL/HTCommander/blob/${BUILD_SHA}/docs/android-radio-server.md)；真实手机和电台的验收步骤见[实机清单](https://github.com/BI4APF-AC3QL/HTCommander/blob/${BUILD_SHA}/docs/android-device-acceptance.md)。
+          包含与桌面主机一致的 Flutter 远控界面资源，并通过 Android 蓝牙队列单测和包内网页资源校验。首次连接、权限说明及服务端配置见 [Android 电台连接与远控服务器文档](https://github.com/BI4APF-AC3QL/HTCommander/blob/{sha}/docs/android-radio-server.md)；真实手机和电台的验收步骤见[实机清单](https://github.com/BI4APF-AC3QL/HTCommander/blob/{sha}/docs/android-device-acceptance.md)。
 
           测试包可能使用临时 debug 签名，不能保证覆盖应用商店版或其他签名版本。安装前请备份数据，不要为安装测试包直接卸载正式版。真实手机、电台连接、后台长时运行和射频行为仍需现场验收。本项目测试不执行真实 RF/PTT/信标发射。
-          EOF
+          '''
+          Path('src/android-release-notes.md').write_text(notes, encoding='utf-8')
+          PY
           gh release create "$BUILD_TAG" \
             src/build/app/outputs/flutter-apk/app-*-release.apk \
             src/build/app/outputs/bundle/release/app-release.aab \
