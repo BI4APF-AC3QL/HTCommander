@@ -1,5 +1,7 @@
 # Android 电台连接与远控服务器
 
+完成代码和安装包检查后，可按[Android 与电台实机验收清单](android-device-acceptance.md)记录真实手机、电台及后台运行结果。
+
 HTCommander Android 版可直接通过系统蓝牙配对连接支持的电台，也能把同一部手机作为远控主机：应用连接电台后，可在“设置 → 服务端 → 手机远程操控设置”启用网页服务。其他设备在同一 Wi-Fi 内打开页面显示的 Android 本机地址并登录，即可使用手机远控页面；点击“更多 → 完整界面 · 地图/APRS”还可打开与桌面主机相同的 Flutter Web 界面。Android 测试包和正式包都会把该 Web 界面打入 APK。
 
 ## 下载 Android 测试版
