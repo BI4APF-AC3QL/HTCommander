@@ -102,6 +102,13 @@ class BluetoothClassicPlugin(
         capacity = 2,
         threadName = "HTCommander-BT-discovery",
     )
+    // BluetoothSocket.close() can wait on the Android Bluetooth service. Keep
+    // disconnect cleanup away from Flutter's platform thread so a slow OEM
+    // Bluetooth stack cannot make the whole app appear unresponsive.
+    private val disconnectExecutor = BoundedSerialExecutor(
+        capacity = 16,
+        threadName = "HTCommander-BT-disconnect",
+    )
 
     @Volatile
     private var disposed = false
@@ -172,8 +179,11 @@ class BluetoothClassicPlugin(
             )
             "connect" -> openRfcomm(call.argument<String>("address"), SPP_UUID, audio = false, result)
             "disconnect" -> {
-                disconnect(call.argument<String>("address"), audio = false)
-                result.success(true)
+                disconnect(
+                    call.argument<String>("address"),
+                    audio = false,
+                    result = result,
+                )
             }
             "send" -> send(
                 call.argument<String>("address"),
@@ -183,8 +193,11 @@ class BluetoothClassicPlugin(
             )
             "connectAudio" -> connectAudio(call.argument<String>("address"), result)
             "disconnectAudio" -> {
-                disconnect(call.argument<String>("address"), audio = true)
-                result.success(true)
+                disconnect(
+                    call.argument<String>("address"),
+                    audio = true,
+                    result = result,
+                )
             }
             "sendAudio" -> send(
                 call.argument<String>("address"),
@@ -225,6 +238,7 @@ class BluetoothClassicPlugin(
             connectingSockets.clear()
             connectionAttempts.cancelAll()
             deviceQueryExecutor.close()
+            disconnectExecutor.close()
         }
     }
 
@@ -614,14 +628,31 @@ class BluetoothClassicPlugin(
         throw lastError ?: IOException("RFCOMM connect failed")
     }
 
-    private fun disconnect(address: String?, audio: Boolean) {
-        if (address == null) return
+    private fun disconnect(
+        address: String?,
+        audio: Boolean,
+        result: MethodChannel.Result,
+    ) {
+        if (address == null) {
+            result.success(true)
+            return
+        }
         val normalized = normalizeAddress(address)
         val uuid = if (audio) AUDIO_UUID else SPP_UUID
         val map = if (audio) audioConnections else controlConnections
-        synchronized(lifecycleLock) {
-            connectionAttempts.cancel(normalized, uuid)
-            map.remove(normalized)?.close(DISCONNECT_REQUESTED)
+        val accepted = disconnectExecutor.execute {
+            synchronized(lifecycleLock) {
+                connectionAttempts.cancel(normalized, uuid)
+                map.remove(normalized)?.close(DISCONNECT_REQUESTED)
+            }
+            mainHandler.post { result.success(true) }
+        }
+        if (!accepted) {
+            result.error(
+                "DISCONNECT_BUSY",
+                "Bluetooth cleanup queue is full; retry disconnect",
+                null,
+            )
         }
     }
 

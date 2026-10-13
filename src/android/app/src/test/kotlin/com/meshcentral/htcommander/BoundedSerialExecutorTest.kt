@@ -2,6 +2,7 @@ package com.meshcentral.htcommander
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Collections
@@ -9,6 +10,25 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class BoundedSerialExecutorTest {
+    @Test
+    fun executesCleanupAwayFromTheSubmittingThread() {
+        val executor = BoundedSerialExecutor(capacity = 1, threadName = "cleanup-test")
+        val completed = CountDownLatch(1)
+        var workerThreadName: String? = null
+
+        try {
+            assertTrue(executor.execute {
+                workerThreadName = Thread.currentThread().name
+                completed.countDown()
+            })
+            assertTrue(completed.await(2, TimeUnit.SECONDS))
+            assertNotEquals(Thread.currentThread().name, workerThreadName)
+            assertEquals("cleanup-test", workerThreadName)
+        } finally {
+            executor.close()
+        }
+    }
+
     @Test
     fun preservesOrderAndRejectsWritesWhenQueueIsFull() {
         val executor = BoundedSerialExecutor(capacity = 1, threadName = "writer-test")
