@@ -110,6 +110,13 @@ class BluetoothClassicPlugin(
         capacity = 16,
         threadName = "HTCommander-BT-disconnect",
     )
+    // Engine teardown can happen on the platform thread. Keep bulk socket
+    // closure and connection-attempt cancellation away from it because some
+    // OEM Bluetooth stacks block while servicing BluetoothSocket.close().
+    private val disposeExecutor = BoundedSerialExecutor(
+        capacity = 1,
+        threadName = "HTCommander-BT-dispose",
+    )
 
     @Volatile
     private var disposed = false
@@ -212,6 +219,9 @@ class BluetoothClassicPlugin(
 
     /** Releases RFCOMM sockets and channel handlers when Flutter detaches. */
     fun dispose() {
+        val controlsToClose: List<RfcommConnection>
+        val audioToClose: List<RfcommConnection>
+        val socketsToClose: List<BluetoothSocket>
         synchronized(lifecycleLock) {
             if (disposed) return
             disposed = true
@@ -221,26 +231,34 @@ class BluetoothClassicPlugin(
             dataSink = null
             audioSink = null
 
-            controlConnections.values.toList().forEach {
-                it.close(DISCONNECT_REQUESTED)
-            }
+            controlsToClose = controlConnections.values.toList()
             controlConnections.clear()
-            audioConnections.values.toList().forEach {
-                it.close(DISCONNECT_REQUESTED)
-            }
+            audioToClose = audioConnections.values.toList()
             audioConnections.clear()
 
-            connectingSockets.toList().forEach { socket ->
-                try {
-                    socket.close()
-                } catch (_: IOException) {
-                }
-            }
+            socketsToClose = connectingSockets.toList()
             connectingSockets.clear()
-            connectionAttempts.cancelAll()
             deviceQueryExecutor.close()
             disconnectExecutor.close()
         }
+
+        val cleanup = {
+            runCatching { connectionAttempts.cancelAll() }
+            controlsToClose.forEach { runCatching { it.close(DISCONNECT_REQUESTED) } }
+            audioToClose.forEach { runCatching { it.close(DISCONNECT_REQUESTED) } }
+            socketsToClose.forEach { runCatching { it.close() } }
+        }
+        if (!disposeExecutor.execute(cleanup)) {
+            // There is only one dispose submission per plugin instance, but
+            // retain a last-resort path if the executor was unexpectedly shut.
+            Thread(cleanup, "HTCommander-BT-dispose-fallback").apply {
+                isDaemon = true
+                start()
+            }
+        }
+        // shutdown() drains the queued cleanup task without waiting for OEM
+        // socket close calls to return on the platform thread.
+        disposeExecutor.close()
     }
 
     private fun isAvailable(): Boolean {

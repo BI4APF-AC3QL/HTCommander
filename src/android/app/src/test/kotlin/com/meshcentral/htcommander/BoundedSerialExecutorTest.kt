@@ -30,6 +30,40 @@ class BoundedSerialExecutorTest {
     }
 
     @Test
+    fun shutdownDoesNotWaitForBlockedSocketCleanup() {
+        val executor = BoundedSerialExecutor(capacity = 1, threadName = "dispose-test")
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val cleanupFinished = CountDownLatch(1)
+        val shutdownFinished = CountDownLatch(1)
+
+        try {
+            assertTrue(executor.execute {
+                started.countDown()
+                release.await()
+                cleanupFinished.countDown()
+            })
+            assertTrue(started.await(2, TimeUnit.SECONDS))
+
+            Thread {
+                executor.close()
+                shutdownFinished.countDown()
+            }.start()
+
+            assertTrue(
+                "shutdown must return while background cleanup is still blocked",
+                shutdownFinished.await(2, TimeUnit.SECONDS),
+            )
+            assertEquals(1L, cleanupFinished.count)
+        } finally {
+            release.countDown()
+            executor.close()
+        }
+
+        assertTrue(cleanupFinished.await(2, TimeUnit.SECONDS))
+    }
+
+    @Test
     fun preservesOrderAndRejectsWritesWhenQueueIsFull() {
         val executor = BoundedSerialExecutor(capacity = 1, threadName = "writer-test")
         val started = CountDownLatch(1)
