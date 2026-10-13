@@ -142,7 +142,7 @@ class HTAboutDialog extends StatelessWidget {
               const SizedBox(height: 12),
               // Action buttons
               OverflowBar(
-                alignment: OverflowBarAlignment.end,
+                alignment: MainAxisAlignment.end,
                 overflowAlignment: OverflowBarAlignment.end,
                 spacing: 8,
                 overflowSpacing: 4,
