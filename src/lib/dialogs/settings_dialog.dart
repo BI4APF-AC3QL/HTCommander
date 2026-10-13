@@ -3068,7 +3068,12 @@ class _SettingsDialogState extends State<SettingsDialog>
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             const SizedBox(width: 12),
-            Text(l10n.settingsLoadingVoices, style: DialogStyles.bodyStyle),
+            Expanded(
+              child: Text(
+                l10n.settingsLoadingVoices,
+                style: DialogStyles.bodyStyle,
+              ),
+            ),
           ],
         ),
       );
