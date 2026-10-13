@@ -180,6 +180,9 @@ flutter:
   assets:
     - assets/images/
     - assets/images/tabs/
+    # Android's LAN server hosts the same Flutter web interface as desktop.
+    # CI stages a hosted web build here before creating Android packages.
+    - assets/web_app/
     # Offline callsign -> country/DXCC-entity table (AD1C country-files.com),
     # gzip-compressed JSON loaded into memory at startup. See tools/build_cty.py.
     - assets/callsign/

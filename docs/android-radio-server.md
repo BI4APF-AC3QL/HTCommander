@@ -1,6 +1,6 @@
 # Android 电台连接与远控服务器
 
-HTCommander Android 版可直接通过系统蓝牙配对连接支持的电台，也能把同一部手机作为远控主机：应用连接电台后，可在“设置 → 服务端 → 手机远程操控设置”启用网页服务。其他设备在同一 Wi-Fi 内打开页面显示的 Android 本机地址并登录，即可使用已有手机远控页面。
+HTCommander Android 版可直接通过系统蓝牙配对连接支持的电台，也能把同一部手机作为远控主机：应用连接电台后，可在“设置 → 服务端 → 手机远程操控设置”启用网页服务。其他设备在同一 Wi-Fi 内打开页面显示的 Android 本机地址并登录，即可使用手机远控页面；点击“更多 → 完整界面 · 地图/APRS”还可打开与桌面主机相同的 Flutter Web 界面。Android 测试包和正式包都会把该 Web 界面打入 APK。
 
 ## 下载 Android 测试版
 
@@ -30,6 +30,8 @@ Android 13 及以上优先使用系统离线语音识别；Android 12 及更早�
 5. Android 会显示常驻通知并保持服务进程运行。停止时回到相同设置关闭网页服务。此模式需要 Android 保持网络可用，并会增加一些耗电。
 
 局域网 HTTP 可用于登录、收听及控制，但 Android 浏览器会限制非安全页面的麦克风和定位等能力。如需在外网使用，建议接入 VPN 或将 Android 端口经 HTTPS 反向代理发布；不要直接把无 TLS 的 8080 暴露到公网。手机浏览器的麦克风和定位功能需要可信 HTTPS 页面。卫星下行跟踪可由 Android 本机使用观测位置；网页远控的数据范围仍取决于本机与浏览器权限。
+
+从源码本地构建 Android 包时，先运行 `flutter pub get` 和 `python tools/stage_android_web_assets.py --clean`，再运行 `flutter build web --release --base-href / --dart-define=HTC_HOSTED=true --no-wasm-dry-run`，接着运行 `python tools/stage_android_web_assets.py`，最后运行 `flutter build apk --release` 或 `flutter build appbundle --release`。清理步骤避免上次打包的 Web 文件被再次嵌入新 Web 构建；官方 Android CI 和发布工作流会自动执行这两步。
 
 ## 平台边界
 

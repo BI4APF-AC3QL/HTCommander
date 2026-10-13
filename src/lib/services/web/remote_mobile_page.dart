@@ -10,7 +10,7 @@ ${failed ? '<p role="alert">密码错误，请重试 / Incorrect password</p>' :
 <button>登录 / Sign in</button></form><small>密码在电脑的远程操控设置中配置。</small></main></html>''';
 
 const remotePwaManifest =
-    r'''{"id":"/remote.html","name":"HTCommander 远程电台","short_name":"远程电台","start_url":"/remote.html","scope":"/","display":"standalone","background_color":"#101827","theme_color":"#101827","description":"连接 Windows 主机查看、收听和控制电台","icons":[{"src":"/icons/Icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icons/Icon-512.png","sizes":"512x512","type":"image/png"}]}''';
+    r'''{"id":"/remote.html","name":"HTCommander 远程电台","short_name":"远程电台","start_url":"/remote.html","scope":"/","display":"standalone","background_color":"#101827","theme_color":"#101827","description":"连接 HTCommander 主机查看、收听和控制电台","icons":[{"src":"/icons/Icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icons/Icon-512.png","sizes":"512x512","type":"image/png"}]}''';
 // No fetch handler or offline cache: authenticated content always uses network.
 const remotePwaWorker =
     "self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));";

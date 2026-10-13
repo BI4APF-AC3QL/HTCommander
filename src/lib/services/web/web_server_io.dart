@@ -22,7 +22,9 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
+import 'package:flutter/services.dart' show AssetBundle, rootBundle;
 import 'package:crypto/crypto.dart' show sha1;
 
 import 'bounded_websocket_output.dart';
@@ -104,15 +106,20 @@ class WebSocketClient {
 }
 
 /// Serves the Flutter web build over HTTP and bridges the radio over a
-/// WebSocket on desktop platforms.
+/// WebSocket on supported native platforms.
 class WebServer {
-  WebServer(this.port, {RemoteAccessConfig? remoteConfig})
-    : remoteConfig = remoteConfig ?? const RemoteAccessConfig(),
-      _broker = DataBrokerClient() {
+  WebServer(
+    this.port, {
+    RemoteAccessConfig? remoteConfig,
+    AssetBundle? assetBundle,
+  }) : remoteConfig = remoteConfig ?? const RemoteAccessConfig(),
+       _assetBundle = assetBundle ?? rootBundle,
+       _broker = DataBrokerClient() {
     _auth = RemoteWebAuth(this.remoteConfig.password);
   }
 
   final RemoteAccessConfig remoteConfig;
+  final AssetBundle _assetBundle;
   late final RemoteWebAuth _auth;
   final Set<String> _allowedHosts = {'localhost', '127.0.0.1', '::1'};
   final Map<int, Timer> _sessionChecks = {};
@@ -559,8 +566,13 @@ class WebServer {
         await response.close();
         return;
       }
+      // Android packages the hosted Flutter web client inside the APK rather
+      // than alongside an executable directory. The Android build workflow
+      // stages build/web under assets/web_app before packaging.
+      final isAndroid = defaultTargetPlatform == TargetPlatform.android;
       final dir = _resolveWebAppDir();
-      if (dir == null) {
+      final androidAssetBuild = isAndroid && dir == null;
+      if (!androidAssetBuild && dir == null) {
         response.statusCode = HttpStatus.notFound;
         response.headers.contentType = ContentType.text;
         response.write(
@@ -589,10 +601,10 @@ class WebServer {
 
       // De-duplication: the app's own pubspec assets (declared under `assets/`)
       // are bundled into the Flutter web build under `assets/assets/...`, which
-      // is byte-identical to what the desktop app already carries in its asset
-      // bundle. Serve those straight from `rootBundle` so the staged web build
-      // need not ship a second copy (see tools/build_web_app.ps1). Engine files
-      // (manifests, fonts, packages) live under a single `assets/` and are left
+      // is byte-identical to what the native app already carries in its asset
+      // bundle. Serve those straight from the asset bundle so the staged web
+      // build need not ship a second copy (see tools/build_web_app.ps1). Engine
+      // files (manifests, fonts, packages) live under a single `assets/` and are left
       // to the web build, which tree-shakes them per platform.
       if (relativePath.startsWith('assets/assets/')) {
         final bundleKey = relativePath.substring('assets/'.length);
@@ -605,6 +617,31 @@ class WebServer {
           await response.close();
           return;
         }
+      }
+
+      if (androidAssetBuild) {
+        final bytes = await _tryLoadAsset('assets/web_app/$relativePath');
+        if (bytes == null) {
+          response.statusCode = HttpStatus.notFound;
+          response.headers.contentType = ContentType.text;
+          response.write('404 - File Not Found');
+          await response.close();
+          return;
+        }
+        if (relativePath == 'index.html' && !remoteConfig.enabled) {
+          response.cookies.add(
+            Cookie('htc_bridge', _sessionToken)
+              ..httpOnly = true
+              ..sameSite = SameSite.strict
+              ..path = '/',
+          );
+        }
+        response.statusCode = HttpStatus.ok;
+        response.headers.contentType = _contentTypeFor(relativePath);
+        response.headers.contentLength = bytes.length;
+        response.add(bytes);
+        await response.close();
+        return;
       }
 
       final file = File(
@@ -780,8 +817,9 @@ class WebServer {
   ///
   /// Search order: the `webAppPath` setting (device 0), a `web_app` folder next
   /// to the executable (Windows/Linux) or in the app bundle's `Resources`
-  /// (macOS), and `build/web` under the working directory (dev convenience). A
-  /// directory only qualifies if it contains `index.html`.
+  /// (macOS), and `build/web` under the working directory (dev convenience).
+  /// Android only checks an explicitly configured path before falling back to
+  /// the APK asset bundle. A directory must contain `index.html`.
   Directory? _resolveWebAppDir() {
     final cached = _webAppDir;
     if (cached != null &&
@@ -796,6 +834,16 @@ class WebServer {
     final candidates = <String>[];
     final configured = _broker.getValue<String>(0, 'webAppPath', '') ?? '';
     if (configured.isNotEmpty) candidates.add(configured);
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      for (final path in candidates) {
+        final dir = Directory(path);
+        if (File('${dir.path}${Platform.pathSeparator}index.html').existsSync()) {
+          _webAppDir = dir;
+          return dir;
+        }
+      }
+      return null;
+    }
     try {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
       candidates.add('$exeDir${sep}web_app');
@@ -818,11 +866,10 @@ class WebServer {
     return null;
   }
 
-  /// Loads a bundled asset (from the desktop app's own asset bundle),
-  /// returning its bytes or `null` if it does not exist.
+  /// Loads a bundled asset, returning its bytes or `null` if it does not exist.
   Future<List<int>?> _tryLoadAsset(String assetKey) async {
     try {
-      final data = await rootBundle.load(assetKey);
+      final data = await _assetBundle.load(assetKey);
       return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
     } catch (_) {
       return null;
@@ -847,6 +894,8 @@ class WebServer {
         return ContentType('application', 'json', charset: 'utf-8');
       case 'webmanifest':
         return ContentType('application', 'manifest+json', charset: 'utf-8');
+      case 'wasm':
+        return ContentType('application', 'wasm');
       case 'png':
         return ContentType('image', 'png');
       case 'jpg':
