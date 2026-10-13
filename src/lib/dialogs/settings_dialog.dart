@@ -31,6 +31,7 @@ import '../services/tts_service.dart';
 import '../services/android_current_location.dart';
 import '../services/winlink_gateway_service.dart';
 import '../services/sherpa_model_manager.dart';
+import '../handlers/android_speech_to_text_capabilities.dart';
 import '../widgets/contact_avatar.dart';
 import 'app_settings.dart';
 import 'remote_access_dialog.dart';
@@ -58,6 +59,8 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   late TabController _tabController;
   late AppSettings _settings;
+  late Future<bool> _androidSystemSttAvailable;
+  late Future<bool> _androidSherpaFallbackAvailable;
 
   // Operator's own avatar for the License tab. Mirrors [_settings] and is
   // written back on save. A custom [_avatarImage] takes precedence over a
@@ -272,6 +275,14 @@ class _SettingsDialogState extends State<SettingsDialog>
 
     // Load settings from DataBroker
     _settings = AppSettings.loadFromDataBroker();
+    _androidSystemSttAvailable =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        ? AndroidSpeechToTextCapabilities.systemRecognizerAvailable
+        : Future<bool>.value(false);
+    _androidSherpaFallbackAvailable =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        ? AndroidSpeechToTextCapabilities.sherpaFallbackAvailable
+        : Future<bool>.value(false);
     _phoneGpsTrackingEnabled =
         (_broker.getValue<int>(0, 'PhoneGpsTrackingEnabled', 0) ?? 0) == 1;
     _avatarIcon = _settings.avatarIcon;
@@ -373,13 +384,10 @@ class _SettingsDialogState extends State<SettingsDialog>
     // Load current history counts for the Limits tab.
     _loadHistoryCounts();
 
-    // Sync the speech-to-text model status shown in the Voice tab.
-    // Speech-to-text is not available on Android.
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      SherpaModelManager.refreshStatus(
-        SherpaModelManager.modelById(_settings.voiceModel).id,
-      );
-    }
+    // Sync the optional offline speech-to-text model status.
+    SherpaModelManager.refreshStatus(
+      SherpaModelManager.modelById(_settings.voiceModel).id,
+    );
   }
 
   /// Loads the available text-to-speech voices for the Voice settings tab.
@@ -2495,23 +2503,65 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   /// Speech-to-text setup: model selection, language and on-device management.
   Widget _buildSpeechRecognitionSection() {
-    final l10n = AppLocalizations.of(context);
-    // Android transcribes via the OS on-device recognizer, which downloads no
-    // model into the app, so the sherpa model picker/status is not shown.
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: _sectionDecoration(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
-            const SizedBox(height: 8),
-            Text(l10n.settingsSpeechToTextInfo, style: DialogStyles.bodyStyle),
-          ],
-        ),
+      return FutureBuilder<bool>(
+        future: _androidSystemSttAvailable,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.data!) return _buildAndroidSystemSttInfo();
+          return FutureBuilder<bool>(
+            future: _androidSherpaFallbackAvailable,
+            builder: (context, fallbackSnapshot) {
+              if (!fallbackSnapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return fallbackSnapshot.data!
+                  ? _buildSherpaModelSelection(androidFallback: true)
+                  : _buildAndroidSttUnavailableInfo();
+            },
+          );
+        },
       );
     }
+    return _buildSherpaModelSelection();
+  }
+
+  Widget _buildAndroidSystemSttInfo() {
+    final l10n = AppLocalizations.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _sectionDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
+          const SizedBox(height: 8),
+          Text(l10n.settingsSpeechToTextInfo, style: DialogStyles.bodyStyle),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAndroidSttUnavailableInfo() {
+    final l10n = AppLocalizations.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _sectionDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
+          const SizedBox(height: 8),
+          Text(l10n.settingsAndroidSttUnsupported, style: DialogStyles.bodyStyle),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSherpaModelSelection({bool androidFallback = false}) {
+    final l10n = AppLocalizations.of(context);
     final model = SherpaModelManager.modelById(_settings.voiceModel);
     final langCodes = model.languages ?? const <String>[];
     final sttLang = langCodes.contains(_settings.voiceLanguage)
@@ -2526,6 +2576,10 @@ class _SettingsDialogState extends State<SettingsDialog>
           Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
           const SizedBox(height: 8),
           Text(l10n.settingsSpeechToTextInfo, style: DialogStyles.bodyStyle),
+          if (androidFallback) ...[
+            const SizedBox(height: 8),
+            Text(l10n.settingsAndroidSttFallbackInfo, style: _secondaryStyle()),
+          ],
           const SizedBox(height: 16),
           Text(l10n.settingsModel, style: DialogStyles.labelStyle),
           const SizedBox(height: 4),

@@ -819,6 +819,14 @@ class AppLocalizationsDe extends AppLocalizations {
       'Transkribiert empfangenes Funk-Audio in Text. Funktioniert vollständig offline auf diesem Gerät; Audio wird niemals auf der Festplatte gespeichert.';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Lade unter Android 12 und älter unten ein Offline-Modell herunter. Android 13+ verwendet nach Möglichkeit die Systemerkennung; das herunterladbare Modell unterstützt 64-Bit-ARM und x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Offline-Spracherkennung ist nicht verfügbar: Dieses Gerät benötigt Android 13+ mit Systemunterstützung oder einen 64-Bit-ARM-/x86_64-Prozessor für das herunterladbare Modell.';
+
+  @override
   String get settingsModel => 'Modell';
 
   @override

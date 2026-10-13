@@ -278,6 +278,8 @@
   "settingsCommsIntro": "Konfigurieren Sie die Einstellungen für Spracherkennung und Sprachsynthese.",
   "settingsSpeechToText": "Spracherkennung",
   "settingsSpeechToTextInfo": "Transkribiert empfangenes Funk-Audio in Text. Funktioniert vollständig offline auf diesem Gerät; Audio wird niemals auf der Festplatte gespeichert.",
+  "settingsAndroidSttFallbackInfo": "Lade unter Android 12 und älter unten ein Offline-Modell herunter. Android 13+ verwendet nach Möglichkeit die Systemerkennung; das herunterladbare Modell unterstützt 64-Bit-ARM und x86_64.",
+  "settingsAndroidSttUnsupported": "Offline-Spracherkennung ist nicht verfügbar: Dieses Gerät benötigt Android 13+ mit Systemunterstützung oder einen 64-Bit-ARM-/x86_64-Prozessor für das herunterladbare Modell.",
   "settingsModel": "Modell",
   "settingsRecognitionLanguage": "Erkennungssprache",
   "settingsRecognitionLanguageHelp": "Sprachänderungen werden beim nächsten Start der Engine wirksam.",

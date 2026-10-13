@@ -278,6 +278,8 @@
   "settingsCommsIntro": "Configure los ajustes de reconocimiento y síntesis de voz.",
   "settingsSpeechToText": "Reconocimiento de voz",
   "settingsSpeechToTextInfo": "Transcribe a texto el audio de radio recibido. Funciona completamente sin conexión en este dispositivo; el audio nunca se guarda en el disco.",
+  "settingsAndroidSttFallbackInfo": "En Android 12 y versiones anteriores, descarga abajo un modelo sin conexión. Android 13+ usa el reconocedor del sistema cuando está disponible; el modelo descargable admite ARM de 64 bits y x86_64.",
+  "settingsAndroidSttUnsupported": "El reconocimiento de voz sin conexión no está disponible: el dispositivo necesita Android 13+ con reconocimiento del sistema o un procesador ARM de 64 bits/x86_64 para el modelo descargable.",
   "settingsModel": "Modelo",
   "settingsRecognitionLanguage": "Idioma de reconocimiento",
   "settingsRecognitionLanguageHelp": "Los cambios de idioma surten efecto la próxima vez que se inicie el motor.",

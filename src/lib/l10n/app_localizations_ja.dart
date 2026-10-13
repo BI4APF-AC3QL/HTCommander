@@ -798,6 +798,14 @@ class AppLocalizationsJa extends AppLocalizations {
       '受信した無線オーディオをテキストに変換します。このデバイス上で完全にオフラインで動作し、オーディオがディスクに保存されることはありません。';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Android 12 以前では、下からオフラインモデルをダウンロードしてください。Android 13 以降は利用可能な場合にシステム認識を使用します。ダウンロードモデルは 64 ビット ARM と x86_64 に対応します。';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'オフライン音声認識を利用できません。このデバイスには Android 13 以降のシステム対応、またはダウンロードモデル用の 64 ビット ARM/x86_64 プロセッサが必要です。';
+
+  @override
   String get settingsModel => 'モデル';
 
   @override

@@ -812,6 +812,14 @@ class AppLocalizationsHi extends AppLocalizations {
       'प्राप्त रेडियो ऑडियो को टेक्स्ट में लिखता है। इस डिवाइस पर पूरी तरह ऑफ़लाइन काम करता है; ऑडियो कभी डिस्क पर सहेजा नहीं जाता।';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Android 12 और पुराने संस्करणों पर नीचे से ऑफ़लाइन मॉडल डाउनलोड करें। Android 13+ उपलब्ध होने पर सिस्टम पहचान का उपयोग करता है; डाउनलोड किए गए मॉडल के लिए 64-बिट ARM या x86_64 आवश्यक है।';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'ऑफ़लाइन वाक् पहचान उपलब्ध नहीं है: इस डिवाइस को Android 13+ सिस्टम समर्थन या डाउनलोड किए गए मॉडल के लिए 64-बिट ARM/x86_64 प्रोसेसर चाहिए।';
+
+  @override
   String get settingsModel => 'मॉडल';
 
   @override

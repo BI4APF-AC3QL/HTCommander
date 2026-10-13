@@ -1245,12 +1245,13 @@ packages:
     source: hosted
     version: "1.13.8"
   sherpa_onnx_android_arm64:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "sherpa_stubs/sherpa_onnx_android_arm64"
-      relative: true
-    source: path
-    version: "1.13.3"
+      name: sherpa_onnx_android_arm64
+      sha256: "29db5572735afb1bc29f0f95ab160f7fb38b4b3f926f48e9113457fd740264f4"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.13.8"
   sherpa_onnx_android_armeabi:
     dependency: "direct overridden"
     description:
@@ -1266,12 +1267,13 @@ packages:
     source: path
     version: "1.13.3"
   sherpa_onnx_android_x86_64:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "sherpa_stubs/sherpa_onnx_android_x86_64"
-      relative: true
-    source: path
-    version: "1.13.3"
+      name: sherpa_onnx_android_x86_64
+      sha256: d20c06c0edc92286609f256d04c295cad510bbb270068c0c79877f4a10f00581
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.13.8"
   sherpa_onnx_ios:
     dependency: transitive
     description:

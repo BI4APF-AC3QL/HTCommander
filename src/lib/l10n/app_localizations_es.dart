@@ -813,6 +813,14 @@ class AppLocalizationsEs extends AppLocalizations {
       'Transcribe a texto el audio de radio recibido. Funciona completamente sin conexión en este dispositivo; el audio nunca se guarda en el disco.';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'En Android 12 y versiones anteriores, descarga abajo un modelo sin conexión. Android 13+ usa el reconocedor del sistema cuando está disponible; el modelo descargable admite ARM de 64 bits y x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'El reconocimiento de voz sin conexión no está disponible: el dispositivo necesita Android 13+ con reconocimiento del sistema o un procesador ARM de 64 bits/x86_64 para el modelo descargable.';
+
+  @override
   String get settingsModel => 'Modelo';
 
   @override

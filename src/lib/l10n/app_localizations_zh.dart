@@ -788,6 +788,14 @@ class AppLocalizationsZh extends AppLocalizations {
       '将接收到的电台音频转录为文本。完全在本设备上离线运行；音频绝不会保存到磁盘。';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Android 12 及更早版本请下载下方的离线模型；Android 13 及以上在系统识别器可用时优先使用。下载模型回退支持 64 位 ARM 或 x86_64 设备。';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      '当前设备无法使用语音识别：需要 Android 13 及以上的系统识别支持，或使用 64 位 ARM/x86_64 设备运行下载的离线模型。';
+
+  @override
   String get settingsModel => '模型';
 
   @override

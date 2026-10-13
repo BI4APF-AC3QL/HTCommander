@@ -103,6 +103,11 @@ class AndroidSpeechToTextPlugin(
             "isSupported" -> {
                 result.success(isDeviceSupported())
             }
+            "isSherpaFallbackSupported" -> {
+                result.success(
+                    Build.SUPPORTED_ABIS.any { it == "arm64-v8a" || it == "x86_64" },
+                )
+            }
             "initialize" -> {
                 localeId = call.argument<String>("localeId") ?: ""
                 result.success(initialize())

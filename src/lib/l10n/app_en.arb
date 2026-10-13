@@ -653,6 +653,8 @@
   "settingsCommsIntro": "Configure speech recognition and text-to-speech settings.",
   "settingsSpeechToText": "Speech-to-Text",
   "settingsSpeechToTextInfo": "Transcribes received radio audio to text. Runs fully offline on this device; audio is never written to disk.",
+  "settingsAndroidSttFallbackInfo": "On Android 12 and earlier, download an offline model below. Android 13+ uses the system recognizer when available; the downloadable model fallback requires a 64-bit ARM or x86_64 device.",
+  "settingsAndroidSttUnsupported": "Offline speech recognition is unavailable: this device needs Android 13+ system support or a 64-bit ARM/x86_64 processor for the downloadable model fallback.",
   "settingsModel": "Model",
   "settingsRecognitionLanguage": "Recognition Language",
   "settingsRecognitionLanguageHelp": "Language changes take effect the next time the engine starts.",

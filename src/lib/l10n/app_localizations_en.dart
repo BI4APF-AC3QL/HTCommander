@@ -807,6 +807,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Transcribes received radio audio to text. Runs fully offline on this device; audio is never written to disk.';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'On Android 12 and earlier, download an offline model below. Android 13+ uses the system recognizer when available; the downloadable model fallback requires a 64-bit ARM or x86_64 device.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Offline speech recognition is unavailable: this device needs Android 13+ system support or a 64-bit ARM/x86_64 processor for the downloadable model fallback.';
+
+  @override
   String get settingsModel => 'Model';
 
   @override

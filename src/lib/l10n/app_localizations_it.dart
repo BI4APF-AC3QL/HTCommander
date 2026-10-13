@@ -813,6 +813,14 @@ class AppLocalizationsIt extends AppLocalizations {
       'Trascrive in testo l\'audio radio ricevuto. Funziona completamente offline su questo dispositivo; l\'audio non viene mai scritto su disco.';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Su Android 12 e versioni precedenti, scarica un modello offline qui sotto. Android 13+ usa il riconoscimento di sistema quando disponibile; il modello scaricabile supporta ARM a 64 bit e x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Il riconoscimento vocale offline non è disponibile: il dispositivo richiede Android 13+ con supporto di sistema oppure un processore ARM a 64 bit/x86_64 per il modello scaricabile.';
+
+  @override
   String get settingsModel => 'Modello';
 
   @override

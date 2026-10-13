@@ -1576,6 +1576,18 @@ abstract class AppLocalizations {
   /// **'Transcribes received radio audio to text. Runs fully offline on this device; audio is never written to disk.'**
   String get settingsSpeechToTextInfo;
 
+  /// No description provided for @settingsAndroidSttFallbackInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'On Android 12 and earlier, download an offline model below. Android 13+ uses the system recognizer when available; the downloadable model fallback requires a 64-bit ARM or x86_64 device.'**
+  String get settingsAndroidSttFallbackInfo;
+
+  /// No description provided for @settingsAndroidSttUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline speech recognition is unavailable: this device needs Android 13+ system support or a 64-bit ARM/x86_64 processor for the downloadable model fallback.'**
+  String get settingsAndroidSttUnsupported;
+
   /// No description provided for @settingsModel.
   ///
   /// In en, this message translates to:

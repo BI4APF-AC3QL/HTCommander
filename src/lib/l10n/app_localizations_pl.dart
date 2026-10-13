@@ -816,6 +816,14 @@ class AppLocalizationsPl extends AppLocalizations {
       'Transkrybuje odebrany dźwięk radiowy na tekst. Działa całkowicie offline na tym urządzeniu; dźwięk nigdy nie jest zapisywany na dysku.';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'W Androidzie 12 i starszym pobierz poniżej model offline. Android 13+ używa systemowego rozpoznawania, jeśli jest dostępne; pobierany model obsługuje 64-bitowy ARM i x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Rozpoznawanie mowy offline jest niedostępne: urządzenie wymaga Androida 13+ z obsługą systemową lub procesora 64-bit ARM/x86_64 dla pobieranego modelu.';
+
+  @override
   String get settingsModel => 'Model';
 
   @override

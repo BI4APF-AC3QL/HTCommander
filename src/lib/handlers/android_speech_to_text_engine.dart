@@ -3,14 +3,11 @@ Copyright 2026 Ylian Saint-Hilaire
 Licensed under the Apache License, Version 2.0 (the "License");
 http://www.apache.org/licenses/LICENSE-2.0
 
-Android speech-to-text engine backed by the platform on-device recognizer.
-
-Unlike the desktop sherpa-onnx engine, this engine downloads no model into the
-APK: it feeds raw PCM into Android's own `SpeechRecognizer` through the
-`RecognizerIntent.EXTRA_AUDIO_SOURCE` file descriptor added in API 33
-(Android 13). The recognizer reads audio from a pipe instead of opening the
-microphone, so received radio audio can be transcribed with the OS-managed
-language model.
+Android speech-to-text engine. Android 13+ can feed raw PCM into the OS
+`SpeechRecognizer` through `RecognizerIntent.EXTRA_AUDIO_SOURCE`; older or
+unsupported systems can fall back to an optional sherpa-onnx model on 64-bit
+ABIs. The fallback models are downloaded by the user and are not bundled into
+the APK.
 
 The recognizer's audio source is fixed at 16 kHz mono 16-bit PCM (the
 `EXTRA_AUDIO_SOURCE` defaults), so incoming radio PCM (typically 32 kHz) is
@@ -24,19 +21,31 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'android_speech_to_text_capabilities.dart';
 import 'speech_to_text_engine.dart';
 
-/// Android engine that streams PCM into the platform on-device recognizer via
-/// `RecognizerIntent.EXTRA_AUDIO_SOURCE`. Requires Android 13 (API 33) or newer
-/// with an on-device recognizer available; [initialize] returns false
-/// otherwise.
+/// Android speech recognition. Android 13+ prefers the OS on-device recognizer;
+/// 64-bit devices can use a downloaded sherpa-onnx fallback when unavailable.
 class AndroidSpeechToTextEngine implements SpeechToTextEngine {
+  AndroidSpeechToTextEngine({
+    SpeechToTextEngine Function()? fallbackFactory,
+    Future<bool> Function(String localeId)? systemRecognizerInitializer,
+  }) : _fallbackFactory = fallbackFactory,
+       _systemRecognizerInitializer = systemRecognizerInitializer;
+
   static const MethodChannel _channel = MethodChannel(
     'com.htcommander/android_speech_to_text',
   );
   static const EventChannel _eventChannel = EventChannel(
     'com.htcommander/android_speech_to_text_events',
   );
+
+  final SpeechToTextEngine Function()? _fallbackFactory;
+  final Future<bool> Function(String localeId)? _systemRecognizerInitializer;
+
+  /// Whether this architecture has a bundled sherpa-onnx native library.
+  static Future<bool> supportsSherpaFallback() =>
+      AndroidSpeechToTextCapabilities.sherpaFallbackAvailable;
 
   /// Whether this device can transcribe PCM with the OS on-device recognizer
   /// (Android 13 / API 33 or newer with an on-device recognizer installed).
@@ -46,14 +55,7 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   /// The native plugin is registered for the whole app lifetime, so this works
   /// even when no [AndroidSpeechToTextEngine] instance exists.
   static Future<bool> isDeviceSupported() async {
-    try {
-      final supported = await _channel.invokeMethod<bool>('isSupported');
-      return supported ?? false;
-    } on PlatformException {
-      return false;
-    } on MissingPluginException {
-      return false;
-    }
+    return AndroidSpeechToTextCapabilities.systemRecognizerAvailable;
   }
 
   /// Fixed sample rate the native recognizer expects (matches the
@@ -63,6 +65,9 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   final StreamController<SpeechResult> _results =
       StreamController<SpeechResult>.broadcast();
   final StreamController<bool> _processing = StreamController<bool>.broadcast();
+  SpeechToTextEngine? _fallback;
+  StreamSubscription<SpeechResult>? _fallbackResults;
+  StreamSubscription<bool>? _fallbackProcessing;
 
   /// Streaming resampler that converts the incoming PCM to [_targetSampleRate].
   final _LinearResampler _resampler = _LinearResampler(_targetSampleRate);
@@ -87,11 +92,24 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   Future<bool> initialize({String localeId = ''}) async {
     if (_disposed) return false;
 
+    // Prefer Android's raw-PCM API, but a service can advertise support and
+    // still fail to initialize (for example, when its on-device model is
+    // unavailable). In that case use the user's installed offline model.
+    if (await isDeviceSupported()) {
+      _ready = await (_systemRecognizerInitializer ?? _initializeSystem)(
+        localeId,
+      );
+      if (_ready) return true;
+    }
+
+    return _initializeFallback(localeId);
+  }
+
+  Future<bool> _initializeSystem(String localeId) async {
     // SpeechRecognizer requires RECORD_AUDIO to be granted even when audio is
     // fed via a file descriptor rather than the microphone.
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
-      _ready = false;
       return false;
     }
 
@@ -100,15 +118,28 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
       final available = await _channel.invokeMethod<bool>('initialize', {
         'localeId': localeId,
       });
-      _ready = available ?? false;
-      return _ready;
+      return available ?? false;
     } on PlatformException {
-      _ready = false;
       return false;
     } on MissingPluginException {
+      return false;
+    }
+  }
+
+  Future<bool> _initializeFallback(String localeId) async {
+    if (_fallbackFactory == null || !await supportsSherpaFallback()) {
       _ready = false;
       return false;
     }
+    final fallback = _fallback ??= _fallbackFactory.call();
+    _fallbackResults ??= fallback.results.listen((value) {
+      if (!_results.isClosed) _results.add(value);
+    });
+    _fallbackProcessing ??= fallback.processing.listen((value) {
+      if (!_processing.isClosed) _processing.add(value);
+    });
+    _ready = await fallback.initialize(localeId: localeId);
+    return _ready;
   }
 
   void _listenEvents() {
@@ -137,6 +168,10 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   @override
   Future<void> startSegment() async {
     if (!_ready || _disposed) return;
+    if (_fallback != null) {
+      await _fallback!.startSegment();
+      return;
+    }
     _resampler.reset();
     try {
       await _channel.invokeMethod('startSegment');
@@ -155,6 +190,10 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
     int sampleRate,
   ) async {
     if (!_ready || _disposed || length <= 0) return;
+    if (_fallback != null) {
+      await _fallback!.processPcm16(data, offset, length, sampleRate);
+      return;
+    }
     final chunk = _resampler.process(data, offset, length, sampleRate);
     if (chunk.isEmpty) return;
     try {
@@ -172,6 +211,10 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   @override
   Future<void> completeSegment() async {
     if (!_ready || _disposed) return;
+    if (_fallback != null) {
+      await _fallback!.completeSegment();
+      return;
+    }
     try {
       await _channel.invokeMethod('completeSegment');
     } on PlatformException {
@@ -183,6 +226,10 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
 
   @override
   Future<void> splitSegment() async {
+    if (_fallback != null) {
+      await _fallback!.splitSegment();
+      return;
+    }
     // No native split; complete the current session and open a new one.
     await completeSegment();
     await startSegment();
@@ -191,6 +238,10 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
   @override
   Future<void> resetSegment() async {
     if (!_ready || _disposed) return;
+    if (_fallback != null) {
+      await _fallback!.resetSegment();
+      return;
+    }
     try {
       await _channel.invokeMethod('resetSegment');
     } on PlatformException {
@@ -205,6 +256,11 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
     if (_disposed) return;
     _disposed = true;
     _ready = false;
+    if (_fallback != null) {
+      await _fallback!.dispose();
+      await _fallbackResults?.cancel();
+      await _fallbackProcessing?.cancel();
+    }
     try {
       await _channel.invokeMethod('dispose');
     } catch (_) {
@@ -212,8 +268,8 @@ class AndroidSpeechToTextEngine implements SpeechToTextEngine {
     }
     await _eventSub?.cancel();
     _eventSub = null;
-    await _results.close();
-    await _processing.close();
+    if (!_results.isClosed) await _results.close();
+    if (!_processing.isClosed) await _processing.close();
   }
 }
 

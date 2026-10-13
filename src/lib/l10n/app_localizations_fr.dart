@@ -815,6 +815,14 @@ class AppLocalizationsFr extends AppLocalizations {
       'Transcrit en texte l\'audio radio reçu. Fonctionne entièrement hors ligne sur cet appareil ; l\'audio n\'est jamais enregistré sur le disque.';
 
   @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Sous Android 12 et versions antérieures, téléchargez ci-dessous un modèle hors ligne. Android 13+ utilise le moteur système s\'il est disponible ; le modèle téléchargeable prend en charge ARM 64 bits et x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'La reconnaissance vocale hors ligne est indisponible : cet appareil nécessite Android 13+ avec le moteur système ou un processeur ARM 64 bits/x86_64 pour le modèle téléchargeable.';
+
+  @override
   String get settingsModel => 'Modèle';
 
   @override
