@@ -96,6 +96,7 @@ class BluetoothClassicPlugin(
     private val audioConnections = ConcurrentHashMap<String, RfcommConnection>()
     private val lifecycleLock = Any()
     private val connectingSockets = ConcurrentHashMap.newKeySet<BluetoothSocket>()
+    private val connectionAttempts = RfcommConnectionAttempts()
     private val deviceQueryExecutor = BoundedSerialExecutor(
         capacity = 2,
         threadName = "HTCommander-BT-discovery",
@@ -221,6 +222,7 @@ class BluetoothClassicPlugin(
                 }
             }
             connectingSockets.clear()
+            connectionAttempts.cancelAll()
             deviceQueryExecutor.close()
         }
     }
@@ -358,8 +360,25 @@ class BluetoothClassicPlugin(
             return
         }
 
-        Thread {
+        val connectionAttempt = synchronized(lifecycleLock) {
+            if (disposed) null else connectionAttempts.begin(normalized, uuid)
+        }
+        if (connectionAttempt == null) {
+            if (disposed) {
+                result.error("PLUGIN_DISPOSED", "Bluetooth bridge is shutting down", null)
+                return
+            }
+            result.error(
+                "CONNECT_IN_PROGRESS",
+                "A connection attempt for this device and Bluetooth service is already running",
+                null,
+            )
+            return
+        }
+
+        Thread({
             var socket: BluetoothSocket? = null
+            var connection: RfcommConnection? = null
             try {
                 // Cancelling discovery speeds up RFCOMM connects, but it needs
                 // BLUETOOTH_SCAN on Android 12+. It is only an optimization, so
@@ -371,25 +390,43 @@ class BluetoothClassicPlugin(
                     }
                 }
                 val device = adapter.getRemoteDevice(normalized)
-                socket = connectSocket(device, uuid)
+                socket = connectSocket(device, uuid, connectionAttempt)
 
-                val connection = RfcommConnection(normalized, socket, audio)
+                val createdConnection = RfcommConnection(normalized, socket, audio)
+                connection = createdConnection
                 val existing = synchronized(lifecycleLock) {
                     connectingSockets.remove(socket)
-                    if (disposed) {
+                    connectionAttempt.release(socket)
+                    if (disposed || connectionAttempt.isCancelled) {
                         null
                     } else {
-                        map.putIfAbsent(normalized, connection)
+                        map.putIfAbsent(normalized, createdConnection).also { previous ->
+                            if (previous == null) {
+                                // Serialize publication and reader startup with
+                                // disconnect so a cancelled attempt cannot emit
+                                // a late connected event or leave an orphan.
+                                postEvent(audio, "connected", normalized, null)
+                                createdConnection.startReading()
+                            }
+                        }
                     }
                 }
-                if (disposed || existing != null) {
-                    if (existing == null) {
-                        try {
-                            socket.close()
-                        } catch (_: IOException) {
-                        }
-                        return@Thread
+                if (connectionAttempt.isCancelled) {
+                    try {
+                        socket.close()
+                    } catch (_: IOException) {
                     }
+                    mainHandler.post { if (!disposed) result.success(false) }
+                    return@Thread
+                }
+                if (disposed) {
+                    try {
+                        socket.close()
+                    } catch (_: IOException) {
+                    }
+                    return@Thread
+                }
+                if (existing != null) {
                     try {
                         socket.close()
                     } catch (_: IOException) {
@@ -397,14 +434,20 @@ class BluetoothClassicPlugin(
                     mainHandler.post { if (!disposed) result.success(true) }
                     return@Thread
                 }
-                // Queue the connected marker before starting the reader so a
-                // fast radio response cannot overtake it on the Flutter channel.
-                postEvent(audio, "connected", normalized, null)
-                connection.startReading()
                 mainHandler.post { if (!disposed) result.success(true) }
             } catch (e: Exception) {
+                connection?.let { created ->
+                    synchronized(lifecycleLock) {
+                        if (map.remove(normalized, created)) {
+                            created.close(DISCONNECT_WRITE_FAILED)
+                        }
+                    }
+                }
                 socket?.let { candidate ->
-                    synchronized(lifecycleLock) { connectingSockets.remove(candidate) }
+                    synchronized(lifecycleLock) {
+                        connectingSockets.remove(candidate)
+                        connectionAttempt.release(candidate)
+                    }
                 }
                 try {
                     socket?.close()
@@ -412,9 +455,19 @@ class BluetoothClassicPlugin(
                 }
                 val message = "${e.javaClass.simpleName}: ${e.message ?: "RFCOMM connect failed"}"
                 mainHandler.post {
-                    if (!disposed) result.error("CONNECT_FAILED", message, null)
+                    if (!disposed) {
+                        if (connectionAttempt.isCancelled) {
+                            result.success(false)
+                        } else {
+                            result.error("CONNECT_FAILED", message, null)
+                        }
+                    }
                 }
+            } finally {
+                connectionAttempts.finish(normalized, uuid, connectionAttempt)
             }
+        }, "HTCommander-BT-rfcomm-${normalized.takeLast(5)}").apply {
+            isDaemon = true
         }.start()
     }
 
@@ -436,6 +489,7 @@ class BluetoothClassicPlugin(
     private fun connectSocket(
         device: android.bluetooth.BluetoothDevice,
         uuid: UUID,
+        connectionAttempt: RfcommConnectionAttempts.Attempt,
     ): BluetoothSocket {
         var lastError: Exception? = null
         val address = device.address
@@ -444,7 +498,9 @@ class BluetoothClassicPlugin(
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
             var candidate: BluetoothSocket? = null
             return try {
-                if (disposed) throw IOException("Bluetooth bridge is shutting down")
+                if (disposed || connectionAttempt.isCancelled) {
+                    throw IOException("Bluetooth connection attempt was cancelled")
+                }
                 val remainingMs = deadline - SystemClock.elapsedRealtime()
                 if (remainingMs <= 0) {
                     throw java.net.SocketTimeoutException(
@@ -453,7 +509,9 @@ class BluetoothClassicPlugin(
                 }
                 candidate = factory()
                 synchronized(lifecycleLock) {
-                    if (disposed) throw IOException("Bluetooth bridge is shutting down")
+                    if (disposed || !connectionAttempt.track(candidate)) {
+                        throw IOException("Bluetooth connection attempt was cancelled")
+                    }
                     connectingSockets.add(candidate)
                 }
                 TimedSocketConnect.connect(
@@ -463,21 +521,28 @@ class BluetoothClassicPlugin(
                     connect = { it.connect() },
                     close = { it.close() },
                 )
+                if (connectionAttempt.isCancelled) {
+                    throw IOException("Bluetooth connection attempt was cancelled")
+                }
                 Log.i(TAG, "RFCOMM connected via $label")
                 candidate
             } catch (e: Exception) {
                 lastError = e
-                if (!disposed) {
+                if (!disposed && !connectionAttempt.isCancelled) {
                     Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
                 }
                 candidate?.let { socket ->
-                    synchronized(lifecycleLock) { connectingSockets.remove(socket) }
+                    synchronized(lifecycleLock) {
+                        connectingSockets.remove(socket)
+                        connectionAttempt.release(socket)
+                    }
                 }
                 try {
                     candidate?.close()
                 } catch (_: IOException) {
                 }
-                if (!disposed && SystemClock.elapsedRealtime() < deadline &&
+                if (!disposed && !connectionAttempt.isCancelled &&
+                    SystemClock.elapsedRealtime() < deadline &&
                     e !is java.net.SocketTimeoutException
                 ) {
                     try {
@@ -500,6 +565,7 @@ class BluetoothClassicPlugin(
         }
 
         fun tryChannel(channel: Int): BluetoothSocket? {
+            if (disposed || connectionAttempt.isCancelled) return null
             val channelFactory = insecureByChannel ?: return null
             return attempt("insecure-ch$channel") {
                 channelFactory.invoke(device, channel) as BluetoothSocket
@@ -526,6 +592,7 @@ class BluetoothClassicPlugin(
         //    SPP channel has been observed on 1 and 4; scan a small range and
         //    take the first the radio accepts.
         for (channel in 1..12) {
+            if (disposed || connectionAttempt.isCancelled) break
             if (channel == cachedChannel) continue // already tried above
             tryChannel(channel)?.let { return it }
         }
@@ -545,8 +612,12 @@ class BluetoothClassicPlugin(
     private fun disconnect(address: String?, audio: Boolean) {
         if (address == null) return
         val normalized = normalizeAddress(address)
+        val uuid = if (audio) AUDIO_UUID else SPP_UUID
         val map = if (audio) audioConnections else controlConnections
-        map.remove(normalized)?.close(DISCONNECT_REQUESTED)
+        synchronized(lifecycleLock) {
+            connectionAttempts.cancel(normalized, uuid)
+            map.remove(normalized)?.close(DISCONNECT_REQUESTED)
+        }
     }
 
     private fun send(
