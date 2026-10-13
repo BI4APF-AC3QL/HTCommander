@@ -56,19 +56,9 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesAndroid(
     returnEarlyOnFirstMatch: false,
     androidUsesFineLocation: sdkInt < 31,
   );
-  final devicesByAddress = <String, DiscoveredDevice>{};
-  String key(String id) => id
-      .toUpperCase()
-      .replaceAll(RegExp(r'[^0-9A-F]'), '');
   // Classic has priority when the same physical radio is visible through both
   // transports. This preserves N7500's bonded RFCOMM control path.
-  for (final device in ble) {
-    devicesByAddress[key(device.id)] = device;
-  }
-  for (final device in classic) {
-    devicesByAddress[key(device.id)] = device;
-  }
-  return devicesByAddress.values.toList(growable: false);
+  return AndroidBluetoothDiscovery.merge(classic: classic, ble: ble);
 }
 
 /// Requests the runtime Bluetooth Connect permission needed to enumerate and
