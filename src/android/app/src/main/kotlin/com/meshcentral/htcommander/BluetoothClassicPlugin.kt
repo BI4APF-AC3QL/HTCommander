@@ -589,11 +589,10 @@ class BluetoothClassicPlugin(
         }?.let { return it }
 
         // 2. Probe fixed RFCOMM channels with an insecure socket. The radio's
-        //    SPP channel has been observed on 1 and 4; scan a small range and
-        //    take the first the radio accepts.
-        for (channel in 1..12) {
+        //    SPP channel has been observed on 1 and 4; try those before the
+        //    exhaustive fallback so channel 4 devices do not wait on 2 and 3.
+        for (channel in RfcommChannelCandidates.scanOrder(cachedChannel)) {
             if (disposed || connectionAttempt.isCancelled) break
-            if (channel == cachedChannel) continue // already tried above
             tryChannel(channel)?.let { return it }
         }
 
