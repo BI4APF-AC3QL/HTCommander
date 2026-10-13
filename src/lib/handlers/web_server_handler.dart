@@ -231,7 +231,7 @@ class WebServerHandler {
       callback: _onWinlinkError,
     );
     // Mirror device-0 setting changes to connected browsers so the hosted web
-    // UI stays in sync with the desktop app's settings.
+    // UI stays in sync with the host app's settings.
     _broker.subscribe(
       deviceId: 0,
       name: DataBroker.allNames,
@@ -420,12 +420,12 @@ class WebServerHandler {
     // Send the host's radio list so the browser shows the current radio name
     // and can offer a radio switcher.
     client.sendText(_encodeRadioList());
-    // Sync the host's device-0 settings so the web UI matches the desktop app.
+    // Sync the host's device-0 settings so the web UI matches the host app.
     _sendSettingsTo(client);
     // Seed the browser's Comms/APRS tabs with the host's stored history.
     _sendHistoryTo(client);
     // Send the host's authoritative Winlink mail so the browser's mail tab
-    // mirrors the desktop app rather than keeping its own (empty) store.
+    // mirrors the host app rather than keeping its own (empty) store.
     _sendMailTo(client);
     // Send the host's latest airplanes so the browser's map shows them.
     _sendAirplanesTo(client);
@@ -502,7 +502,7 @@ class WebServerHandler {
   }
 
   /// Broadcasts a device-0 setting change to every connected browser so the web
-  /// UI tracks the desktop app's settings live. Transient UI selection state is
+  /// UI tracks the host app's settings live. Transient UI selection state is
   /// excluded (see [HostBridge.isSyncedSetting]).
   void _onHostSettingChanged(int deviceId, String name, Object? data) {
     if (_disposed) return;
@@ -778,7 +778,8 @@ class WebServerHandler {
             message.startsWith('winlinksync:') ||
             message == 'disconnect')) {
       client.sendText(
-        'log:Use the mobile remote page for radio controls; host settings stay on Windows.',
+        'log:Use the mobile remote page for radio controls; change host settings '
+        'in the HTCommander app running the radio.',
       );
       return;
     }
@@ -828,8 +829,8 @@ class WebServerHandler {
       case 'connect':
         if (target < 0) {
           client.sendText(
-            'log:No radio connected. Connect a radio from the desktop '
-            'HTCommander application.',
+            'log:No radio connected. Connect a radio in the HTCommander app '
+            'running on the host device.',
           );
         } else {
           // Already connected; resend status so the browser fetches state.

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -122,6 +123,50 @@ void main() {
           await utf8.decoder.bind(remoteResponse).join(),
           contains('操作权'),
         );
+
+        // Android-hosted clients must receive platform-neutral guidance, and
+        // remote clients must not mutate settings owned by the host app.
+        final socket = await WebSocket.connect(
+          Uri(
+            scheme: 'ws',
+            host: '::1',
+            port: handler.boundPort!,
+            path: '/websocket.aspx',
+          ).toString(),
+          headers: {
+            'Origin': ipv6Base.origin,
+            'Cookie': 'htc_bridge=${session.value}',
+          },
+        );
+        final incoming = StreamController<String>.broadcast();
+        final socketSubscription = socket.listen((event) {
+          if (event is String) incoming.add(event);
+        });
+        try {
+          final settingsRejected = incoming.stream
+              .firstWhere((message) => message.contains('change host settings'))
+              .timeout(const Duration(seconds: 3));
+          socket.add('setsetting:AllowTransmit:1');
+          expect(
+            await settingsRejected,
+            contains('HTCommander app running the radio'),
+          );
+
+          final missingRadio = incoming.stream
+              .firstWhere(
+                (message) => message.startsWith('log:No radio connected'),
+              )
+              .timeout(const Duration(seconds: 3));
+          socket.add('connect');
+          expect(
+            await missingRadio,
+            contains('HTCommander app running on the host device'),
+          );
+        } finally {
+          await socket.close();
+          await socketSubscription.cancel();
+          await incoming.close();
+        }
       } finally {
         http.close(force: true);
         HttpOverrides.global = previousHttpOverrides;
