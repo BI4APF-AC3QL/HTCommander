@@ -7,6 +7,7 @@ on:
       - 'src/lib/**'
       - 'src/android/**'
       - 'src/integration_test/**'
+      - 'src/tools/android_emulator_acceptance.sh'
       - 'src/pubspec.yaml'
       - 'src/pubspec.lock'
       - 'src/tools/stage_android_web_assets.py'
@@ -138,26 +139,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: |
-            adb logcat -c
-            adb install -r src/build/app/outputs/flutter-apk/app-x86_64-release.apk
-            adb shell am start -W -n com.meshcentral.htcommander/.MainActivity
-            sleep 15
-            if ! adb shell pidof com.meshcentral.htcommander >/dev/null; then
-              echo '::error::HTCommander exited after launch on the Android emulator.'
-              adb logcat -d -t 3000
-              exit 1
-            fi
-            crash_log="$(adb logcat -d -b crash)"
-            if grep -Fq 'Process: com.meshcentral.htcommander' <<< "$crash_log"; then
-              echo '::error::HTCommander crashed on the Android emulator.'
-              printf '%s\n' "$crash_log"
-              exit 1
-            fi
-            echo 'HTCommander x86_64 release APK installed and remained running for 15 seconds.'
-            adb uninstall com.meshcentral.htcommander
-            cd src
-            flutter test integration_test/android_remote_server_test.dart -d emulator-5554
+          script: bash src/tools/android_emulator_acceptance.sh
 
       - name: Restore pubspec after Android packaging
         if: always()
