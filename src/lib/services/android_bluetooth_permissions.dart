@@ -32,6 +32,26 @@ abstract final class AndroidBluetoothPermissions {
     }
   }
 
+  /// Runs an Android Bluetooth connection only after the user has granted the
+  /// runtime permission required by both bonded Classic RFCOMM and BLE.
+  ///
+  /// Keep permission prompting in Dart, where the result can be awaited. The
+  /// native Classic bridge deliberately fails a connection immediately when
+  /// permission is missing; asking there and returning at once makes a user
+  /// grant look like a radio connection failure.
+  static Future<T?> withConnectPermission<T>({
+    required Future<PermissionStatus> Function() status,
+    required Future<PermissionStatus> Function() request,
+    required Future<T?> Function() connect,
+    void Function()? onDenied,
+  }) async {
+    if (!await ensureConnect(status: status, request: request)) {
+      onDenied?.call();
+      return null;
+    }
+    return connect();
+  }
+
   /// BLE scanning requires runtime location permission before Android 12 and
   /// BLUETOOTH_SCAN on Android 12+. Keep failures isolated so bonded Classic
   /// radios remain discoverable even when BLE permission is denied.

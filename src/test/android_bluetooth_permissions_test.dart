@@ -4,6 +4,55 @@ import 'package:htcommander/services/android_bluetooth_permissions.dart';
 
 void main() {
   group('Android Bluetooth Connect permission', () {
+    test(
+      'does not start a radio connection until permission is granted',
+      () async {
+        var connectCalls = 0;
+        var deniedCalls = 0;
+
+        final result =
+            await AndroidBluetoothPermissions.withConnectPermission<int>(
+              status: () async => PermissionStatus.denied,
+              request: () async => PermissionStatus.permanentlyDenied,
+              connect: () async {
+                connectCalls++;
+                return 7;
+              },
+              onDenied: () => deniedCalls++,
+            );
+
+        expect(result, isNull);
+        expect(connectCalls, 0);
+        expect(deniedCalls, 1);
+      },
+    );
+
+    test(
+      'waits for permission before starting and returns connection result',
+      () async {
+        var connectCalls = 0;
+        var permissionPromptCompleted = false;
+
+        final result =
+            await AndroidBluetoothPermissions.withConnectPermission<int>(
+              status: () async => PermissionStatus.denied,
+              request: () async {
+                await Future<void>.delayed(Duration.zero);
+                permissionPromptCompleted = true;
+                return PermissionStatus.granted;
+              },
+              connect: () async {
+                expect(permissionPromptCompleted, isTrue);
+                connectCalls++;
+                return 42;
+              },
+            );
+
+        expect(result, 42);
+        expect(connectCalls, 1);
+      },
+    );
+
     test('does not prompt again when already granted', () async {
       var requestCalls = 0;
 

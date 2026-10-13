@@ -78,14 +78,22 @@ Future<int?> _connectToRadioAndroid(
   String macAddress,
   String friendlyName,
   BluetoothType bluetoothType,
-) async {
-  if (bluetoothType == BluetoothType.ble) {
-    return _connectToRadioBleImpl(
-      service,
-      macAddress,
-      friendlyName,
-      webFastMode: false,
+) => AndroidBluetoothPermissions.withConnectPermission<int>(
+      status: () => Permission.bluetoothConnect.status,
+      request: () => Permission.bluetoothConnect.request(),
+      onDenied: () => service._broker.logError(
+        '[Android] Bluetooth Connect permission was not granted; radio '
+        'connection was not started',
+      ),
+      connect: () {
+        if (bluetoothType == BluetoothType.ble) {
+          return _connectToRadioBleImpl(
+            service,
+            macAddress,
+            friendlyName,
+            webFastMode: false,
+          );
+        }
+        return _connectToRadioClassicImpl(service, macAddress, friendlyName);
+      },
     );
-  }
-  return _connectToRadioClassicImpl(service, macAddress, friendlyName);
-}
