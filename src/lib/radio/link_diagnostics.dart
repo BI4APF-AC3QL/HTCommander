@@ -131,17 +131,19 @@ class RadioAudioDiagnostics {
       droppedBlocks = 0,
       feedErrors = 0,
       invalidDrainReports = 0;
+  int androidDroppedChunks = 0, androidDroppedBytes = 0;
   int receivedBytes = 0, _drainEpoch = 0, _generation = 0;
-  DateTime? lastRxAt, lastPcmAt;
+  DateTime? lastRxAt, lastPcmAt, lastAndroidQueueDropAt;
   String state = 'stopped';
   String? failureReason;
 
   void start() {
     bufferedFrames = peakBufferedFrames = droppedFrames = droppedBlocks =
         feedErrors = invalidDrainReports = receivedBytes = 0;
+    androidDroppedChunks = androidDroppedBytes = 0;
     _drainEpoch++;
     _generation++;
-    lastRxAt = lastPcmAt = null;
+    lastRxAt = lastPcmAt = lastAndroidQueueDropAt = null;
     failureReason = null;
     state = 'connecting';
   }
@@ -162,6 +164,23 @@ class RadioAudioDiagnostics {
       receivedBytes += bytes;
       lastRxAt = _clock().toUtc();
     }
+  }
+
+  void androidQueueOverrun({
+    required int droppedChunks,
+    required int droppedBytes,
+  }) {
+    if (droppedChunks <= 0 || droppedBytes < 0) return;
+    androidDroppedChunks += droppedChunks;
+    androidDroppedBytes += droppedBytes;
+    lastAndroidQueueDropAt = _clock().toUtc();
+    failureReason = 'androidQueueOverrun';
+  }
+
+  void resetAndroidQueue() {
+    androidDroppedChunks = androidDroppedBytes = 0;
+    lastAndroidQueueDropAt = null;
+    if (failureReason == 'androidQueueOverrun') failureReason = null;
   }
 
   void drained(int frames) {
@@ -212,6 +231,9 @@ class RadioAudioDiagnostics {
     'droppedBlocks': droppedBlocks,
     'feedErrors': feedErrors,
     'invalidDrainReports': invalidDrainReports,
+    'androidDroppedChunks': androidDroppedChunks,
+    'androidDroppedBytes': androidDroppedBytes,
+    'lastAndroidQueueDropAt': lastAndroidQueueDropAt?.toIso8601String(),
     'receivedBytes': receivedBytes,
     'lastRxAt': lastRxAt?.toIso8601String(),
     'lastPcmAt': lastPcmAt?.toIso8601String(),

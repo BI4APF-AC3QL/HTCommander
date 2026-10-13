@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart' show RootIsolateToken;
 
 import '../services/bluetooth_classic_macos.dart';
+import '../services/android_bluetooth_audio_diagnostics.dart';
 import '../services/data_broker_client.dart';
 import 'audio_engine.dart';
 import 'pcm_player.dart';
@@ -105,6 +106,11 @@ class RadioAudio {
       name: 'SetAudio',
       callback: _onSetAudio,
     );
+    _broker.subscribe(
+      deviceId: deviceId,
+      name: androidBluetoothAudioQueueEventName,
+      callback: _onAndroidBluetoothAudioQueueEvent,
+    );
 
     // Subscribe to Data Broker commands for audio control.
     _broker.subscribe(
@@ -170,6 +176,31 @@ class RadioAudio {
 
   bool get isAudioEnabled => _running;
   bool get isRecording => _recording;
+
+  void _onAndroidBluetoothAudioQueueEvent(
+    int eventDeviceId,
+    String name,
+    Object? data,
+  ) {
+    if (eventDeviceId != deviceId || data is! Map) return;
+    switch (data['kind']) {
+      case 'reset':
+        _diagnostics.resetAndroidQueue();
+        break;
+      case 'overrun':
+        final chunks = data['droppedChunks'];
+        final bytes = data['droppedBytes'];
+        if (chunks is! int || bytes is! int) return;
+        _diagnostics.androidQueueOverrun(
+          droppedChunks: chunks,
+          droppedBytes: bytes,
+        );
+        break;
+      default:
+        return;
+    }
+    _publishAudioDiagnostics();
+  }
 
   void _debug(String msg) {
     _broker.dispatch(

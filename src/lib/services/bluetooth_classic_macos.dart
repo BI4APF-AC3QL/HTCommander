@@ -10,6 +10,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
+import 'android_bluetooth_audio_diagnostics.dart';
 import 'data_broker_client.dart';
 
 /// Dart wrapper for native Bluetooth Classic (RFCOMM) on macOS
@@ -166,6 +167,7 @@ class BluetoothClassicMacOS {
 
           switch (eventType) {
             case 'connected':
+              _dispatchAndroidAudioQueueEvent(address, const {'kind': 'reset'});
               _audioConnectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.connected,
@@ -188,6 +190,11 @@ class BluetoothClassicMacOS {
               final chunks = event['droppedChunks'];
               final bytes = event['droppedBytes'];
               if (chunks is int && bytes is int && chunks > 0 && bytes >= 0) {
+                _dispatchAndroidAudioQueueEvent(address, {
+                  'kind': 'overrun',
+                  'droppedChunks': chunks,
+                  'droppedBytes': bytes,
+                });
                 _logError(
                   'Audio receive backlog: Android discarded $chunks stale '
                   'chunk(s), $bytes byte(s), to catch up with live playback.',
@@ -211,6 +218,24 @@ class BluetoothClassicMacOS {
       onError: (error) {
         _logError('Audio EventChannel error: $error');
       },
+    );
+  }
+
+  void _dispatchAndroidAudioQueueEvent(
+    String address,
+    Map<String, Object?> data,
+  ) {
+    if (kIsWeb || !Platform.isAndroid) return;
+    final deviceId = radioDeviceIdForBluetoothAddress(
+      _broker.getValueDynamic(1, 'ConnectedRadios'),
+      address,
+    );
+    if (deviceId == null) return;
+    _broker.dispatch(
+      deviceId: deviceId,
+      name: androidBluetoothAudioQueueEventName,
+      data: data,
+      store: false,
     );
   }
 

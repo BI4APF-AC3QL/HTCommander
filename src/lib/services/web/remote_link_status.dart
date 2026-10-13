@@ -56,7 +56,12 @@ class RemoteLinkStatus {
           const ['stopped', 'connecting', 'running'].contains(value['state'])
           ? value['state']
           : null,
-      for (final key in ['sampleAt', 'lastRxAt', 'lastPcmAt'])
+      for (final key in [
+        'sampleAt',
+        'lastRxAt',
+        'lastPcmAt',
+        'lastAndroidQueueDropAt',
+      ])
         key: _time(value[key]),
       for (final key in [
         'bufferedMs',
@@ -65,6 +70,8 @@ class RemoteLinkStatus {
         'droppedBlocks',
         'feedErrors',
         'invalidDrainReports',
+        'androidDroppedChunks',
+        'androidDroppedBytes',
         'receivedBytes',
       ])
         key: _count(value[key]),
@@ -72,6 +79,7 @@ class RemoteLinkStatus {
           const [
             'playbackBacklog',
             'playbackFeedFailed',
+            'androidQueueOverrun',
             'audioStreamError',
             'audioConnectFailed',
             'audioStartFailed',
@@ -111,6 +119,7 @@ class RemoteLinkStatus {
       'readTimeout': '读取响应超时',
       'playbackBacklog': '本机播放积压',
       'playbackFeedFailed': '本机播放写入失败',
+      'androidQueueOverrun': 'Android 蓝牙音频接收队列发生过载并丢弃旧块',
       'audioStreamError': '音频接收流错误',
       'audioConnectFailed': '音频通道连接失败',
       'audioStartFailed': '音频初始化失败',
@@ -131,6 +140,7 @@ class RemoteLinkStatus {
       '最近控制接收 / Last control RX: ${c?['lastRxAt'] ?? '未知 / unknown'}',
       '本机音频 / Host audio: ${a?['state'] ?? '未知 / unknown'} · 积压/峰值 / Backlog/peak: ${count(a?['bufferedMs'])}/${count(a?['peakBufferedMs'])} ms',
       '播放丢弃块/帧 / Dropped playback blocks/frames: ${count(a?['droppedBlocks'])}/${count(a?['droppedFrames'])} · 播放错误 / Feed errors: ${count(a?['feedErrors'])}',
+      'Android 蓝牙接收队列丢弃块/字节 / Android Bluetooth RX queue drops: ${count(a?['androidDroppedChunks'])}/${count(a?['androidDroppedBytes'])} · 最近丢弃 / Last drop: ${a?['lastAndroidQueueDropAt'] ?? '未知 / unknown'}',
       '音频接收字节 / Audio RX bytes: ${count(a?['receivedBytes'])} · 最近接收 / Last RX: ${a?['lastRxAt'] ?? '未知 / unknown'}',
       '最近故障 / Last failure: ${reasons[a?['failureReason']] ?? reasons[c?['failureReason']] ?? '无已记录原因 / none recorded'}',
     ];

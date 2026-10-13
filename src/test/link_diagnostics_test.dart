@@ -75,6 +75,16 @@ void main() {
       d.drained(32000 * 9);
       expect(d.invalidDrainReports, 2);
       expect(d.bufferedFrames, 320);
+      d.androidQueueOverrun(droppedChunks: 2, droppedBytes: 80);
+      d.androidQueueOverrun(droppedChunks: 1, droppedBytes: 0);
+      expect(d.snapshot['androidDroppedChunks'], 3);
+      expect(d.snapshot['androidDroppedBytes'], 80);
+      expect(d.snapshot['lastAndroidQueueDropAt'], isNotNull);
+      expect(d.snapshot['failureReason'], 'androidQueueOverrun');
+      d.resetAndroidQueue();
+      expect(d.snapshot['androidDroppedChunks'], 0);
+      expect(d.snapshot['lastAndroidQueueDropAt'], isNull);
+      expect(d.snapshot['failureReason'], isNull);
       final late = d.reserve(640)!;
       d.stop();
       d.start();
@@ -99,6 +109,9 @@ void main() {
       })!;
       final audio = RemoteLinkStatus.audio({
         'bufferedMs': 500,
+        'androidDroppedChunks': 4,
+        'androidDroppedBytes': 128,
+        'lastAndroidQueueDropAt': '2026-10-03T00:00:00Z',
         'password': 'secret',
         'state': 'running',
         'failureReason': 'private error',
@@ -110,6 +123,9 @@ void main() {
         jsonEncode({'control': control, 'audio': audio}),
         isNot(contains('secret')),
       );
+      expect(audio['androidDroppedChunks'], 4);
+      expect(audio['androidDroppedBytes'], 128);
+      expect(audio['lastAndroidQueueDropAt'], '2026-10-03T00:00:00.000Z');
       expect(RemoteLinkStatus.snapshot(-1), {'control': null, 'audio': null});
     },
   );

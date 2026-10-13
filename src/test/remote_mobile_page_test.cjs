@@ -95,10 +95,12 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.equal(element('dashboardReport').textContent,'上次状态报告时间未知');
   assert.ok(element('dashboardChannel').textContent.includes('频率未知'));
   assert.ok(element('dashboardGateway').textContent.includes('已关闭'));
-  state.dashboard={};state.linkDiagnostics={control:{connected:true,rxBytes:1234,framingSkippedBytes:3,writeDelay:{samples:1,lastMs:120,medianMs:120,maxMs:120},failureReason:'readTimeout'},audio:{state:'running',bufferedMs:500,droppedFrames:16000,droppedBlocks:1,feedErrors:2,failureReason:'playbackBacklog',password:'secret'}};update();
+  state.dashboard={};state.linkDiagnostics={control:{connected:true,rxBytes:1234,framingSkippedBytes:3,writeDelay:{samples:1,lastMs:120,medianMs:120,maxMs:120},failureReason:'readTimeout'},audio:{state:'running',bufferedMs:500,droppedFrames:16000,droppedBlocks:1,feedErrors:2,androidDroppedChunks:4,androidDroppedBytes:128,lastAndroidQueueDropAt:'2026-10-03T00:00:00.000Z',failureReason:'androidQueueOverrun',password:'secret'}};update();
   assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('RX 1234 字节')));
   assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('120 / 120 / 120 ms')));
-  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('本机播放积压')));
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('播放丢弃块/帧 1/16000')));
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('Android 蓝牙接收队列丢弃块/字节 4/128')));
+  assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('Android 蓝牙音频接收队列过载')));
   assert.ok(!element('linkDiagnostics').children.some(e=>e.textContent.includes('secret')));
   state.linkDiagnostics={control:null,audio:null};update();
   assert.ok(element('linkDiagnostics').children.some(e=>e.textContent.includes('控制通道 未知')));

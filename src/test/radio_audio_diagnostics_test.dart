@@ -7,6 +7,8 @@ import 'package:htcommander/radio/pcm_player.dart';
 import 'package:htcommander/radio/radio.dart';
 import 'package:htcommander/radio/radio_audio.dart';
 import 'package:htcommander/services/data_broker.dart';
+import 'package:htcommander/services/android_bluetooth_audio_diagnostics.dart';
+import 'package:htcommander/services/web/remote_link_status.dart';
 
 class _Player implements PcmPlayer {
   PcmFeedCallback? drained;
@@ -114,6 +116,29 @@ void main() {
       try {
         await audio.start().timeout(const Duration(seconds: 4));
         expect(status()['state'], 'running');
+        DataBroker.dispatch(
+          deviceId: 2,
+          name: androidBluetoothAudioQueueEventName,
+          data: {'kind': 'overrun', 'droppedChunks': 3, 'droppedBytes': 420},
+          store: false,
+        );
+        expect(status()['androidDroppedChunks'], 3);
+        expect(status()['androidDroppedBytes'], 420);
+        expect(status()['lastAndroidQueueDropAt'], isNotNull);
+        expect(status()['failureReason'], 'androidQueueOverrun');
+        final exported = RemoteLinkStatus.audio(status())!;
+        expect(exported['androidDroppedChunks'], 3);
+        expect(exported['androidDroppedBytes'], 420);
+        expect(exported['failureReason'], 'androidQueueOverrun');
+        DataBroker.dispatch(
+          deviceId: 2,
+          name: androidBluetoothAudioQueueEventName,
+          data: const {'kind': 'reset'},
+          store: false,
+        );
+        expect(status()['androidDroppedChunks'], 0);
+        expect(status()['lastAndroidQueueDropAt'], isNull);
+        expect(status()['failureReason'], isNull);
         await rx(1);
         expect(player.feeds, 1);
         expect(status()['bufferedMs'], 500);
