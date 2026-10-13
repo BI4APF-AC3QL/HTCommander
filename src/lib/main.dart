@@ -1113,6 +1113,19 @@ class _MainFormState extends State<MainForm>
   // Connected radios tracking (list of device IDs)
   List<int> _connectedRadioIds = [];
 
+  // A radio that drops out of Bluetooth is retried a few times with increasing
+  // delays. Explicit disconnect removes it from PreviouslyConnectedRadios and
+  // cancels this timer, so reconnect never overrides the user's choice.
+  final Map<String, Timer> _radioReconnectTimers = {};
+  final Map<String, int> _radioReconnectAttempts = {};
+  static const List<Duration> _radioReconnectDelays = [
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 16),
+    Duration(seconds: 30),
+  ];
+
   // Hosted web build: the host's radios (each {deviceId, name}) and which one is
   // bridged, so the browser can show the current radio and offer a switcher.
   List<Map<String, dynamic>> _hostRadioList = const [];
@@ -1283,6 +1296,15 @@ class _MainFormState extends State<MainForm>
       deviceId: 1,
       name: 'ConnectedRadios',
       callback: _onConnectedRadiosChanged,
+    );
+
+    // A Bluetooth transport can disappear after startup (for example, when a
+    // handheld radio briefly loses power or moves out of range). Retry only
+    // radios the user previously connected and has not explicitly forgotten.
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'State',
+      callback: _onRadioStateChanged,
     );
 
     // Hosted web build: the host's radio list (name + selection) drives the
@@ -1603,7 +1625,12 @@ class _MainFormState extends State<MainForm>
     } catch (_) {
       return;
     }
-    if (!bluetoothAvailable) return;
+    if (!bluetoothAvailable) {
+      for (final mac in knownMacs) {
+        _scheduleRadioReconnect(mac);
+      }
+      return;
+    }
 
     List<DiscoveredDevice> allDevices;
     try {
@@ -1612,9 +1639,17 @@ class _MainFormState extends State<MainForm>
       );
     } catch (e) {
       _broker.logError('Auto-reconnect scan failed: $e');
+      for (final mac in knownMacs) {
+        _scheduleRadioReconnect(mac);
+      }
       return;
     }
-    if (allDevices.isEmpty) return;
+    if (allDevices.isEmpty) {
+      for (final mac in knownMacs) {
+        _scheduleRadioReconnect(mac);
+      }
+      return;
+    }
 
     // Skip radios that are already connected.
     final connectedMacs = <String>{};
@@ -1627,6 +1662,10 @@ class _MainFormState extends State<MainForm>
       final mac = d.id.toUpperCase();
       return knownMacs.contains(mac) && !connectedMacs.contains(mac);
     }).toList();
+    final foundMacs = devicesToReconnect.map((d) => d.id.toUpperCase()).toSet();
+    for (final mac in knownMacs.difference(foundMacs).difference(connectedMacs)) {
+      _scheduleRadioReconnect(mac);
+    }
     if (devicesToReconnect.isEmpty) return;
 
     // Reuse the stored friendly names so reconnected radios keep their labels.
@@ -1634,15 +1673,133 @@ class _MainFormState extends State<MainForm>
     for (final device in compatibleDevices) {
       _broker.logInfo('Auto-reconnecting to ${device.name}...');
       try {
-        await bluetoothService.connectToRadio(
+        final connectedId = await bluetoothService.connectToRadio(
           device.mac,
           device.name,
           bluetoothType: device.bluetoothType,
         );
+        if (!bluetoothService
+            .previouslyConnectedRadioMacs()
+            .contains(device.mac.toUpperCase())) {
+          if (connectedId != null) {
+            await bluetoothService.disconnectRadio(connectedId);
+          }
+          _cancelRadioReconnect(device.mac);
+          continue;
+        }
+        if (connectedId == null) _scheduleRadioReconnect(device.mac);
+        else _cancelRadioReconnect(device.mac);
       } catch (e) {
         _broker.logError('Auto-reconnect to ${device.name} failed: $e');
+        _scheduleRadioReconnect(device.mac);
       }
     }
+  }
+
+  void _onRadioStateChanged(int deviceId, String name, Object? data) {
+    if (!mounted) return;
+    final mac = DataBroker.getValue<String>(deviceId, 'MacAddress', '') ?? '';
+    if (mac.isEmpty) return;
+    if (data == 'Connected') {
+      _cancelRadioReconnect(mac);
+    } else if (data == 'Connecting') {
+      // A manual or scheduled connection is already in progress. Preserve the
+      // retry count, but do not let another timer start a parallel connection.
+      _radioReconnectTimers.remove(mac.toUpperCase())?.cancel();
+    } else if (data == 'Disconnected' || data == 'UnableToConnect') {
+      if (!BluetoothService().previouslyConnectedRadioMacs().contains(
+        mac.toUpperCase(),
+      )) {
+        _cancelRadioReconnect(mac);
+        return;
+      }
+      _scheduleRadioReconnect(mac);
+    }
+  }
+
+  void _scheduleRadioReconnect(String macAddress) {
+    if (!Platform.isAndroid || !mounted) return;
+    final mac = macAddress.trim().toUpperCase();
+    if (mac.isEmpty ||
+        !BluetoothService().previouslyConnectedRadioMacs().contains(mac) ||
+        _radioReconnectTimers.containsKey(mac)) {
+      return;
+    }
+    final attempt = _radioReconnectAttempts[mac] ?? 0;
+    if (attempt >= _radioReconnectDelays.length) {
+      _broker.logInfo('[Android] Automatic Bluetooth reconnect stopped after '
+          '${_radioReconnectDelays.length} attempts. Use Connect to retry.');
+      return;
+    }
+    _radioReconnectAttempts[mac] = attempt + 1;
+    final delay = _radioReconnectDelays[attempt];
+    _broker.logInfo('[Android] Retrying a remembered Bluetooth radio in '
+        '${delay.inSeconds}s (attempt ${attempt + 1}/'
+        '${_radioReconnectDelays.length}).');
+    _radioReconnectTimers[mac] = Timer(delay, () {
+      _radioReconnectTimers.remove(mac);
+      unawaited(_attemptRadioReconnect(mac));
+    });
+  }
+
+  Future<void> _attemptRadioReconnect(String mac) async {
+    if (!mounted ||
+        !BluetoothService().previouslyConnectedRadioMacs().contains(mac)) {
+      _cancelRadioReconnect(mac);
+      return;
+    }
+    final bluetoothService = BluetoothService();
+    for (final id in bluetoothService.connectedRadioIds) {
+      final connectedMac =
+          DataBroker.getValue<String>(id, 'MacAddress', '')?.toUpperCase();
+      if (connectedMac == mac) {
+        _cancelRadioReconnect(mac);
+        return;
+      }
+    }
+    try {
+      final devices = await bluetoothService.findCompatibleDevices(
+        timeout: const Duration(seconds: 5),
+      );
+      if (!mounted ||
+          !bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+        _cancelRadioReconnect(mac);
+        return;
+      }
+      DiscoveredDevice? match;
+      for (final device in devices) {
+        if (device.id.toUpperCase() == mac) {
+          match = device;
+          break;
+        }
+      }
+      if (match == null) {
+        _scheduleRadioReconnect(mac);
+        return;
+      }
+      final device = _applyStoredFriendlyNames([match]).first;
+      final result = await bluetoothService.connectToRadio(
+        device.mac,
+        device.name,
+        bluetoothType: device.bluetoothType,
+      );
+      if (!bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+        if (result != null) await bluetoothService.disconnectRadio(result);
+        _cancelRadioReconnect(mac);
+        return;
+      }
+      if (result == null) _scheduleRadioReconnect(mac);
+      else _cancelRadioReconnect(mac);
+    } catch (error) {
+      _broker.logError('[Android] Automatic Bluetooth reconnect failed: $error');
+      _scheduleRadioReconnect(mac);
+    }
+  }
+
+  void _cancelRadioReconnect(String macAddress) {
+    final mac = macAddress.trim().toUpperCase();
+    _radioReconnectTimers.remove(mac)?.cancel();
+    _radioReconnectAttempts.remove(mac);
   }
 
   /// Handle settings changes from DataBroker.
@@ -1702,6 +1859,14 @@ class _MainFormState extends State<MainForm>
         if (radio is Map && radio['DeviceId'] != null) {
           final id = radio['DeviceId'] as int;
           if (!ids.contains(id)) ids.add(id);
+          final mac = radio['MacAddress'];
+          if (mac is String && mac.isNotEmpty) {
+            if (radio['State'] == 'Connected') {
+              _cancelRadioReconnect(mac);
+            } else if (radio['State'] == 'Connecting') {
+              _radioReconnectTimers.remove(mac.toUpperCase())?.cancel();
+            }
+          }
         }
       }
       final previousPreferred = _currentRadioDeviceId;
@@ -3151,6 +3316,11 @@ class _MainFormState extends State<MainForm>
   @override
   void dispose() {
     _tabController.removeListener(_onTabChanged);
+    for (final timer in _radioReconnectTimers.values) {
+      timer.cancel();
+    }
+    _radioReconnectTimers.clear();
+    _radioReconnectAttempts.clear();
     _broker.dispose();
     if (isDesktop) {
       windowManager.removeListener(this);
