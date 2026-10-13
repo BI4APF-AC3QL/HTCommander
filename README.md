@@ -46,7 +46,7 @@ The following features are available on Windows, Linux, macOS, Android.
 - [SSTV](https://ylianst.github.io/HTCommanderSite/features/sstv.html) send and receive images. Reception is auto-detected, drag & drop to sent.
 - [Speech-to-Text](https://ylianst.github.io/HTCommanderSite/features/voice.html). Converts speech-to-text and text-to-speech.
 
-The following are for desktop platforms only: Windows, Linux, macOS.
+The following are available on Windows, Linux, macOS and Android.
 
 - [AGWPE Protocol](https://ylianst.github.io/HTCommanderSite/features/agwpe.html). Supports routing other application's traffic over the radio using the AGWPE protocol.
 
