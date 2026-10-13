@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +37,8 @@ void main() {
 
     set('webServerEnabled', 0);
     set('webServerPort', 0);
+    set('webServerRemoteEnabled', 1);
+    set('webServerPassword', 'android-test-password');
     final handler = WebServerHandler();
     try {
       handler.init();
@@ -46,6 +51,26 @@ void main() {
       expect(started, isTrue, reason: 'the HTTP listener should bind');
       expect(calls.map((call) => call.method), contains('start'));
       expect(calls.first.arguments, {'reason': 'server'});
+
+      final http = HttpClient();
+      try {
+        final request = await http.getUrl(
+          Uri(
+            scheme: 'http',
+            host: '127.0.0.1',
+            port: handler.boundPort!,
+            path: '/login',
+          ),
+        );
+        final response = await request.close();
+        expect(response.statusCode, HttpStatus.ok);
+        expect(
+          await utf8.decoder.bind(response).join(),
+          contains('远程访问密码'),
+        );
+      } finally {
+        http.close(force: true);
+      }
 
       set('webServerEnabled', 0);
       final stopped = await _waitUntil(
