@@ -1687,8 +1687,11 @@ class _MainFormState extends State<MainForm>
           _cancelRadioReconnect(device.mac);
           continue;
         }
-        if (connectedId == null) _scheduleRadioReconnect(device.mac);
-        else _cancelRadioReconnect(device.mac);
+        if (connectedId == null) {
+          _scheduleRadioReconnect(device.mac);
+        } else {
+          _cancelRadioReconnect(device.mac);
+        }
       } catch (e) {
         _broker.logError('Auto-reconnect to ${device.name} failed: $e');
         _scheduleRadioReconnect(device.mac);
@@ -1784,12 +1787,17 @@ class _MainFormState extends State<MainForm>
         bluetoothType: device.bluetoothType,
       );
       if (!bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
-        if (result != null) await bluetoothService.disconnectRadio(result);
+        if (result != null) {
+          await bluetoothService.disconnectRadio(result);
+        }
         _cancelRadioReconnect(mac);
         return;
       }
-      if (result == null) _scheduleRadioReconnect(mac);
-      else _cancelRadioReconnect(mac);
+      if (result == null) {
+        _scheduleRadioReconnect(mac);
+      } else {
+        _cancelRadioReconnect(mac);
+      }
     } catch (error) {
       _broker.logError('[Android] Automatic Bluetooth reconnect failed: $error');
       _scheduleRadioReconnect(mac);
