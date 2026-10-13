@@ -73,7 +73,8 @@ class BluetoothClassicPlugin(
         // address so reconnects can skip the channel scan. The radio's SDP
         // record advertises an unstable channel, so the working channel is
         // discovered by probing; caching it makes later connects near-instant.
-        private val lastGoodChannel = ConcurrentHashMap<String, Int>()
+        private val lastGoodChannel =
+            ConcurrentHashMap<RfcommChannelCandidates.ServiceKey, Int>()
     }
 
     /** Updated by [MainActivity] so runtime permission prompts use the visible Activity. */
@@ -493,6 +494,7 @@ class BluetoothClassicPlugin(
     ): BluetoothSocket {
         var lastError: Exception? = null
         val address = device.address
+        val serviceKey = RfcommChannelCandidates.serviceKey(address, uuid)
         val deadline = SystemClock.elapsedRealtime() + CONNECT_TOTAL_TIMEOUT_MS
 
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
@@ -569,12 +571,13 @@ class BluetoothClassicPlugin(
             val channelFactory = insecureByChannel ?: return null
             return attempt("insecure-ch$channel") {
                 channelFactory.invoke(device, channel) as BluetoothSocket
-            }?.also { lastGoodChannel[address] = channel }
+            }?.also { lastGoodChannel[serviceKey] = channel }
         }
 
         // 0. Fast path: reuse the channel that last worked for this radio so we
-        //    skip the full scan on reconnect.
-        val cachedChannel = lastGoodChannel[address]
+        //    and this specific service so reconnects skip the full scan without
+        //    confusing the control and audio service channels.
+        val cachedChannel = lastGoodChannel[serviceKey]
         if (cachedChannel != null) {
             tryChannel(cachedChannel)?.let { return it }
         }
@@ -591,7 +594,10 @@ class BluetoothClassicPlugin(
         // 2. Probe fixed RFCOMM channels with an insecure socket. The radio's
         //    SPP channel has been observed on 1 and 4; try those before the
         //    exhaustive fallback so channel 4 devices do not wait on 2 and 3.
-        for (channel in RfcommChannelCandidates.scanOrder(cachedChannel)) {
+        for (channel in RfcommChannelCandidates.scanOrder(
+            cachedChannel = cachedChannel,
+            prioritizeControlChannels = uuid == SPP_UUID,
+        )) {
             if (disposed || connectionAttempt.isCancelled) break
             tryChannel(channel)?.let { return it }
         }
