@@ -82,6 +82,11 @@ class BluetoothService {
   // Connected radios: deviceId -> RadioTransport (BLE or Classic)
   final Map<int, RadioTransport> _connectedRadios = {};
 
+  // Reserve IDs and defer transport disposal while a connect flow is still
+  // unwinding. A user can cancel the transport immediately, but its native
+  // connect future may still complete later and must perform final cleanup.
+  final Map<int, String> _pendingRadioConnections = <int, String>{};
+
   // Hosted web build: the active WebSocket transport to the desktop host, used
   // to forward device-0 setting changes. Null when not hosted / not connected.
   WebSocketRadioTransport? _hostTransport;
@@ -105,7 +110,8 @@ class BluetoothService {
   // Radio audio instances (macOS Bluetooth Classic only): deviceId -> RadioAudio
   final Map<int, RadioAudio> _radioAudioInstances = {};
 
-  // For macOS Bluetooth Classic connections
+  // Bluetooth Classic connections: deviceId -> MAC address. Retained while a
+  // Classic transport is connecting or connected for display and cleanup.
   final Map<int, String> _classicConnections = {}; // deviceId -> macAddress
 
   // Per-device transport state listeners used to detect an unsolicited
@@ -203,7 +209,8 @@ class BluetoothService {
   int _getNextDeviceId() {
     int deviceId = _startingDeviceId;
     while (_connectedRadios.containsKey(deviceId) ||
-        _classicConnections.containsKey(deviceId)) {
+        _classicConnections.containsKey(deviceId) ||
+        _pendingRadioConnections.containsKey(deviceId)) {
       deviceId++;
     }
     return deviceId;
@@ -691,14 +698,20 @@ class BluetoothService {
     final radio = _radioInstances.remove(deviceId);
     radio?.dispose();
 
-    // Check for Classic connection (macOS)
+    final connectStillUnwinding =
+        _pendingRadioConnections.containsKey(deviceId);
+
+    // Check for Bluetooth Classic connection.
     if (_classicConnections.containsKey(deviceId)) {
       _classicConnections.remove(deviceId);
       // Transport handles the actual disconnection
       final transport = _connectedRadios.remove(deviceId);
       if (transport != null) {
         await transport.disconnect();
-        await transport.dispose();
+        // The connect flow owns final disposal until its native connect call
+        // has returned. Disposing a pending transport here can close its Dart
+        // streams while a late native result is still being processed.
+        if (!connectStillUnwinding) await transport.dispose();
       }
       _broker.dispatch(
         deviceId: deviceId,
@@ -715,7 +728,7 @@ class BluetoothService {
     final transport = _connectedRadios.remove(deviceId);
     if (transport != null) {
       await transport.disconnect();
-      await transport.dispose();
+      if (!connectStillUnwinding) await transport.dispose();
       _broker.dispatch(
         deviceId: deviceId,
         name: 'State',
@@ -824,7 +837,7 @@ class BluetoothService {
   List<int> get connectedRadioIds =>
       <int>{..._connectedRadios.keys, ..._classicConnections.keys}.toList();
 
-  /// Get a transport by device ID (BLE only)
+  /// Get a transport by device ID.
   RadioTransport? getTransport(int deviceId) => _connectedRadios[deviceId];
 
   /// Get the [Radio] instance for a connected device, or null if not connected.
@@ -898,17 +911,16 @@ class BluetoothService {
 
   /// Publish the connected radios list to the DataBroker.
   ///
-  /// Builds exactly one entry per device ID. A Bluetooth Classic radio that has
-  /// finished connecting lives in both [_connectedRadios] (its transport) and
-  /// [_classicConnections] (its MAC address) under the same device ID; the two
-  /// maps are merged here so the radio is published only once. The
-  /// [_classicConnections] map is otherwise only needed for radios that are
-  /// still connecting and not yet present in [_connectedRadios].
+  /// Builds exactly one entry per device ID. A Bluetooth Classic radio lives
+  /// in both [_connectedRadios] (its transport) and [_classicConnections] (its
+  /// MAC address) under the same device ID while connecting and after
+  /// connecting. The two maps are merged here so the radio is published only
+  /// once; the MAC map also supplies its address before RFCOMM completes.
   void _publishConnectedRadios() {
     final byDeviceId = <int, Map<String, dynamic>>{};
 
-    // Add radios that have an active transport (BLE, or a connected Classic
-    // radio). The transport carries the most up-to-date MAC / name / state.
+    // Add radios that have a transport, including Classic connections still
+    // negotiating RFCOMM. The transport carries the current state and target.
     for (final entry in _connectedRadios.entries) {
       final transport = entry.value;
       final device = transport.connectedDevice;
@@ -1026,10 +1038,13 @@ class BluetoothService {
     }
     _radioInstances.clear();
 
-    // Dispose BLE transports
-    for (final transport in _connectedRadios.values) {
+    // Dispose transports, deferring pending connection cleanup to its owner.
+    for (final entry in _connectedRadios.entries.toList()) {
+      final transport = entry.value;
       await transport.disconnect();
-      await transport.dispose();
+      if (!_pendingRadioConnections.containsKey(entry.key)) {
+        await transport.dispose();
+      }
     }
     _connectedRadios.clear();
 

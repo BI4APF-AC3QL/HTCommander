@@ -224,39 +224,59 @@ Future<int?> _connectToRadioClassicImpl(
       return entry.key;
     }
   }
+  if (service._pendingRadioConnections.values.any(
+    (pendingMac) => pendingMac.toUpperCase() == macUpper,
+  )) {
+    // A cancelled connection to this radio is still unwinding its native
+    // connect call. Avoid racing it with a second RFCOMM socket attempt.
+    return null;
+  }
+
+  final deviceId = service._getNextDeviceId();
+  final transport = BluetoothClassicTransport();
+  final device = DiscoveredDevice(
+    id: macAddress,
+    name: friendlyName.isNotEmpty ? friendlyName : macAddress,
+    type: BluetoothType.classic,
+  );
+  Radio? radio;
+  RadioAudio? radioAudio;
+  bool ownsConnection() =>
+      identical(service._connectedRadios[deviceId], transport) &&
+      service._classicConnections[deviceId]?.toUpperCase() == macUpper;
+
+  service._broker.dispatch(
+    deviceId: deviceId,
+    name: 'State',
+    data: 'Connecting',
+    store: true,
+  );
+  service._broker.dispatch(
+    deviceId: deviceId,
+    name: 'FriendlyName',
+    data: friendlyName,
+    store: true,
+  );
+  // Register the transport before awaiting the native RFCOMM connect so an
+  // explicit disconnect can cancel an in-flight attempt as well as a live link.
+  service._classicConnections[deviceId] = macAddress;
+  service._connectedRadios[deviceId] = transport;
+  service._pendingRadioConnections[deviceId] = macAddress;
+  service._publishConnectedRadios();
 
   try {
-    final deviceId = service._getNextDeviceId();
-
-    service._broker.dispatch(
-      deviceId: deviceId,
-      name: 'State',
-      data: 'Connecting',
-      store: true,
-    );
-
-    service._broker.dispatch(
-      deviceId: deviceId,
-      name: 'FriendlyName',
-      data: friendlyName,
-      store: true,
-    );
-
-    service._classicConnections[deviceId] = macAddress;
-    service._publishConnectedRadios();
-
-    final transport = BluetoothClassicTransport();
-    final device = DiscoveredDevice(
-      id: macAddress,
-      name: friendlyName.isNotEmpty ? friendlyName : macAddress,
-      type: BluetoothType.classic,
-    );
+    // Android must hold its foreground service for the entire connection
+    // attempt; starting it only after RFCOMM succeeds leaves backgrounded
+    // connection attempts vulnerable to process suspension.
+    await service._syncAndroidRadioService();
+    if (!ownsConnection()) return null;
 
     final success = await transport.connect(device);
+    if (!ownsConnection()) return null;
 
     if (!success) {
+      service._connectedRadios.remove(deviceId);
       service._classicConnections.remove(deviceId);
-      await transport.dispose();
       service._broker.dispatch(
         deviceId: deviceId,
         name: 'State',
@@ -264,20 +284,20 @@ Future<int?> _connectToRadioClassicImpl(
         store: true,
       );
       service._publishConnectedRadios();
+      await service._syncAndroidRadioService();
       return null;
     }
 
-    service._connectedRadios[deviceId] = transport;
-
-    final radio = Radio(deviceId: deviceId, macAddress: macAddress);
+    radio = Radio(deviceId: deviceId, macAddress: macAddress);
     radio.updateFriendlyName(friendlyName);
     service._radioInstances[deviceId] = radio;
     await radio.connect(transport);
+    if (!ownsConnection()) return null;
 
     // Clean up if the radio disconnects on its own (e.g. powered off).
     service._watchTransportDisconnect(deviceId, transport);
 
-    final radioAudio = RadioAudio(
+    radioAudio = RadioAudio(
       radio: radio,
       deviceId: deviceId,
       macAddress: macAddress,
@@ -333,7 +353,39 @@ Future<int?> _connectToRadioClassicImpl(
     service._broker.logError(
       '[BT-Classic] Classic connect flow threw for $macAddress: $e',
     );
+    if (ownsConnection()) {
+      service._connectedRadios.remove(deviceId);
+      service._classicConnections.remove(deviceId);
+      if (identical(service._radioAudioInstances[deviceId], radioAudio)) {
+        service._radioAudioInstances.remove(deviceId);
+        await radioAudio?.dispose();
+      }
+      if (identical(service._radioInstances[deviceId], radio)) {
+        service._radioInstances.remove(deviceId);
+        radio?.dispose();
+      }
+      service._broker.dispatch(
+        deviceId: deviceId,
+        name: 'State',
+        data: 'UnableToConnect',
+        store: true,
+      );
+      service._publishConnectedRadios();
+      await service._syncAndroidRadioService();
+    }
     return null;
+  } finally {
+    service._pendingRadioConnections.remove(deviceId);
+    if (!ownsConnection()) {
+      try {
+        await transport.disconnect();
+        await transport.dispose();
+      } catch (e) {
+        service._broker.logError(
+          '[BT-Classic] Cleanup after cancelled connection failed: $e',
+        );
+      }
+    }
   }
 }
 
@@ -349,36 +401,47 @@ Future<int?> _connectToRadioBleImpl(
       return entry.key;
     }
   }
+  for (final entry in service._pendingRadioConnections.entries) {
+    if (entry.value.toUpperCase() == macAddress.toUpperCase()) {
+      // Return the existing in-flight ID while it remains registered. If the
+      // user already cancelled it, wait for native cleanup before reconnecting.
+      return service._connectedRadios.containsKey(entry.key) ? entry.key : null;
+    }
+  }
+
+  final deviceId = service._getNextDeviceId();
+  final transport = BleRadioTransport(webFastMode: webFastMode);
+  final discovered = DiscoveredDevice(
+    id: macAddress,
+    name: friendlyName.isNotEmpty ? friendlyName : macAddress,
+    type: BluetoothType.ble,
+  );
+  Radio? radio;
+  bool ownsConnection() =>
+      identical(service._connectedRadios[deviceId], transport);
+
+  service._connectedRadios[deviceId] = transport;
+  service._pendingRadioConnections[deviceId] = macAddress;
+  service._broker.dispatch(
+    deviceId: deviceId,
+    name: 'FriendlyName',
+    data: friendlyName,
+    store: true,
+  );
+  service._broker.dispatch(
+    deviceId: deviceId,
+    name: 'State',
+    data: 'Connecting',
+    store: true,
+  );
+  service._publishConnectedRadios();
 
   try {
-    final deviceId = service._getNextDeviceId();
-    final transport = BleRadioTransport(webFastMode: webFastMode);
-
-    final discovered = DiscoveredDevice(
-      id: macAddress,
-      name: friendlyName.isNotEmpty ? friendlyName : macAddress,
-      type: BluetoothType.ble,
-    );
-
-    service._connectedRadios[deviceId] = transport;
-
-    service._broker.dispatch(
-      deviceId: deviceId,
-      name: 'FriendlyName',
-      data: friendlyName,
-      store: true,
-    );
-
-    service._publishConnectedRadios();
-
-    service._broker.dispatch(
-      deviceId: deviceId,
-      name: 'State',
-      data: 'Connecting',
-      store: true,
-    );
+    await service._syncAndroidRadioService();
+    if (!ownsConnection()) return null;
 
     final success = await transport.connect(discovered);
+    if (!ownsConnection()) return null;
 
     if (!success) {
       service._connectedRadios.remove(deviceId);
@@ -389,14 +452,15 @@ Future<int?> _connectToRadioBleImpl(
         store: true,
       );
       service._publishConnectedRadios();
-      await transport.dispose();
+      await service._syncAndroidRadioService();
       return null;
     }
 
-    final radio = Radio(deviceId: deviceId, macAddress: macAddress);
+    radio = Radio(deviceId: deviceId, macAddress: macAddress);
     radio.updateFriendlyName(friendlyName);
     service._radioInstances[deviceId] = radio;
     await radio.connect(transport);
+    if (!ownsConnection()) return null;
 
     // Clean up if the radio disconnects on its own (e.g. powered off).
     service._watchTransportDisconnect(deviceId, transport);
@@ -435,7 +499,37 @@ Future<int?> _connectToRadioBleImpl(
     service._publishConnectedRadios();
     await service._syncAndroidRadioService();
     return deviceId;
-  } catch (_) {
+  } catch (e) {
+    service._broker.logError(
+      '[BLE] BLE connect flow threw for $macAddress: $e',
+    );
+    if (ownsConnection()) {
+      service._connectedRadios.remove(deviceId);
+      if (identical(service._radioInstances[deviceId], radio)) {
+        service._radioInstances.remove(deviceId);
+        radio?.dispose();
+      }
+      service._broker.dispatch(
+        deviceId: deviceId,
+        name: 'State',
+        data: 'UnableToConnect',
+        store: true,
+      );
+      service._publishConnectedRadios();
+      await service._syncAndroidRadioService();
+    }
     return null;
+  } finally {
+    service._pendingRadioConnections.remove(deviceId);
+    if (!ownsConnection()) {
+      try {
+        await transport.disconnect();
+        await transport.dispose();
+      } catch (e) {
+        service._broker.logError(
+          '[BLE] Cleanup after cancelled connection failed: $e',
+        );
+      }
+    }
   }
 }
