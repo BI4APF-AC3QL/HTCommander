@@ -42,6 +42,7 @@ import 'handlers/bbs_handler.dart';
 import 'handlers/agwpe_handler.dart';
 import 'handlers/android_network_services_handler.dart';
 import 'handlers/android_phone_gps_handler.dart';
+import 'services/android_server_lifecycle.dart';
 import 'handlers/web_server_handler.dart';
 import 'handlers/home_assistant_handler.dart';
 import 'handlers/debug_log_handler.dart';
@@ -1118,6 +1119,11 @@ class _MainFormState extends State<MainForm>
   // cancels this timer, so reconnect never overrides the user's choice.
   final Map<String, Timer> _radioReconnectTimers = {};
   final Map<String, int> _radioReconnectAttempts = {};
+  final Set<String> _radioReconnectInFlight = {};
+  final AndroidServerLifecycle _androidServerLifecycle =
+      AndroidServerLifecycle();
+  Future<void> _radioReconnectLifecycleTail = Future<void>.value();
+  bool _radioReconnectServiceRequested = false;
   static const List<Duration> _radioReconnectDelays = [
     Duration(seconds: 2),
     Duration(seconds: 4),
@@ -1709,6 +1715,7 @@ class _MainFormState extends State<MainForm>
       // A manual or scheduled connection is already in progress. Preserve the
       // retry count, but do not let another timer start a parallel connection.
       _radioReconnectTimers.remove(mac.toUpperCase())?.cancel();
+      _syncAndroidReconnectForegroundService();
     } else if (data == 'Disconnected' || data == 'UnableToConnect') {
       if (!BluetoothService().previouslyConnectedRadioMacs().contains(
         mac.toUpperCase(),
@@ -1741,26 +1748,29 @@ class _MainFormState extends State<MainForm>
         '${_radioReconnectDelays.length}).');
     _radioReconnectTimers[mac] = Timer(delay, () {
       _radioReconnectTimers.remove(mac);
+      _radioReconnectInFlight.add(mac);
+      _syncAndroidReconnectForegroundService();
       unawaited(_attemptRadioReconnect(mac));
     });
+    _syncAndroidReconnectForegroundService();
   }
 
   Future<void> _attemptRadioReconnect(String mac) async {
-    if (!mounted ||
-        !BluetoothService().previouslyConnectedRadioMacs().contains(mac)) {
-      _cancelRadioReconnect(mac);
-      return;
-    }
-    final bluetoothService = BluetoothService();
-    for (final id in bluetoothService.connectedRadioIds) {
-      final connectedMac =
-          DataBroker.getValue<String>(id, 'MacAddress', '')?.toUpperCase();
-      if (connectedMac == mac) {
+    try {
+      if (!mounted ||
+          !BluetoothService().previouslyConnectedRadioMacs().contains(mac)) {
         _cancelRadioReconnect(mac);
         return;
       }
-    }
-    try {
+      final bluetoothService = BluetoothService();
+      for (final id in bluetoothService.connectedRadioIds) {
+        final connectedMac =
+            DataBroker.getValue<String>(id, 'MacAddress', '')?.toUpperCase();
+        if (connectedMac == mac) {
+          _cancelRadioReconnect(mac);
+          return;
+        }
+      }
       final devices = await bluetoothService.findCompatibleDevices(
         timeout: const Duration(seconds: 5),
       );
@@ -1801,6 +1811,9 @@ class _MainFormState extends State<MainForm>
     } catch (error) {
       _broker.logError('[Android] Automatic Bluetooth reconnect failed: $error');
       _scheduleRadioReconnect(mac);
+    } finally {
+      _radioReconnectInFlight.remove(mac);
+      _syncAndroidReconnectForegroundService();
     }
   }
 
@@ -1808,6 +1821,34 @@ class _MainFormState extends State<MainForm>
     final mac = macAddress.trim().toUpperCase();
     _radioReconnectTimers.remove(mac)?.cancel();
     _radioReconnectAttempts.remove(mac);
+    _syncAndroidReconnectForegroundService();
+  }
+
+  void _syncAndroidReconnectForegroundService() {
+    if (!Platform.isAndroid) return;
+    final shouldRun =
+        _radioReconnectTimers.isNotEmpty || _radioReconnectInFlight.isNotEmpty;
+    if (shouldRun == _radioReconnectServiceRequested) return;
+    _radioReconnectServiceRequested = shouldRun;
+    _radioReconnectLifecycleTail = _radioReconnectLifecycleTail
+        .catchError((Object _) {})
+        .then((_) async {
+          try {
+            if (shouldRun) {
+              await _androidServerLifecycle.start(reason: 'radioReconnect');
+            } else {
+              await _androidServerLifecycle.stop(reason: 'radioReconnect');
+            }
+          } catch (error) {
+            _broker.logError(
+              'Android Bluetooth reconnect foreground service update failed: '
+              '$error',
+            );
+            if (_radioReconnectServiceRequested == shouldRun) {
+              _radioReconnectServiceRequested = false;
+            }
+          }
+        });
   }
 
   /// Handle settings changes from DataBroker.
@@ -1873,6 +1914,7 @@ class _MainFormState extends State<MainForm>
               _cancelRadioReconnect(mac);
             } else if (radio['State'] == 'Connecting') {
               _radioReconnectTimers.remove(mac.toUpperCase())?.cancel();
+              _syncAndroidReconnectForegroundService();
             }
           }
         }
@@ -3329,6 +3371,8 @@ class _MainFormState extends State<MainForm>
     }
     _radioReconnectTimers.clear();
     _radioReconnectAttempts.clear();
+    _radioReconnectInFlight.clear();
+    _syncAndroidReconnectForegroundService();
     _broker.dispose();
     if (isDesktop) {
       windowManager.removeListener(this);

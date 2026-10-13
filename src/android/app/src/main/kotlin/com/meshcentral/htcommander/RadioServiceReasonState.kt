@@ -15,12 +15,14 @@ internal class RadioServiceReasonState {
 
     companion object {
         const val REASON_RADIO = "radio"
+        const val REASON_RADIO_RECONNECT = "radioReconnect"
         const val REASON_SERVER = "server"
         const val REASON_RECORDING = "recording"
         const val REASON_NETWORK_SERVICES = "networkServices"
 
         private val VALID_REASONS = setOf(
             REASON_RADIO,
+            REASON_RADIO_RECONNECT,
             REASON_SERVER,
             REASON_RECORDING,
             REASON_NETWORK_SERVICES,

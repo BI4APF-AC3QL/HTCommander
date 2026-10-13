@@ -15,6 +15,12 @@ class RadioServiceReasonStateTest {
         assertTrue(state.set(RadioServiceReasonState.REASON_RADIO, true))
         assertFalse(state.shouldKeepWifiActive)
 
+        // Pending Bluetooth reconnects need process protection in the
+        // background, but must not keep Wi-Fi awake like the remote server.
+        assertTrue(state.set(RadioServiceReasonState.REASON_RADIO_RECONNECT, true))
+        assertFalse(state.shouldKeepWifiActive)
+        assertTrue(state.set(RadioServiceReasonState.REASON_RADIO_RECONNECT, false))
+
         assertTrue(state.set(RadioServiceReasonState.REASON_NETWORK_SERVICES, true))
         assertFalse(state.shouldKeepWifiActive)
 
