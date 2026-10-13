@@ -36,7 +36,7 @@ echo 'HTCommander x86_64 release APK installed and remained running for 15 secon
 adb uninstall com.meshcentral.htcommander
 cd "$src_root"
 test -f integration_test/android_remote_server_test.dart
-flutter drive \
+timeout --signal=TERM --kill-after=30s 8m flutter drive \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/android_remote_server_test.dart \
   --no-dds \
