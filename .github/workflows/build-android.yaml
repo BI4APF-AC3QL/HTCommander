@@ -67,9 +67,9 @@ jobs:
         working-directory: src
         run: flutter pub get
 
-      - name: Build signed Android APK
+      - name: Build signed Android APKs by ABI
         working-directory: src
-        run: flutter build apk --release
+        run: flutter build apk --release --split-per-abi
 
       - name: Test bounded Android Bluetooth queues
         working-directory: src/android
@@ -87,8 +87,8 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: android-apk
-          path: src/build/app/outputs/flutter-apk/app-release.apk
+          name: android-apks-by-abi
+          path: src/build/app/outputs/flutter-apk/app-*-release.apk
 
       - name: Upload Android AAB
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
