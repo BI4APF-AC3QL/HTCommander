@@ -2,6 +2,12 @@
 
 HTCommander Android 版可直接通过系统蓝牙配对连接支持的电台，也能把同一部手机作为远控主机：应用连接电台后，可在“设置 → 服务端 → 手机远程操控设置”启用网页服务。其他设备在同一 Wi-Fi 内打开页面显示的 Android 本机地址并登录，即可使用已有手机远控页面。
 
+## 下载 Android 测试版
+
+从 [Android 构建工作流](https://github.com/BI4APF-AC3QL/HTCommander/actions/workflows/build-android.yaml?query=branch%3Afeature%2Fremote-aprs-dashboard) 打开最新成功的运行，在 **Artifacts** 下载 `android-apks-by-abi`。ZIP 内每个 APK 只适配一种处理器架构：大多数新手机选 `app-arm64-v8a-release.apk`；较旧的 32 位 ARM 设备选 `app-armeabi-v7a-release.apk`；x86_64 设备或模拟器选 `app-x86_64-release.apk`。也可下载 AAB 用于应用商店部署。Actions 测试工件通常保留 90 天。
+
+当前 CI 测试 APK 使用临时 Android debug 签名，不能保证覆盖商店版或其他签名版本。安装前请保留现有 HTCommander 和本机数据；不要为了安装测试包直接卸载或清除原应用。建议使用备用设备，或先完成单独的数据备份。
+
 Android 的“设置 → 许可证 → 位置”可点“使用本机 GPS 定位”获取一次当前坐标，也可开启“持续使用手机 GPS 定位”。持续定位会更新同一手动位置源，供电台位置、APRS-IS 范围筛选和卫星跟踪共用；启用后会显示 Android 常驻服务通知，并在应用切到后台时继续运行，增加耗电。关闭后保留最后一次坐标。开启持续定位前需授予定位权限；如电台已配置自动信标且允许发送，位置更新可能改变信标内容。
 
 ## 首次连接电台

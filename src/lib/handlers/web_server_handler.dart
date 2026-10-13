@@ -12,12 +12,13 @@ build, it bridges the browser to the radio over a WebSocket:
     code via `WebSocketRadioTransport`.
   * Binary messages from a browser are the raw GATT command frames the radio
     expects; they are dispatched to the radio as `SendRawCommand`.
-  * Text control messages (`connect` / `disconnect`) drive the desktop radio
+  * Text control messages (`connect` / `disconnect`) drive the host radio
     connection, and the radio state is reported back as `wasconnected` /
     `connecting` / `disconnected`.
 
-The web server feature is desktop-only; on the web the [WebServer] facade
-resolves to an inert stub.
+Native desktop and Android builds can host remote clients; Android keeps the
+Flutter engine alive through its foreground service. On web, the [WebServer]
+facade resolves to an inert stub because a browser cannot host the listener.
 */
 
 import 'dart:convert';
@@ -943,7 +944,7 @@ class WebServerHandler {
       }
     }();
     // Mirror all host PCM playback (radio, transmit, EchoLink, AllStarLink) to
-    // opted-in browsers. Desktop only; the web build never plays local audio.
+    // opted-in browsers. Native Android and desktop builds can play local audio.
     if (!kIsWeb) PcmPlayer.playbackTap = _onHostPcm;
   }
 
