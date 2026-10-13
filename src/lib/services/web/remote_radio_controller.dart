@@ -63,7 +63,7 @@ class RemoteRadioController {
     return _control.requests;
   }
 
-  /// Called only by the Windows host or a validated holder handoff.
+  /// Called only by the host or a validated holder handoff.
   void grantControl(int id, {int actor = 0}) {
     if (id <= 0) throw ArgumentError.value(id);
     if (_control.owner == id) return;
@@ -301,7 +301,7 @@ class RemoteRadioController {
       return null;
     }
     if (DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
-      return 'Remote control is stopped on the Windows host.';
+      return 'Remote control is stopped on the host.';
     }
     if (op == 'requestControl') {
       if (!_control.request(clientId)) return 'Control request queue is full.';
@@ -314,7 +314,7 @@ class RemoteRadioController {
     if (op == 'handoffControl') {
       final next = message['clientId'];
       if (RemoteAccessConfig.current.requireControlApproval) {
-        return 'The Windows host must approve control handoff.';
+        return 'The host must approve control handoff.';
       }
       if (next is! int ||
           !controlRequests.contains(next) ||
@@ -325,7 +325,7 @@ class RemoteRadioController {
       return null;
     }
     final id = target();
-    if (id <= 0) return 'Connect the radio on the Windows host first.';
+    if (id <= 0) return 'Connect a radio on the host first.';
     if (op == 'aprsMessage') return _sendAprs(id, message, clientId);
     if (op == 'aprsPosition') return _sendPosition(id, clientId, message);
     if (op == 'pttStart') {
@@ -334,7 +334,7 @@ class RemoteRadioController {
       }
       if (_owner != null) return 'A remote transmitter already owns PTT.';
       if (DataBroker.getValue<bool>(id, 'AudioState', false) != true) {
-        return 'Enable the radio audio channel on Windows first.';
+        return 'Enable the radio audio channel on the host first.';
       }
       final status = DataBroker.getValueDynamic(id, 'HtStatus', null);
       final lock = DataBroker.getValueDynamic(id, 'LockState', null);
@@ -420,7 +420,7 @@ class RemoteRadioController {
   String? _sendAprs(int id, Map message, int clientId) {
     if (!RemoteAccessConfig.current.allowAprs ||
         DataBroker.getValue<int>(0, 'AllowTransmit', 0) != 1) {
-      return 'Enable remote APRS messages and Allow transmit on Windows.';
+      return 'Enable remote APRS messages and Allow transmit on the host.';
     }
     final destination = message['destination'];
     final text = message['text'];
@@ -441,7 +441,7 @@ class RemoteRadioController {
       return 'APRS text must be 1–67 printable ASCII characters without { | ~.';
     }
     if ((DataBroker.getValue<String>(0, 'CallSign', '') ?? '').isEmpty) {
-      return 'Configure the station callsign on Windows.';
+      return 'Configure the station callsign on the host.';
     }
     final status = DataBroker.getValueDynamic(id, 'HtStatus', null);
     final lock = DataBroker.getValueDynamic(id, 'LockState', null);
@@ -454,7 +454,7 @@ class RemoteRadioController {
     }
     final aprs = _channels(id).where((c) => c['name'] == 'APRS');
     if (aprs.isEmpty || aprs.first['txDisable'] != false) {
-      return 'Configure a transmit-enabled APRS channel on Windows.';
+      return 'Configure a transmit-enabled APRS channel on the host.';
     }
     final now = _clock();
     if (_lastAprsSubmission != null &&
@@ -480,7 +480,7 @@ class RemoteRadioController {
   String? _sendPosition(int id, int clientId, Map message) {
     if (!RemoteAccessConfig.current.allowPosition ||
         DataBroker.getValue<int>(0, 'AllowTransmit', 0) != 1) {
-      return 'Enable remote position packets and Allow transmit on Windows.';
+      return 'Enable remote position packets and Allow transmit on the host.';
     }
     if (message['confirmed'] != true) {
       return 'Confirm position transmission first.';

@@ -47,7 +47,7 @@ class RemoteSatelliteControl {
         id = command['noradId'],
         index = command['usageIndex'];
     if (state['enabled'] != true || state['observerKnown'] != true) {
-      return 'Enable satellite support and configure observer location on Windows.';
+      return 'Enable satellite support and configure the observer location on the host.';
     }
     if (id is! int || index is! int || index < 0) {
       return 'Invalid satellite selection.';

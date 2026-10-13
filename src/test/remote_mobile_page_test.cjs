@@ -6,6 +6,14 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../lib/services/web/remote_mobile_page.dart'), 'utf8');
 const script = source.split('<script>')[1].split('</script>')[0];
+assert.ok(source.includes('<p>连接 HTCommander 电台</p>'));
+assert.ok(source.includes('<h2 id="radio">主机电台</h2>'));
+assert.doesNotMatch(source, /Windows|电脑/);
+assert.ok(source.includes('设备静噪'));
+assert.ok(source.includes('卫星多普勒（接收跟踪）'));
+for (const label of ['电台', 'APRS', '地图', '音频', '更多']) {
+  assert.ok(source.includes(`>${label}</button>`), `missing mobile menu: ${label}`);
+}
 const elements = new Map(), drawCounts = {}, intervals = [];
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
