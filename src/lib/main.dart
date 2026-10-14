@@ -1137,20 +1137,24 @@ class _MainFormState extends State<MainForm>
   ];
   late final RadioReconnectController _radioReconnectController =
       RadioReconnectController(
-        delays: _radioReconnectDelays,
-        isRemembered: (mac) =>
-            BluetoothService().previouslyConnectedRadioMacs().contains(mac),
-        isConnected: _isRadioConnected,
-        attempt: _attemptRadioReconnect,
-        onChanged: _syncAndroidReconnectForegroundService,
-        onExhausted: (mac, attempts) => _broker.logInfo(
-          '[Android] Automatic Bluetooth reconnect for $mac stopped after '
-          '$attempts attempts. Use Connect to retry.',
-        ),
-        onError: (mac, error) => _broker.logError(
-          '[Android] Automatic Bluetooth reconnect to $mac failed: $error',
-        ),
-      );
+    delays: _radioReconnectDelays,
+    isRemembered: (mac) =>
+        BluetoothService().previouslyConnectedRadioMacs().contains(mac),
+    isConnected: _isRadioConnected,
+    attempt: _attemptRadioReconnect,
+    onChanged: _syncAndroidReconnectForegroundService,
+    onScheduled: (mac, delay, attempt) => _broker.logInfo(
+      '[Android] Retrying remembered radio $mac in '
+      '${delay.inSeconds}s (attempt $attempt/${_radioReconnectDelays.length}).',
+    ),
+    onExhausted: (mac, attempts) => _broker.logInfo(
+      '[Android] Automatic Bluetooth reconnect for $mac stopped after '
+      '$attempts attempts. Use Connect to retry.',
+    ),
+    onError: (mac, error) => _broker.logError(
+      '[Android] Automatic Bluetooth reconnect to $mac failed: $error',
+    ),
+  );
 
   // Hosted web build: the host's radios (each {deviceId, name}) and which one is
   // bridged, so the browser can show the current radio and offer a switcher.
@@ -1698,6 +1702,14 @@ class _MainFormState extends State<MainForm>
     // Reuse the stored friendly names so reconnected radios keep their labels.
     final compatibleDevices = _applyStoredFriendlyNames(devicesToReconnect);
     for (final device in compatibleDevices) {
+      if (Platform.isAndroid) {
+        await _radioReconnectController.attemptNow(
+          device.mac,
+          operation: (_) => _connectRememberedRadio(device),
+        );
+        continue;
+      }
+
       _broker.logInfo('Auto-reconnecting to ${device.name}...');
       try {
         final connectedId = await bluetoothService.connectToRadio(
@@ -1749,17 +1761,7 @@ class _MainFormState extends State<MainForm>
 
   void _scheduleRadioReconnect(String macAddress) {
     if (kIsWeb || !Platform.isAndroid || !mounted) return;
-    final mac = macAddress.trim().toUpperCase();
-    final attempt = _radioReconnectController.attemptsFor(mac) + 1;
-    _radioReconnectController.schedule(mac);
-    if (_radioReconnectController.attemptsFor(mac) == attempt) {
-      final delay = _radioReconnectDelays[attempt - 1];
-      _broker.logInfo(
-        '[Android] Retrying a remembered radio in '
-        '${delay.inSeconds}s (attempt $attempt/'
-        '${_radioReconnectDelays.length}).',
-      );
-    }
+    _radioReconnectController.schedule(macAddress);
   }
 
   bool _isRadioConnected(String mac) {
@@ -1822,6 +1824,35 @@ class _MainFormState extends State<MainForm>
       _broker.logError(
         '[Android] Automatic Bluetooth reconnect failed: $error',
       );
+      return false;
+    }
+  }
+
+  Future<bool> _connectRememberedRadio(CompatibleDevice device) async {
+    final mac = device.mac.toUpperCase();
+    final bluetoothService = BluetoothService();
+    if (!mounted ||
+        !bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+      _cancelRadioReconnect(mac);
+      return false;
+    }
+    _broker.logInfo('Auto-reconnecting to ${device.name}...');
+    try {
+      final connectedId = await bluetoothService.connectToRadio(
+        device.mac,
+        device.name,
+        bluetoothType: device.bluetoothType,
+      );
+      if (!bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+        if (connectedId != null) {
+          await bluetoothService.disconnectRadio(connectedId);
+        }
+        _cancelRadioReconnect(mac);
+        return false;
+      }
+      return connectedId != null;
+    } catch (error) {
+      _broker.logError('Auto-reconnect to ${device.name} failed: $error');
       return false;
     }
   }

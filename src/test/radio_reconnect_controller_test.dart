@@ -97,6 +97,48 @@ void main() {
     });
   });
 
+  test('immediate startup reconnect is serialized with scheduled retries', () {
+    fakeAsync((time) {
+      final startupAttempt = Completer<bool>();
+      var scheduledAttempts = 0;
+      final controller = RadioReconnectController(
+        delays: _delays,
+        isRemembered: (_) => true,
+        isConnected: (_) => false,
+        attempt: (_) async {
+          scheduledAttempts++;
+          return true;
+        },
+      );
+
+      unawaited(
+        controller.attemptNow(
+          'AA:BB:CC:DD:EE:FF',
+          operation: (_) => startupAttempt.future,
+        ),
+      );
+      time.flushMicrotasks();
+      expect(controller.hasWork, isTrue);
+
+      // State notifications and a repeated startup request cannot create a
+      // timer or start a second connection while the immediate connect runs.
+      controller.schedule('aa:bb:cc:dd:ee:ff');
+      unawaited(controller.attemptNow('aa:bb:cc:dd:ee:ff'));
+      expect(scheduledAttempts, 0);
+      expect(controller.attemptsFor('aa:bb:cc:dd:ee:ff'), 0);
+      expect(time.nonPeriodicTimerCount, 0);
+
+      startupAttempt.complete(false);
+      time.flushMicrotasks();
+      expect(controller.attemptsFor('aa:bb:cc:dd:ee:ff'), 1);
+      time.elapse(const Duration(seconds: 2));
+      time.flushMicrotasks();
+      expect(scheduledAttempts, 1);
+      expect(controller.hasWork, isFalse);
+      controller.dispose();
+    });
+  });
+
   test(
     'success resets backoff and explicit disconnect cancels pending retry',
     () {

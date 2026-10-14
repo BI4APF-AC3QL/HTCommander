@@ -15,6 +15,7 @@ class RadioReconnectController {
     required this.isConnected,
     required this.attempt,
     this.onChanged,
+    this.onScheduled,
     this.onExhausted,
     this.onError,
   }) : delays = List.unmodifiable(delays);
@@ -24,6 +25,8 @@ class RadioReconnectController {
   final bool Function(String macAddress) isConnected;
   final RadioReconnectAttempt attempt;
   final void Function()? onChanged;
+  final void Function(String macAddress, Duration delay, int attempt)?
+      onScheduled;
   final void Function(String macAddress, int attempts)? onExhausted;
   final void Function(String macAddress, Object error)? onError;
 
@@ -62,7 +65,8 @@ class RadioReconnectController {
     }
 
     _attemptCounts[mac] = attemptIndex + 1;
-    _timers[mac] = Timer(delays[attemptIndex], () {
+    final delay = delays[attemptIndex];
+    _timers[mac] = Timer(delay, () {
       _timers.remove(mac);
       if (_disposed || !isRemembered(mac)) {
         cancel(mac);
@@ -76,9 +80,33 @@ class RadioReconnectController {
       // platform timer implementation delivers an already-cancelled callback.
       if (!_inFlight.add(mac)) return;
       onChanged?.call();
-      unawaited(_runAttempt(mac));
+      unawaited(_runAttempt(mac, attempt));
     });
+    onScheduled?.call(mac, delay, attemptIndex + 1);
     onChanged?.call();
+  }
+
+  /// Runs one immediate attempt through the same in-flight guard as a timer.
+  /// An optional operation lets startup reuse its already-discovered device
+  /// instead of performing a second Bluetooth scan.
+  Future<void> attemptNow(
+    String macAddress, {
+    RadioReconnectAttempt? operation,
+  }) async {
+    if (_disposed) return;
+    final mac = macAddress.trim().toUpperCase();
+    if (mac.isEmpty || !isRemembered(mac) || isConnected(mac)) {
+      cancel(mac);
+      return;
+    }
+    if (_inFlight.contains(mac)) return;
+
+    // If a disconnect event queued a timer while startup discovery was still
+    // running, treat this immediate attempt as that pending retry.
+    _timers.remove(mac)?.cancel();
+    if (!_inFlight.add(mac)) return;
+    onChanged?.call();
+    await _runAttempt(mac, operation ?? attempt);
   }
 
   /// Cancels a pending timer while preserving the retry count.
@@ -104,10 +132,10 @@ class RadioReconnectController {
     if (hadTimer || hadAttempts || hadExhaustion) onChanged?.call();
   }
 
-  Future<void> _runAttempt(String mac) async {
+  Future<void> _runAttempt(String mac, RadioReconnectAttempt operation) async {
     var succeeded = false;
     try {
-      succeeded = await attempt(mac);
+      succeeded = await operation(mac);
     } catch (error) {
       onError?.call(mac, error);
     } finally {
