@@ -23,36 +23,6 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
 
-        // Android phones use the compact layout, where the radio controls and
-        // the most-used functions are opened from the narrow side navigation.
-        // Exercise those entries on the emulator so a successful server test
-        // also proves the phone-sized app shell is interactive.
-        final mobileNavigation = find.byKey(
-          const ValueKey<String>('main_tab_navigation'),
-        );
-        expect(mobileNavigation, findsOneWidget);
-        for (final tab in const <String>[
-          'Radio',
-          'Comms',
-          'Audio',
-          'APRS',
-          'Map',
-        ]) {
-          final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
-          expect(
-            entry,
-            findsOneWidget,
-            reason: '$tab should be in phone navigation',
-          );
-          expect(
-            entry.hitTestable(),
-            findsOneWidget,
-            reason: '$tab should be visible and tappable on a phone-sized screen',
-          );
-          await tester.tap(entry);
-          await tester.pump(const Duration(milliseconds: 350));
-        }
-
         final handler = await tester.runAsync(() async {
           final deadline = DateTime.now().add(const Duration(seconds: 120));
           while (DataBroker.getDataHandler<WebServerHandler>(
@@ -76,6 +46,41 @@ void main() {
           isNotNull,
           reason: 'Android SQLite initialization must succeed before startup',
         );
+
+        // Android phones use the compact layout, where the radio controls and
+        // the most-used functions are opened from the narrow side navigation.
+        // Wait for asynchronous app startup to replace its splash screen, then
+        // exercise those entries so the server test also covers the phone UI.
+        final mobileNavigation = find.byKey(
+          const ValueKey<String>('main_tab_navigation'),
+        );
+        for (var attempt = 0;
+            attempt < 100 && mobileNavigation.evaluate().isEmpty;
+            attempt++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(mobileNavigation, findsOneWidget);
+        for (final tab in const <String>[
+          'Radio',
+          'Comms',
+          'Audio',
+          'APRS',
+          'Map',
+        ]) {
+          final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
+          expect(
+            entry,
+            findsOneWidget,
+            reason: '$tab should be in phone navigation',
+          );
+          expect(
+            entry.hitTestable(),
+            findsOneWidget,
+            reason: '$tab should be visible and tappable on a phone-sized screen',
+          );
+          await tester.tap(entry);
+          await tester.pump(const Duration(milliseconds: 350));
+        }
 
         final server = handler!;
         HttpClient? http;
