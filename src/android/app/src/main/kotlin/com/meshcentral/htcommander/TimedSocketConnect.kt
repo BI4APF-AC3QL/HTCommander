@@ -26,18 +26,27 @@ internal object TimedSocketConnect {
         try {
             task.get(timeoutMs, TimeUnit.MILLISECONDS)
         } catch (error: TimeoutException) {
-            closeQuietly(socket, close)
+            closeInBackground(socket, "$threadName-close", close)
             task.cancel(true)
             throw SocketTimeoutException("RFCOMM connect exceeded ${timeoutMs}ms")
         } catch (error: ExecutionException) {
+            closeInBackground(socket, "$threadName-close", close)
             val cause = error.cause
             if (cause is Exception) throw cause
             throw IOException("RFCOMM connect failed", cause)
         } catch (error: InterruptedException) {
-            closeQuietly(socket, close)
+            closeInBackground(socket, "$threadName-close", close)
             task.cancel(true)
             Thread.currentThread().interrupt()
             throw IOException("RFCOMM connect was interrupted", error)
+        }
+    }
+
+    /** BluetoothSocket.close() may block inside some vendor Bluetooth services. */
+    fun <T> closeInBackground(socket: T, threadName: String, close: (T) -> Unit) {
+        Thread({ closeQuietly(socket, close) }, threadName).apply {
+            isDaemon = true
+            start()
         }
     }
 

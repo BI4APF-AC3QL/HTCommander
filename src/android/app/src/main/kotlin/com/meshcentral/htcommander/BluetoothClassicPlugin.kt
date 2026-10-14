@@ -454,25 +454,16 @@ class BluetoothClassicPlugin(
                     }
                 }
                 if (connectionAttempt.isCancelled) {
-                    try {
-                        socket.close()
-                    } catch (_: IOException) {
-                    }
+                    closeSocketInBackground(socket, normalized)
                     mainHandler.post { if (!disposed) result.success(false) }
                     return@Thread
                 }
                 if (disposed) {
-                    try {
-                        socket.close()
-                    } catch (_: IOException) {
-                    }
+                    closeSocketInBackground(socket, normalized)
                     return@Thread
                 }
                 if (existing != null) {
-                    try {
-                        socket.close()
-                    } catch (_: IOException) {
-                    }
+                    closeSocketInBackground(socket, normalized)
                     mainHandler.post { if (!disposed) result.success(true) }
                     return@Thread
                 }
@@ -481,7 +472,7 @@ class BluetoothClassicPlugin(
                 connection?.let { created ->
                     synchronized(lifecycleLock) {
                         if (map.remove(normalized, created)) {
-                            created.close(DISCONNECT_WRITE_FAILED)
+                            created.closeInBackground(DISCONNECT_WRITE_FAILED)
                         }
                     }
                 }
@@ -491,10 +482,7 @@ class BluetoothClassicPlugin(
                         connectionAttempt.release(candidate)
                     }
                 }
-                try {
-                    socket?.close()
-                } catch (_: IOException) {
-                }
+                socket?.let { closeSocketInBackground(it, normalized) }
                 val message = "${e.javaClass.simpleName}: ${e.message ?: "RFCOMM connect failed"}"
                 mainHandler.post {
                     if (!disposed) {
@@ -540,6 +528,8 @@ class BluetoothClassicPlugin(
 
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
             var candidate: BluetoothSocket? = null
+            var timedConnectStarted = false
+            var timedConnectReturned = false
             return try {
                 if (disposed || connectionAttempt.isCancelled) {
                     throw IOException("Bluetooth connection attempt was cancelled")
@@ -557,6 +547,7 @@ class BluetoothClassicPlugin(
                     }
                     connectingSockets.add(candidate)
                 }
+                timedConnectStarted = true
                 TimedSocketConnect.connect(
                     socket = candidate,
                     timeoutMs = minOf(CONNECT_ATTEMPT_TIMEOUT_MS, remainingMs),
@@ -564,6 +555,7 @@ class BluetoothClassicPlugin(
                     connect = { it.connect() },
                     close = { it.close() },
                 )
+                timedConnectReturned = true
                 if (connectionAttempt.isCancelled) {
                     throw IOException("Bluetooth connection attempt was cancelled")
                 }
@@ -574,15 +566,17 @@ class BluetoothClassicPlugin(
                 if (!disposed && !connectionAttempt.isCancelled) {
                     Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
                 }
-                candidate?.let { socket ->
+                candidate?.let { failedSocket ->
                     synchronized(lifecycleLock) {
-                        connectingSockets.remove(socket)
-                        connectionAttempt.release(socket)
+                        connectingSockets.remove(failedSocket)
+                        connectionAttempt.release(failedSocket)
                     }
-                }
-                try {
-                    candidate?.close()
-                } catch (_: IOException) {
+                    // TimedSocketConnect schedules cleanup for failures from
+                    // the blocking connect call. Handle sockets rejected before
+                    // connect, and ones cancelled just after connect, here.
+                    if (!timedConnectStarted || timedConnectReturned) {
+                        closeSocketInBackground(failedSocket, address)
+                    }
                 }
                 if (!disposed && !connectionAttempt.isCancelled &&
                     SystemClock.elapsedRealtime() < deadline &&
@@ -653,6 +647,14 @@ class BluetoothClassicPlugin(
         }?.let { return it }
 
         throw lastError ?: IOException("RFCOMM connect failed")
+    }
+
+    private fun closeSocketInBackground(socket: BluetoothSocket, label: String) {
+        TimedSocketConnect.closeInBackground(
+            socket = socket,
+            threadName = "HTCommander-BT-close-${label.takeLast(5)}",
+            close = { it.close() },
+        )
     }
 
     private fun disconnect(
@@ -914,29 +916,39 @@ class BluetoothClassicPlugin(
 
         @Synchronized
         private fun handleClosed(reason: String) {
-            if (closed) return
-            closed = true
-            pendingData.clear()
-            synchronized(this) { dataDeliveryScheduled = false }
-            val map = if (audio) audioConnections else controlConnections
-            map.remove(address)
-            try {
-                socket.close()
-            } catch (_: IOException) {
-            }
-            writer.close()
-            postEvent(audio, "disconnected", address, reason = reason)
+            markClosed(reason, closeSocketInBackground = false, removeFromMap = true)
+        }
+
+        @Synchronized
+        fun closeInBackground(reason: String = DISCONNECT_REQUESTED) {
+            markClosed(reason, closeSocketInBackground = true, removeFromMap = false)
         }
 
         @Synchronized
         fun close(reason: String = DISCONNECT_REQUESTED) {
+            markClosed(reason, closeSocketInBackground = false, removeFromMap = false)
+        }
+
+        private fun markClosed(
+            reason: String,
+            closeSocketInBackground: Boolean,
+            removeFromMap: Boolean,
+        ) {
             if (closed) return
             closed = true
             pendingData.clear()
             synchronized(this) { dataDeliveryScheduled = false }
-            try {
-                socket.close()
-            } catch (_: IOException) {
+            if (removeFromMap) {
+                val map = if (audio) audioConnections else controlConnections
+                map.remove(address)
+            }
+            if (closeSocketInBackground) {
+                this@BluetoothClassicPlugin.closeSocketInBackground(socket, address)
+            } else {
+                try {
+                    socket.close()
+                } catch (_: IOException) {
+                }
             }
             writer.close()
             postEvent(audio, "disconnected", address, reason = reason)

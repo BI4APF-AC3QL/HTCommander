@@ -50,7 +50,9 @@ class RfcommConnectionAttemptsTest {
         assertTrue(connectingSocket.closed.get())
         val lateSocket = FakeSocket()
         assertFalse(attempt.track(lateSocket))
-        assertTrue(lateSocket.closed.get())
+        // A rejected socket remains caller-owned; the connection worker closes
+        // it asynchronously so a vendor close call cannot block that worker.
+        assertFalse(lateSocket.closed.get())
     }
 
     @Test

@@ -16,13 +16,11 @@ internal class RfcommConnectionAttempts {
         var isCancelled: Boolean = false
             private set
 
-        /** Attaches a socket unless cancellation has already been requested. */
+        /** Attaches a socket unless cancelled; a rejected socket stays caller-owned. */
         fun track(socket: Closeable): Boolean {
-            val accepted = synchronized(lock) {
+            return synchronized(lock) {
                 if (isCancelled) false else sockets.add(socket)
             }
-            if (!accepted) closeQuietly(socket)
-            return accepted
         }
 
         fun release(socket: Closeable) {
