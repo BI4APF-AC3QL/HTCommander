@@ -131,7 +131,18 @@ void main() {
           'position': DataBroker.getValueDynamic(1, 'RemotePositionStatus'),
         }),
       );
-      await temp.rename(status.path);
+      // On Windows, the browser can briefly hold the previous status file
+      // open while polling it. Retry the atomic replacement instead of
+      // failing the fixture on that transient sharing violation.
+      for (var attempt = 0; attempt < 10; attempt++) {
+        try {
+          await temp.rename(status.path);
+          return;
+        } on FileSystemException {
+          if (attempt == 9) rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      }
     }
 
     await report();
