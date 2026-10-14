@@ -39,17 +39,25 @@ jobs:
           flutter-version: '3.47.5'
           cache: true
 
-      - name: Install and validate
+      - name: Resolve Flutter dependencies
+        timeout-minutes: 10
         working-directory: src
-        run: |
-          flutter pub get --enforce-lockfile
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          flutter analyze --no-pub
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          flutter test --no-pub
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node test/remote_mobile_page_test.cjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze Flutter project
+        timeout-minutes: 10
+        working-directory: src
+        run: flutter analyze --no-pub
+
+      - name: Run Flutter tests
+        timeout-minutes: 20
+        working-directory: src
+        run: flutter test --no-pub
+
+      - name: Verify hosted mobile page
+        timeout-minutes: 5
+        working-directory: src
+        run: node test/remote_mobile_page_test.cjs
 
       - name: Verify real browser permissions and installed PWA window
         env:
