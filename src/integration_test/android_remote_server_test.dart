@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart' show FlutterError;
@@ -7,7 +9,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart' show ErrorWidget, ValueKey;
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
+import 'package:htcommander/radio/gaia_protocol.dart';
 import 'package:htcommander/services/data_broker.dart';
+import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -63,9 +67,11 @@ void main() {
         final mobileRadioTab = find.byKey(
           const ValueKey<String>('main_tab_Radio'),
         );
-        for (var attempt = 0;
-            attempt < 100 && mobileRadioTab.evaluate().isEmpty;
-            attempt++) {
+        for (
+          var attempt = 0;
+          attempt < 100 && mobileRadioTab.evaluate().isEmpty;
+          attempt++
+        ) {
           await tester.pump(const Duration(milliseconds: 100));
         }
         expect(
@@ -93,7 +99,8 @@ void main() {
           expect(
             entry.hitTestable(),
             findsOneWidget,
-            reason: '$tab should be visible and tappable on a phone-sized screen',
+            reason:
+                '$tab should be visible and tappable on a phone-sized screen',
           );
           await tester.tap(entry);
           await tester.pump(const Duration(milliseconds: 350));
@@ -230,6 +237,145 @@ void main() {
               await utf8.decoder.bind(remoteResponse).join(),
               contains('操作权'),
             );
+
+            // Exercise the same radio bridge used by Windows-hosted clients,
+            // but with a synthetic broker radio so this Android emulator test
+            // never touches Bluetooth hardware or transmits RF.
+            const syntheticRadioId = 190;
+            DataBroker.dispatch(
+              deviceId: 1,
+              name: 'ConnectedRadios',
+              data: const [
+                {
+                  'DeviceId': syntheticRadioId,
+                  'FriendlyName': 'Simulated radio',
+                },
+              ],
+            );
+            DataBroker.dispatch(
+              deviceId: 1,
+              name: 'SelectedRadioDeviceId',
+              data: syntheticRadioId,
+            );
+            DataBroker.dispatch(
+              deviceId: syntheticRadioId,
+              name: 'State',
+              data: 'Connected',
+            );
+
+            final rawCommandSeen = Completer<Uint8List>();
+            final brokerObserver = DataBrokerClient();
+            brokerObserver.subscribe(
+              deviceId: syntheticRadioId,
+              name: 'SendRawCommand',
+              callback: (_, _, value) {
+                if (!rawCommandSeen.isCompleted && value is Uint8List) {
+                  rawCommandSeen.complete(value);
+                }
+              },
+            );
+            WebSocket? radioSocket;
+            StreamController<Object?>? socketEvents;
+            StreamSubscription<Object?>? socketSubscription;
+            try {
+              radioSocket = await WebSocket.connect(
+                Uri(
+                  scheme: 'ws',
+                  host: '::1',
+                  port: port,
+                  path: '/websocket.aspx',
+                ).toString(),
+                headers: {
+                  'Origin': base.origin,
+                  'Cookie': 'htc_bridge=${session.value}',
+                },
+              );
+              socketEvents = StreamController<Object?>.broadcast();
+              socketSubscription = radioSocket.listen(socketEvents.add);
+
+              final radioList = socketEvents.stream
+                  .where((message) => message is String)
+                  .cast<String>()
+                  .firstWhere(
+                    (message) =>
+                        message.startsWith('radiolist:') &&
+                        message.contains('Simulated radio'),
+                  )
+                  .timeout(const Duration(seconds: 5));
+              // The initial snapshot can arrive during the WebSocket upgrade;
+              // rebroadcast after subscribing so the test observes live data.
+              DataBroker.dispatch(
+                deviceId: 1,
+                name: 'ConnectedRadios',
+                data: const [
+                  {
+                    'DeviceId': syntheticRadioId,
+                    'FriendlyName': 'Simulated radio',
+                  },
+                ],
+              );
+              await radioList;
+
+              final safeQuery = Uint8List.fromList([
+                0,
+                RadioCommandGroup.basic.value,
+                0,
+                RadioBasicCommand.getDevId.value,
+              ]);
+              radioSocket.add(safeQuery);
+              final forwardedQuery = await rawCommandSeen.future.timeout(
+                const Duration(seconds: 5),
+              );
+              expect(forwardedQuery, orderedEquals(safeQuery));
+
+              final responseBytes = Uint8List.fromList([
+                0x31,
+                0x32,
+                0x33,
+                0x34,
+              ]);
+              final relayedResponse = socketEvents.stream
+                  .where(
+                    (event) =>
+                        event is List<int> &&
+                        event.length == responseBytes.length &&
+                        List<int>.generate(
+                              responseBytes.length,
+                              (index) => event[index],
+                            ).toString() ==
+                            responseBytes.toString(),
+                  )
+                  .first
+                  .timeout(const Duration(seconds: 5));
+              DataBroker.dispatch(
+                deviceId: syntheticRadioId,
+                name: 'RawCommandRx',
+                data: responseBytes,
+                store: false,
+              );
+              final receivedResponse = await relayedResponse;
+              expect(receivedResponse, orderedEquals(responseBytes));
+            } finally {
+              await radioSocket?.close();
+              await socketSubscription?.cancel();
+              await socketEvents?.close();
+              brokerObserver.dispose();
+              DataBroker.dispatch(
+                deviceId: 1,
+                name: 'ConnectedRadios',
+                data: const <Object?>[],
+              );
+              DataBroker.dispatch(
+                deviceId: 1,
+                name: 'SelectedRadioDeviceId',
+                data: -1,
+              );
+              DataBroker.dispatch(
+                deviceId: syntheticRadioId,
+                name: 'State',
+                data: 'Disconnected',
+              );
+            }
 
             final appRequest = await http!.getUrl(base.resolve('/index.html'));
             appRequest.cookies.add(session);
