@@ -70,12 +70,6 @@ class BluetoothClassicPlugin(
         // fallback in listDevices() below.
         private val RADIO_SERVICE_UUIDS: Set<UUID> = setOf(AUDIO_UUID)
 
-        // Remembers the RFCOMM channel that last connected for a given radio
-        // address so reconnects can skip the channel scan. The radio's SDP
-        // record advertises an unstable channel, so the working channel is
-        // discovered by probing; caching it makes later connects near-instant.
-        private val lastGoodChannel =
-            ConcurrentHashMap<RfcommChannelCandidates.ServiceKey, Int>()
     }
 
     /** Updated by [MainActivity] so runtime permission prompts use the visible Activity. */
@@ -99,6 +93,16 @@ class BluetoothClassicPlugin(
     private val lifecycleLock = Any()
     private val connectingSockets = ConcurrentHashMap.newKeySet<BluetoothSocket>()
     private val connectionAttempts = RfcommConnectionAttempts()
+    // Persist successful channels privately so app/process restarts retain the
+    // fast reconnect path for radios whose SDP service channel is unstable.
+    private val rfcommChannelCache = RfcommChannelCache(
+        SharedPreferencesRfcommChannelStore(
+            context.getSharedPreferences(
+                "htcommander_rfcomm_channels",
+                Context.MODE_PRIVATE,
+            ),
+        ),
+    )
     private val deviceQueryExecutor = BoundedSerialExecutor(
         capacity = 2,
         threadName = "HTCommander-BT-discovery",
@@ -523,7 +527,6 @@ class BluetoothClassicPlugin(
     ): BluetoothSocket {
         var lastError: Exception? = null
         val address = device.address
-        val serviceKey = RfcommChannelCandidates.serviceKey(address, uuid)
         val deadline = SystemClock.elapsedRealtime() + CONNECT_TOTAL_TIMEOUT_MS
 
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
@@ -606,15 +609,18 @@ class BluetoothClassicPlugin(
             val channelFactory = insecureByChannel ?: return null
             return attempt("insecure-ch$channel") {
                 channelFactory.invoke(device, channel) as BluetoothSocket
-            }?.also { lastGoodChannel[serviceKey] = channel }
+            }?.also { rfcommChannelCache.remember(address, uuid, channel) }
         }
 
-        // 0. Fast path: reuse the channel that last worked for this radio so we
-        //    and this specific service so reconnects skip the full scan without
-        //    confusing the control and audio service channels.
-        val cachedChannel = lastGoodChannel[serviceKey]
+        // 0. Fast path: reuse the last working channel for this radio and
+        //    service so reconnects skip the full scan without mixing control
+        //    and audio service channels.
+        val cachedChannel = rfcommChannelCache.get(address, uuid)
         if (cachedChannel != null) {
             tryChannel(cachedChannel)?.let { return it }
+            if (insecureByChannel != null && !disposed && !connectionAttempt.isCancelled) {
+                rfcommChannelCache.forget(address, uuid, cachedChannel)
+            }
         }
 
         // 1. UUID/SDP-resolved sockets (channel comes from the radio's SDP
