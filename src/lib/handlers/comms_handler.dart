@@ -1482,11 +1482,11 @@ class CommsHandler {
     }
 
     var suffix = 0;
-    var filename = _recordingFilename(startTime, channel, suffix);
+    var filename = _buildRecordingFilename(startTime, channel, suffix);
     var fullPath = '${dir.path}${Platform.pathSeparator}$filename';
     while (File(fullPath).existsSync()) {
       suffix++;
-      filename = _recordingFilename(startTime, channel, suffix);
+      filename = _buildRecordingFilename(startTime, channel, suffix);
       fullPath = '${dir.path}${Platform.pathSeparator}$filename';
     }
     final recorder = WavClipWriter.open(fullPath, _recordingSampleRate);
@@ -1538,7 +1538,7 @@ class CommsHandler {
       // The channel may have been resolved from the audio frames after the file
       // was created; rename the file so it reflects the correct channel name.
       if (dir != null && channel.isNotEmpty) {
-        var desired = _recordingFilename(startTime, channel, suffix);
+        var desired = _buildRecordingFilename(startTime, channel, suffix);
         if (desired != filename) {
           try {
             final oldFile = File(
@@ -1550,7 +1550,7 @@ class CommsHandler {
             while (desiredPath != oldFile.path &&
                 await File(desiredPath).exists()) {
               collisionSuffix++;
-              desired = _recordingFilename(
+              desired = _buildRecordingFilename(
                 startTime,
                 channel,
                 collisionSuffix,
@@ -1646,7 +1646,7 @@ class CommsHandler {
     return '${date}_$clock';
   }
 
-  String _recordingFilename(DateTime time, String channel, int suffix) {
+  String _buildRecordingFilename(DateTime time, String channel, int suffix) {
     final numbered = suffix == 0 ? '' : '_$suffix';
     return 'Recording_${_formatTimestamp(time)}_${_sanitizeChannel(channel)}'
         '$numbered.wav';
