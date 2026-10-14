@@ -1561,12 +1561,21 @@ class _AudioTabState extends State<AudioTab>
     required List<DropdownMenuItem<String>> items,
     required ValueChanged<String?> onChanged,
   }) {
+    // The default choice is represented by the empty id. Some native
+    // enumerators also return that route, and buggy/stacked audio backends can
+    // report duplicate ids; DropdownButton requires every value to be unique.
+    final seenIds = <String>{''};
+    final selectableItems = <DropdownMenuItem<String>>[];
+    for (final item in items) {
+      final id = item.value;
+      if (id != null && seenIds.add(id)) selectableItems.add(item);
+    }
     final allItems = <DropdownMenuItem<String>>[
       DropdownMenuItem<String>(
         value: '',
         child: Text(AppLocalizations.of(context).audioDefault),
       ),
-      ...items,
+      ...selectableItems,
     ];
     final bool present = allItems.any((item) => item.value == value);
     final String effectiveValue = present ? value : '';
