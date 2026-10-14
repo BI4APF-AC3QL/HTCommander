@@ -71,6 +71,63 @@ Future<void> _verifyAndroidAgwpeLanBinding() async {
   }
 }
 
+Future<String> _verifyAndroidRemoteServerLanBinding(int port) async {
+  final addresses = (await NetworkInterface.list(
+    includeLoopback: false,
+    type: InternetAddressType.IPv4,
+  ))
+      .expand((interface) => interface.addresses)
+      .where(
+        (address) =>
+            address.type == InternetAddressType.IPv4 && !address.isLoopback,
+      )
+      .toList();
+  if (addresses.isEmpty) {
+    throw StateError(
+      'The Android emulator must expose a non-loopback IPv4 address',
+    );
+  }
+
+  final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+  try {
+    Object? lastError;
+    for (final address in addresses) {
+      try {
+        final request = await http.getUrl(
+          Uri(
+            scheme: 'http',
+            host: address.address,
+            port: port,
+            path: '/login',
+          ),
+        );
+        final response = await request.close().timeout(
+          const Duration(seconds: 3),
+        );
+        final body = await utf8.decoder.bind(response).join().timeout(
+          const Duration(seconds: 3),
+        );
+        if (response.statusCode == HttpStatus.ok &&
+            body.contains('远程访问密码')) {
+          return address.address;
+        }
+        lastError = StateError(
+          'HTTP ${response.statusCode} from ${address.address}',
+        );
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw StateError(
+      'Android remote server was not reachable through a LAN interface '
+      '(${addresses.map((address) => address.address).join(', ')}): '
+      '$lastError',
+    );
+  } finally {
+    http.close(force: true);
+  }
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -403,12 +460,22 @@ void main() {
           });
           expect(port, isNotNull, reason: 'the real HTTP listener must bind');
 
+          final lanAddress = await tester.runAsync(
+            () => _verifyAndroidRemoteServerLanBinding(port!),
+          );
+          expect(
+            lanAddress,
+            isNotEmpty,
+            reason:
+                'the Android server must serve its login page on a LAN address',
+          );
+
           // The shell acceptance script waits for this marker, presses HOME,
           // and probes the forwarded server from the host while this test
           // remains alive. This exercises the foreground-service path rather
           // than merely checking the listener while MainActivity is visible.
           // ignore: avoid_print
-          print('HTC_ANDROID_BG_ACCEPTANCE_READY:$port');
+          print('HTC_ANDROID_BG_ACCEPTANCE_READY:$port:$lanAddress');
           await tester.runAsync(() async {
             // The host-side script runs Chromium against the authenticated
             // mobile page, then loads Flutter's compiled bundle. That bundle
