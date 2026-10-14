@@ -138,7 +138,14 @@ void main() {
                 '$tab should be visible and tappable on a phone-sized screen',
           );
           await tester.tap(entry);
-          await tester.pump(const Duration(milliseconds: 350));
+          // Wait for the tab-change notification instead of assuming a single
+          // long pump completes the animation on a slower Android emulator.
+          for (var frame = 0; frame < 20; frame++) {
+            await tester.pump(const Duration(milliseconds: 50));
+            if (DataBroker.getValue<String>(0, 'SelectedTabName', '') == tab) {
+              break;
+            }
+          }
           expect(
             DataBroker.getValue<String>(0, 'SelectedTabName', ''),
             tab,
