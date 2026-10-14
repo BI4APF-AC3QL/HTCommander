@@ -553,7 +553,7 @@ Future<void> _startApp(List<String> args) async {
 
   // Android can provide live phone GPS fixes through the same persisted
   // location source used by the radio, APRS-IS and satellite tracker.
-  if (Platform.isAndroid) {
+  if (!kIsWeb && Platform.isAndroid) {
     final phoneGpsHandler = AndroidPhoneGpsHandler()..init();
     DataBroker.addDataHandler('AndroidPhoneGpsHandler', phoneGpsHandler);
   }
@@ -1728,7 +1728,7 @@ class _MainFormState extends State<MainForm>
   }
 
   void _scheduleRadioReconnect(String macAddress) {
-    if (!Platform.isAndroid || !mounted) return;
+    if (kIsWeb || !Platform.isAndroid || !mounted) return;
     final mac = macAddress.trim().toUpperCase();
     if (mac.isEmpty ||
         !BluetoothService().previouslyConnectedRadioMacs().contains(mac) ||
@@ -1825,7 +1825,7 @@ class _MainFormState extends State<MainForm>
   }
 
   void _syncAndroidReconnectForegroundService() {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     final shouldRun =
         _radioReconnectTimers.isNotEmpty || _radioReconnectInFlight.isNotEmpty;
     if (shouldRun == _radioReconnectServiceRequested) return;
@@ -4892,7 +4892,7 @@ class _MainFormState extends State<MainForm>
       });
       _showInfoDialog(
         AppLocalizations.of(context).connectNoRadiosTitle,
-        Platform.isAndroid
+        (!kIsWeb && Platform.isAndroid)
             ? AppLocalizations.of(context).connectNoRadiosAndroidBody
             : AppLocalizations.of(context).connectNoRadiosBody,
       );
@@ -5053,7 +5053,7 @@ class _MainFormState extends State<MainForm>
         title: Text(l10n.connectBluetoothOffTitle),
         content: Text(l10n.connectBluetoothOffBody),
         actions: [
-          if (Platform.isAndroid)
+          if (!kIsWeb && Platform.isAndroid)
             TextButton(
               onPressed: () async {
                 Navigator.of(context).pop();

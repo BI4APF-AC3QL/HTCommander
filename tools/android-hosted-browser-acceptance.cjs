@@ -103,6 +103,11 @@ async function main() {
       null,
       { timeout: 120000 },
     );
+    const startupText = await page.locator('body').innerText();
+    if (/could not start|无法启动|Unsupported operation/i.test(startupText)) {
+      throw new Error('Flutter app startup failed: ' +
+        startupText.replace(/\s+/g, ' ').slice(0, 600));
+    }
     await page.waitForFunction(
       () => Boolean(document.querySelector('flutter-view')?.shadowRoot?.querySelector('canvas') ||
         document.querySelector('flutter-view canvas, flt-glass-pane canvas, canvas')),
@@ -142,6 +147,7 @@ async function main() {
     evidence.pageErrors = errors;
     try {
       evidence.currentPath = new URL(page.url()).pathname;
+      evidence.visibleText = (await page.locator('body').innerText()).slice(0, 1200);
       await page.screenshot({ path: path.join(outputDir, 'failure.png'), fullPage: true });
     } catch (_) {
       // Keep diagnostics available even if Chromium exited before rendering.
