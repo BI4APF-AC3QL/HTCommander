@@ -8,16 +8,35 @@ adb logcat -c
 adb install -r "$repo_root/src/build/app/outputs/flutter-apk/app-x86_64-release.apk"
 adb shell am start -n com.meshcentral.htcommander/.MainActivity
 
+app_process_ids() {
+  local pids
+  pids="$(adb shell pidof com.meshcentral.htcommander 2>/dev/null | tr -d '\r' || true)"
+  if [[ -n "$pids" ]]; then
+    printf '%s\n' "$pids"
+    return
+  fi
+
+  adb shell ps -A -o PID,NAME 2>/dev/null \
+    | awk '$2 == "com.meshcentral.htcommander" || index($2, "com.meshcentral.htcommander:") == 1 { print $1 }' \
+    | tr -d '\r'
+}
+
 for attempt in {1..45}; do
-  if adb shell pidof com.meshcentral.htcommander >/dev/null; then
+  app_pids="$(app_process_ids)"
+  if [[ -n "$app_pids" ]]; then
     break
   fi
   sleep 1
 done
 
-if ! adb shell pidof com.meshcentral.htcommander >/dev/null; then
-  echo '::error::HTCommander exited before starting on the Android emulator.'
-  adb logcat -d -t 3000 | tail -n 3000
+if [[ -z "${app_pids:-}" ]]; then
+  echo '::error::HTCommander process was not found after launching on the Android emulator.'
+  adb shell ps -A -o PID,NAME || true
+  adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|com\.meshcentral\.htcommander' | tail -n 80 || true
+  adb logcat -d -b crash -v threadtime || true
+  adb logcat -d -v threadtime \
+    | grep -E 'com\.meshcentral\.htcommander|AndroidRuntime|FATAL EXCEPTION|Fatal signal|ActivityTaskManager|ActivityManager' \
+    | tail -n 500 || true
   exit 1
 fi
 
@@ -28,7 +47,17 @@ if grep -Fq 'Process: com.meshcentral.htcommander' <<< "$crash_log"; then
   printf '%s\n' "$crash_log"
   exit 1
 fi
-echo 'HTCommander x86_64 release APK installed and remained running for 15 seconds.'
+app_pids="$(app_process_ids)"
+if [[ -z "$app_pids" ]]; then
+  echo '::error::HTCommander stopped running during the 15-second Android emulator launch check.'
+  adb shell ps -A -o PID,NAME || true
+  adb logcat -d -b crash -v threadtime || true
+  adb logcat -d -v threadtime \
+    | grep -E 'com\.meshcentral\.htcommander|AndroidRuntime|FATAL EXCEPTION|Fatal signal|ActivityTaskManager|ActivityManager' \
+    | tail -n 500 || true
+  exit 1
+fi
+echo "HTCommander x86_64 release APK installed and remained running for 15 seconds (PID(s): ${app_pids//$'\n'/, })."
 
 # The release APK can use a repository signing key, while `flutter test` signs
 # the integration-test APK with the debug key. The emulator is disposable, so
