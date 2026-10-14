@@ -139,6 +139,16 @@ void main() {
           );
           await tester.tap(entry);
           await tester.pump(const Duration(milliseconds: 350));
+          expect(
+            DataBroker.getValue<String>(0, 'SelectedTabName', ''),
+            tab,
+            reason: '$tab must become the active page on Android',
+          );
+          expect(
+            find.byType(ErrorWidget),
+            findsNothing,
+            reason: '$tab must build without an Android page error',
+          );
         }
 
         // Restore the receive-first profile before starting the server test.
