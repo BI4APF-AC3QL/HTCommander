@@ -32,8 +32,20 @@ async function main() {
   });
   const page = await context.newPage();
   const errors = [];
+  const consoleDiagnostics = [];
   const resources = {};
   page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if ((message.type() === 'error' || message.type() === 'warning') &&
+        consoleDiagnostics.length < 40) {
+      consoleDiagnostics.push(`${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on('requestfailed', (request) => {
+    if (consoleDiagnostics.length < 40) {
+      consoleDiagnostics.push(`request failed: ${request.url()} (${request.failure()?.errorText || 'unknown'})`);
+    }
+  });
   page.on('response', (response) => {
     const pathname = new URL(response.url()).pathname;
     if (pathname.endsWith('/main.dart.js')) resources.mainDartJs = response.status();
@@ -179,6 +191,11 @@ async function main() {
     assert.equal(resources.mainDartJs, 200, 'compiled Flutter app must load from APK');
     assert.equal(resources.canvaskitWasm, 200, 'CanvasKit renderer must load from APK');
     assert.deepEqual(errors, [], 'hosted Flutter app must have no uncaught JavaScript errors');
+    assert.deepEqual(
+      consoleDiagnostics.filter((entry) => entry.startsWith('error:')),
+      [],
+      'hosted Flutter app must not report browser console errors',
+    );
     const canvas = await page.evaluate(() => {
       const pending = [document];
       let element;
@@ -213,6 +230,7 @@ async function main() {
     evidence.failure = error.message;
     evidence.resources = resources;
     evidence.pageErrors = errors;
+    evidence.consoleDiagnostics = consoleDiagnostics;
     try {
       evidence.currentPath = new URL(page.url()).pathname;
       evidence.visibleText = (await page.locator('body').innerText()).slice(0, 1200);
