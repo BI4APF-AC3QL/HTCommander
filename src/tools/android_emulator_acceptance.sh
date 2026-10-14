@@ -84,25 +84,26 @@ timeout --signal=TERM --kill-after=30s 8m flutter drive \
   -d emulator-5554 >"$drive_log" 2>&1 &
 drive_pid=$!
 
-ready=0
-for attempt in {1..180}; do
-  if adb logcat -d -s flutter:I | grep -F 'HTC_ANDROID_BG_ACCEPTANCE_READY:' >/dev/null; then
-    ready=1
-    break
-  fi
-  if ! kill -0 "$drive_pid" 2>/dev/null; then
-    cat "$drive_log"
-    echo '::error::Android integration test exited before the background-server checkpoint.'
-    exit 1
-  fi
-  sleep 1
-done
-
-if [[ "$ready" -ne 1 ]]; then
+wait_for_flutter_marker() {
+  local marker="$1"
+  local checkpoint="$2"
+  for attempt in {1..180}; do
+    if adb logcat -d -s flutter:I | grep -F "$marker" >/dev/null; then
+      return 0
+    fi
+    if ! kill -0 "$drive_pid" 2>/dev/null; then
+      cat "$drive_log"
+      echo "::error::Android integration test exited before the ${checkpoint} checkpoint."
+      return 1
+    fi
+    sleep 1
+  done
   cat "$drive_log"
-  echo '::error::Timed out waiting for the Android server background checkpoint.'
-  exit 1
-fi
+  echo "::error::Timed out waiting for the Android ${checkpoint} checkpoint."
+  return 1
+}
+
+wait_for_flutter_marker 'HTC_ANDROID_BG_ACCEPTANCE_READY:' 'background-server'
 
 adb shell input keyevent KEYCODE_HOME
 sleep 2
@@ -130,8 +131,39 @@ fi
 echo 'Android foreground service remained active and served /login after MainActivity moved to the background.'
 
 adb shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
+wait_for_flutter_marker 'HTC_ANDROID_MQTT_BG_ACCEPTANCE_READY' 'MQTT-background'
+
+adb shell input keyevent KEYCODE_HOME
+sleep 2
+service_dump="$(adb shell dumpsys activity services)"
+if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+  cat "$drive_log"
+  echo '::error::Android foreground service stopped when Home Assistant MQTT was the only active network feature.'
+  exit 1
+fi
+
+mqtt_only_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18735/login || true)"
+if [[ "$mqtt_only_status" == '200' ]]; then
+  cat "$drive_log"
+  echo '::error::Android web server was still listening after its setting was disabled.'
+  exit 1
+fi
+echo 'Android foreground service remained active for Home Assistant MQTT with the web server stopped.'
+
+adb shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
 if ! wait "$drive_pid"; then
   cat "$drive_log"
   exit 1
 fi
 cat "$drive_log"
+
+for attempt in {1..10}; do
+  service_dump="$(adb shell dumpsys activity services)"
+  if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+    echo 'Android foreground service stopped after Home Assistant MQTT was disabled.'
+    exit 0
+  fi
+  sleep 1
+done
+echo '::error::Android foreground service stayed active after all test network features were disabled.'
+exit 1

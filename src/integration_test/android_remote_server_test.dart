@@ -471,6 +471,59 @@ void main() {
               'application/wasm',
             );
             await wasmResponse.drain<void>();
+
+            // Exercise the Android-only foreground-service reason used by
+            // Home Assistant after the web server is stopped. The broker is
+            // loopback-only so the emulator does not contact an external host.
+            DataBroker.dispatch(
+              deviceId: 0,
+              name: 'homeAssistantMqttUrl',
+              data: 'mqtt://127.0.0.1:65534',
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: 0,
+              name: 'homeAssistantEnabled',
+              data: 1,
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: 0,
+              name: 'webServerEnabled',
+              data: 0,
+              store: false,
+            );
+            final deadline = DateTime.now().add(const Duration(seconds: 10));
+            while (server.boundPort != null &&
+                DateTime.now().isBefore(deadline)) {
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+            }
+            final serverStopped = server.boundPort == null;
+            expect(
+              serverStopped,
+              isTrue,
+              reason: 'Home Assistant must keep the service without HTTP server',
+            );
+
+            // The shell runner sends HOME, verifies the foreground service,
+            // then returns to this test. A connected MQTT broker is not needed
+            // to verify that the opted-in background session stays alive.
+            // ignore: avoid_print
+            print('HTC_ANDROID_MQTT_BG_ACCEPTANCE_READY');
+            await Future<void>.delayed(const Duration(seconds: 15));
+            DataBroker.dispatch(
+              deviceId: 0,
+              name: 'homeAssistantEnabled',
+              data: 0,
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: 0,
+              name: 'homeAssistantMqttUrl',
+              data: '',
+              store: true,
+              allowEmpty: true,
+            );
           });
         } finally {
           http?.close(force: true);
