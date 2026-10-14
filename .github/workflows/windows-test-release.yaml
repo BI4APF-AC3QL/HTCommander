@@ -152,7 +152,9 @@ jobs:
           New-Item -ItemType Directory -Force "$buildDir/docs" | Out-Null
           Copy-Item docs/rolling-*.md,docs/remote-*.md,docs/aprs-*.md,docs/windows-*.md,docs/radio-link-diagnostics.md,docs/phone-remote-control.md,docs/diagnostics-and-offline-simulation.md "$buildDir/docs"
           Copy-Item docs/android-radio-server.md,docs/android-device-acceptance.md "$buildDir/docs"
-          foreach ($guidePath in @('简单配置方法.md', 'docs/android-radio-server.md')) {
+          New-Item -ItemType Directory -Force "$buildDir/docs/blogs" | Out-Null
+          Copy-Item docs/blogs/home-assistant-mqtt.md "$buildDir/docs/blogs"
+          foreach ($guidePath in @('简单配置方法.md', 'docs/android-radio-server.md', 'docs/blogs/home-assistant-mqtt.md')) {
             $guideFile = Join-Path $buildDir $guidePath
             $guideDirectory = Split-Path $guideFile -Parent
             $guideText = Get-Content -LiteralPath $guideFile -Raw -Encoding utf8

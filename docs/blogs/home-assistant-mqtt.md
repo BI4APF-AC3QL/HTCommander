@@ -276,6 +276,7 @@ Connect a second radio and a second device appears alongside it.
 
 *This post describes the Home Assistant integration as it's being built. The
 NodeJS proof-of-concept it grew out of lives in
-[`reference/HtStation`](../../reference/HtStation); the HTCommander version folds
+[`reference/HtStation`](https://github.com/BI4APF-AC3QL/HTCommander/tree/main/reference/HtStation);
+the HTCommander version folds
 the same discovery-and-bridge idea into the app's DataBroker and multi-radio
 model.*
