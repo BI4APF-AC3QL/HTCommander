@@ -33,6 +33,12 @@ Android 13 及以上优先使用系统离线语音识别；Android 12 及更早�
 
 局域网 HTTP 可用于登录、收听及控制，但 Android 浏览器会限制非安全页面的麦克风和定位等能力。如需在外网使用，建议接入 VPN 或将 Android 端口经 HTTPS 反向代理发布；不要直接把无 TLS 的 8080 暴露到公网。手机浏览器的麦克风和定位功能需要可信 HTTPS 页面。卫星下行跟踪可由 Android 本机使用观测位置；网页远控的数据范围仍取决于本机与浏览器权限。
 
+## 连接 Home Assistant
+
+Android 版支持与 Windows、Linux、macOS 相同的 Home Assistant MQTT 桥接，可将已连接电台发布到 MQTT Discovery，并从 Home Assistant 控制电台音量、静噪、扫描、双守候和信道。打开“设置 → 服务器 → Home Assistant”，填写 MQTT Broker 地址和账号，点击“测试”后保存并开启桥接。详细的 Mosquitto 与 Home Assistant 设置步骤见 [Home Assistant MQTT 配置指南](blogs/home-assistant-mqtt.md)。
+
+桥接开启且已填写 Broker 地址时，Android 会显示常驻通知并保持后台服务运行，以维持 MQTT 连接；这会增加耗电。连接远端 Broker 时请使用 TLS（通常是 `mqtts://`），不要在不可信网络中明文传输 MQTT 密码。关闭 Home Assistant 桥接后，若没有其他后台功能运行，服务会释放。
+
 从源码本地构建 Android 包时，先运行 `flutter pub get` 和 `python tools/stage_android_web_assets.py --clean`，再运行 `flutter build web --release --base-href / --dart-define=HTC_HOSTED=true --no-wasm-dry-run`，接着运行 `python tools/stage_android_web_assets.py` 和 `python tools/stage_android_web_assets.py --prepare-package`，最后运行 `flutter build apk --release` 或 `flutter build appbundle --release`。完成后运行 `python tools/stage_android_web_assets.py --restore-package` 还原临时修改的 `pubspec.yaml`。清理步骤避免上次打包的 Web 文件被再次嵌入新 Web 构建；显式声明嵌套目录可确保 CanvasKit、地图和插件资源进入 APK；官方 Android CI 和发布工作流会自动执行这些步骤。
 
 ## 平台边界

@@ -6,6 +6,58 @@ void main() {
   tearDown(DataBroker.reset);
 
   test(
+    'keeps Android foreground service active for configured Home Assistant MQTT',
+    () async {
+      var startCalls = 0;
+      var stopCalls = 0;
+      final handler = AndroidNetworkServicesHandler(
+        startService: () async {
+          startCalls++;
+        },
+        stopService: () async {
+          stopCalls++;
+        },
+      );
+      Future<void> settle() =>
+          Future<void>.delayed(const Duration(milliseconds: 10));
+
+      try {
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'homeAssistantEnabled',
+          data: 1,
+          store: true,
+        );
+        handler.init();
+        await settle();
+        expect(startCalls, 0, reason: 'an empty broker URL starts no client');
+
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'homeAssistantMqttUrl',
+          data: 'mqtt://broker.example:1883',
+          store: true,
+        );
+        await settle();
+        expect(startCalls, 1);
+        expect(stopCalls, 0);
+
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'homeAssistantEnabled',
+          data: 0,
+          store: true,
+        );
+        await settle();
+        expect(startCalls, 1);
+        expect(stopCalls, 1);
+      } finally {
+        await handler.dispose();
+      }
+    },
+  );
+
+  test(
     'retries a failed start and keeps service for either network feature',
     () async {
       var startAttempts = 0;
@@ -169,42 +221,45 @@ void main() {
     },
   );
 
-  test('keeps Android foreground service alive during Winlink TCP retries', () async {
-    var startCalls = 0;
-    var stopCalls = 0;
-    final handler = AndroidNetworkServicesHandler(
-      startService: () async {
-        startCalls++;
-      },
-      stopService: () async {
-        stopCalls++;
-      },
-    );
-    Future<void> settle() =>
-        Future<void>.delayed(const Duration(milliseconds: 10));
-
-    try {
-      handler.init();
-      DataBroker.dispatch(
-        deviceId: 1,
-        name: 'WinlinkBusy',
-        data: true,
-        store: false,
+  test(
+    'keeps Android foreground service alive during Winlink TCP retries',
+    () async {
+      var startCalls = 0;
+      var stopCalls = 0;
+      final handler = AndroidNetworkServicesHandler(
+        startService: () async {
+          startCalls++;
+        },
+        stopService: () async {
+          stopCalls++;
+        },
       );
-      await settle();
-      expect(startCalls, 1);
-      expect(stopCalls, 0);
+      Future<void> settle() =>
+          Future<void>.delayed(const Duration(milliseconds: 10));
 
-      DataBroker.dispatch(
-        deviceId: 1,
-        name: 'WinlinkBusy',
-        data: false,
-        store: false,
-      );
-      await settle();
-      expect(stopCalls, 1);
-    } finally {
-      await handler.dispose();
-    }
-  });
+      try {
+        handler.init();
+        DataBroker.dispatch(
+          deviceId: 1,
+          name: 'WinlinkBusy',
+          data: true,
+          store: false,
+        );
+        await settle();
+        expect(startCalls, 1);
+        expect(stopCalls, 0);
+
+        DataBroker.dispatch(
+          deviceId: 1,
+          name: 'WinlinkBusy',
+          data: false,
+          store: false,
+        );
+        await settle();
+        expect(stopCalls, 1);
+      } finally {
+        await handler.dispose();
+      }
+    },
+  );
 }

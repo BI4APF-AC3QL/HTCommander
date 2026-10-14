@@ -32,6 +32,7 @@ class AndroidNetworkServicesHandler {
       names: const [
         'agwpeServerEnabled',
         'homeAssistantEnabled',
+        'homeAssistantMqttUrl',
         'AprsIsEnabled',
       ],
       callback: _onSettingChanged,
@@ -68,18 +69,17 @@ class AndroidNetworkServicesHandler {
     _apply();
   }
 
-  void _onAllStarNodeStateChanged(
-    int deviceId,
-    String name,
-    Object? value,
-  ) {
+  void _onAllStarNodeStateChanged(int deviceId, String name, Object? value) {
     _allStarNodeActive = value == 'Starting' || value == 'Hosting';
     _apply();
   }
 
   bool get _shouldRun =>
       (_broker.getValue<int>(0, 'agwpeServerEnabled', 0) ?? 0) == 1 ||
-      (_broker.getValue<int>(0, 'homeAssistantEnabled', 0) ?? 0) == 1 ||
+      ((_broker.getValue<int>(0, 'homeAssistantEnabled', 0) ?? 0) == 1 &&
+          (_broker.getValue<String>(0, 'homeAssistantMqttUrl', '') ?? '')
+              .trim()
+              .isNotEmpty) ||
       // APRS-IS is a persistent TCP session even when no physical radio is
       // connected. Keep the process alive while it is enabled so reconnect,
       // inbox and internet-only beacon work continue when Android backgrounds
