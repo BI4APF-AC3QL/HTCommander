@@ -11,6 +11,9 @@ assert.ok(source.includes('<h2 id="radio">主机电台</h2>'));
 assert.doesNotMatch(source, /Windows|电脑/);
 assert.ok(source.includes('设备静噪'));
 assert.ok(source.includes('卫星多普勒（接收跟踪）'));
+assert.ok(source.includes('env(safe-area-inset-top'));
+assert.ok(source.includes('env(safe-area-inset-bottom'));
+assert.match(source, /id="pageTitle"[^>]*aria-live="polite"/);
 for (const label of ['电台', 'APRS', '地图', '音频', '更多']) {
   assert.ok(source.includes(`>${label}</button>`), `missing mobile menu: ${label}`);
 }
@@ -74,8 +77,13 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   assert.ok(Array.from(fft(new Float32Array(1024))).every(x=>x===-120));
   assert.throws(()=>fft(new Float32Array(1000)));
   socket.onopen(); update();
-  element('menuAprs').onclick();assert.ok(cards.every(c=>c.hidden===(c.dataset.page!=='aprs')));assert.equal(element('menuAprs').attributes['aria-current'],'page');
-  element('menuRadio').onclick();assert.equal(element('menuAprs').attributes['aria-current'],undefined);
+  for(const [page,menu,title] of [['radio','menuRadio','电台控制'],['aprs','menuAprs','APRS 消息与定位'],['map','menuMap','台站地图'],['audio','menuAudio','音频与频谱'],['more','menuMore','诊断与设置']]){
+    element(menu).onclick();
+    assert.ok(cards.every(c=>c.hidden===(c.dataset.page!==page)),`${page} page visibility`);
+    assert.equal(element('pageTitle').textContent,title,`${page} page title`);
+    for(const other of ['menuRadio','menuAprs','menuMap','menuAudio','menuMore'])
+      assert.equal(element(other).attributes['aria-current'],other===menu?'page':undefined,`${other} current state`);
+  }
   state.settings.squelchLevel=5;update();assert.equal(element('squelch').value,5);assert.equal(element('squelch').disabled,false);
   element('squelch').value='7';element('squelch').onchange();assert.equal(commands().at(-1),'squelch');
   state.readOnly=true;update();assert.equal(element('squelch').disabled,true);state.readOnly=false;update();
