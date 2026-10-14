@@ -227,7 +227,9 @@ void main() {
           // ignore: avoid_print
           print('HTC_ANDROID_BG_ACCEPTANCE_READY:$port');
           await tester.runAsync(() async {
-            await Future<void>.delayed(const Duration(seconds: 15));
+            // The host-side script runs a real Chromium pass against the APK's
+            // authenticated mobile page and Flutter bundle at this checkpoint.
+            await Future<void>.delayed(const Duration(seconds: 90));
           });
 
           http = HttpClient();

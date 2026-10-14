@@ -1,5 +1,11 @@
 # 原生浏览器权限、麦克风与 PWA 验收
 
+## Android APK 实际页面验收
+
+Android 构建工作流会把 release APK 安装到 API 35 模拟器，启动合成登录会话，再通过 ADB 端口转发让真实 Chromium 浏览器加载 APK 实际提供的页面。它检查远控登录、五个手机菜单、窄屏溢出，以及 APK 内 Flutter bootstrap、`main.dart.js`、CanvasKit 和首帧渲染。截图与 JSON 证据以 `android-hosted-browser-acceptance` 上传到同一 GitHub Actions 运行。
+
+这一流程不需要用户提供手机，也不会连接真实蓝牙、电台或进行 RF/PTT/信标发射。它验证打包页面在标准 Android 模拟环境中的运行，不替代[实机清单](android-device-acceptance.md)中的厂商省电、真实手机蓝牙和音频路由验收。
+
 2026-10-03 使用独立 Chromium/Edge 测试配置、390 × 844 视口及生产 HTTP 登录/WebSocket/APRS handler。后端只存在合成电台数据，未构造真实电台、蓝牙运输或实际射频发射设备。
 
 ## 已完成的软件路径

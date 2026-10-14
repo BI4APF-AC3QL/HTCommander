@@ -130,6 +130,11 @@ if [[ "$background_status" != '200' ]]; then
 fi
 echo 'Android foreground service remained active and served /login after MainActivity moved to the background.'
 
+# Load both the authenticated mobile remote page and the actual Flutter web
+# client from this release APK in Chromium. This catches broken packaged JS,
+# CanvasKit, cookie auth and mobile-menu rendering that HTTP asset probes miss.
+node ../tools/android-hosted-browser-acceptance.cjs http://127.0.0.1:18735
+
 # The remote server also holds a Wi-Fi lock so the LAN endpoint stays
 # reachable while Android turns the display off. Exercise this on the
 # disposable emulator; this still does not model vendor-specific phone doze.

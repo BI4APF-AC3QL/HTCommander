@@ -13,6 +13,9 @@ on:
       - 'src/pubspec.lock'
       - 'src/tools/stage_android_web_assets.py'
       - 'src/assets/web_app/placeholder.txt'
+      - 'tools/android-hosted-browser-acceptance.cjs'
+      - 'tools/browser-acceptance/package.json'
+      - 'tools/browser-acceptance/package-lock.json'
       - 'docs/android-radio-server.md'
       - '.github/workflows/build-android.yaml'
   workflow_dispatch:
@@ -138,6 +141,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Install Chromium for Android hosted-page acceptance
+        run: |
+          npm ci --prefix tools/browser-acceptance --ignore-scripts --no-audit --no-fund
+          node tools/browser-acceptance/node_modules/playwright/cli.js install --with-deps chromium
+
       - name: Install and launch release APK on Android emulator
         uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
         timeout-minutes: 20
@@ -149,6 +157,18 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 600
           script: bash src/tools/android_emulator_acceptance.sh
+        env:
+          HTC_ANDROID_BROWSER_OUTPUT: ${{ runner.temp }}/android-hosted-browser
+
+      - name: Upload Android hosted-browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-hosted-browser-acceptance
+          path: |
+            ${{ runner.temp }}/android-hosted-browser/**/evidence.json
+            ${{ runner.temp }}/android-hosted-browser/**/failure.json
+            ${{ runner.temp }}/android-hosted-browser/**/*.png
 
       - name: Restore pubspec after Android packaging
         if: always()
