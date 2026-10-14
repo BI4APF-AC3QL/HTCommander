@@ -472,6 +472,79 @@ void main() {
             );
             await wasmResponse.drain<void>();
 
+            // Isolate the radio-connection lifecycle from the web server and
+            // network integrations. This synthetic radio exercises the real
+            // Android foreground-service bridge without Bluetooth or RF.
+            const radioOnlyId = 191;
+            DataBroker.dispatch(
+              deviceId: 1,
+              name: 'ConnectedRadios',
+              data: const <Object?>[
+                {'DeviceId': radioOnlyId, 'FriendlyName': 'Simulated radio'},
+              ],
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: 1,
+              name: 'SelectedRadioDeviceId',
+              data: radioOnlyId,
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: radioOnlyId,
+              name: 'State',
+              data: 'Connected',
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: 0,
+              name: 'webServerEnabled',
+              data: 0,
+              store: false,
+            );
+            final radioOnlyDeadline = DateTime.now().add(
+              const Duration(seconds: 10),
+            );
+            while (server.boundPort != null &&
+                DateTime.now().isBefore(radioOnlyDeadline)) {
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+            }
+            expect(
+              server.boundPort,
+              isNull,
+              reason: 'the radio-only checkpoint must not have an HTTP server',
+            );
+
+            // The shell backgrounds the app and checks the Android service
+            // while this synthetic radio is the only active keep-alive reason.
+            // ignore: avoid_print
+            print('HTC_ANDROID_RADIO_ONLY_BG_ACCEPTANCE_READY');
+            await Future<void>.delayed(const Duration(seconds: 15));
+            DataBroker.dispatch(
+              deviceId: 1,
+              name: 'ConnectedRadios',
+              data: const <Object?>[],
+              store: true,
+              allowEmpty: true,
+            );
+            DataBroker.dispatch(
+              deviceId: 1,
+              name: 'SelectedRadioDeviceId',
+              data: -1,
+              store: true,
+            );
+            DataBroker.dispatch(
+              deviceId: radioOnlyId,
+              name: 'State',
+              data: 'Disconnected',
+              store: true,
+            );
+            // The runner verifies that the service stops before the next
+            // keep-alive reason (MQTT) is enabled.
+            // ignore: avoid_print
+            print('HTC_ANDROID_RADIO_ONLY_RELEASE_READY');
+            await Future<void>.delayed(const Duration(seconds: 15));
+
             // Exercise the Android-only foreground-service reason used by
             // Home Assistant after the web server is stopped. The broker is
             // loopback-only so the emulator does not contact an external host.

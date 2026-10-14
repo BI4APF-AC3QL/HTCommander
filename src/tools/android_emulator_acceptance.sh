@@ -160,6 +160,45 @@ fi
 echo 'Android remote server remained reachable with the emulator display off.'
 
 adb shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
+wait_for_flutter_marker 'HTC_ANDROID_RADIO_ONLY_BG_ACCEPTANCE_READY' 'radio-only-background'
+
+adb shell input keyevent KEYCODE_HOME
+sleep 2
+service_dump="$(adb shell dumpsys activity services)"
+if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+  cat "$drive_log"
+  echo '::error::Android foreground service stopped when a connected radio was the only active feature.'
+  exit 1
+fi
+
+radio_only_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18735/login || true)"
+if [[ "$radio_only_status" == '200' ]]; then
+  cat "$drive_log"
+  echo '::error::Android HTTP server was still listening during the radio-only checkpoint.'
+  exit 1
+fi
+echo 'Android foreground service remained active for a connected radio with the web server stopped.'
+
+adb shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
+wait_for_flutter_marker 'HTC_ANDROID_RADIO_ONLY_RELEASE_READY' 'radio-only-service-release'
+
+radio_service_stopped=0
+for attempt in {1..10}; do
+  service_dump="$(adb shell dumpsys activity services)"
+  if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+    radio_service_stopped=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$radio_service_stopped" -ne 1 ]]; then
+  cat "$drive_log"
+  echo '::error::Android foreground service stayed active after the simulated radio disconnected.'
+  exit 1
+fi
+echo 'Android foreground service stopped after the simulated radio disconnected.'
+
+adb shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
 wait_for_flutter_marker 'HTC_ANDROID_MQTT_BG_ACCEPTANCE_READY' 'MQTT-background'
 
 adb shell input keyevent KEYCODE_HOME
