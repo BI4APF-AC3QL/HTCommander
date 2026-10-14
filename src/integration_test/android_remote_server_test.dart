@@ -83,12 +83,46 @@ void main() {
           const ValueKey<String>('main_tab_navigation'),
         );
         expect(mobileNavigation, findsOneWidget);
+
+        // Expose every tab available in the native desktop app so the phone
+        // acceptance check covers the same feature pages. These values are
+        // broadcast only in memory; no radio is connected and no transmit
+        // control is activated.
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'AllowTransmit',
+          data: 1,
+          store: false,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'WinlinkPassword',
+          data: 'AndroidIntegrationTestPassword',
+          store: false,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'SatelliteSupport',
+          data: 1,
+          store: false,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
+
         for (final tab in const <String>[
           'Radio',
           'Comms',
           'Audio',
           'APRS',
           'Map',
+          'Satellite',
+          'Mail',
+          'Terminal',
+          'Contacts',
+          'BBS',
+          'Torrent',
+          'Packets',
+          'Debug',
         ]) {
           final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
           expect(
@@ -96,6 +130,7 @@ void main() {
             findsOneWidget,
             reason: '$tab should be in phone navigation',
           );
+          await tester.ensureVisible(entry);
           expect(
             entry.hitTestable(),
             findsOneWidget,
@@ -105,6 +140,29 @@ void main() {
           await tester.tap(entry);
           await tester.pump(const Duration(milliseconds: 350));
         }
+
+        // Restore the receive-first profile before starting the server test.
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'AllowTransmit',
+          data: 0,
+          store: false,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'WinlinkPassword',
+          data: '',
+          store: false,
+          allowEmpty: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'SatelliteSupport',
+          data: 0,
+          store: false,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
 
         final server = handler!;
         HttpClient? http;
