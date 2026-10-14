@@ -367,6 +367,8 @@
   "settingsEnableWebServer": "वेब सर्वर सक्षम करें",
   "settingsPort": "पोर्ट:",
   "settingsEnableAgwpeServer": "AGWPE सर्वर सक्षम करें",
+  "settingsAgwpeLanAccess": "LAN पर AGWPE क्लाइंट की अनुमति दें",
+  "settingsAgwpeLanAccessDescription": "AGWPE में पासवर्ड सुरक्षा नहीं है। इसे केवल भरोसेमंद LAN या VPN पर चालू करें।",
 
   "settingsMapIntroGps": "GPS और विमान ट्रैकिंग डेटा स्रोत कॉन्फ़िगर करें।",
   "settingsMapIntroNoGps": "विमान ट्रैकिंग डेटा स्रोत कॉन्फ़िगर करें।",

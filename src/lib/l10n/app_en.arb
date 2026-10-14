@@ -802,6 +802,8 @@
   "settingsEnableWebServer": "Enable Web Server",
   "settingsPort": "Port:",
   "settingsEnableAgwpeServer": "Enable AGWPE Server",
+  "settingsAgwpeLanAccess": "Allow AGWPE clients on the LAN",
+  "settingsAgwpeLanAccessDescription": "AGWPE has no password protection. Use only on a trusted LAN or VPN.",
 
   "settingsHomeAssistant": "Home Assistant",
   "@settingsHomeAssistant": {

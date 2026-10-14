@@ -1047,6 +1047,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsEnableAgwpeServer => '启用 AGWPE 服务器';
 
   @override
+  String get settingsAgwpeLanAccess => '允许局域网客户端连接';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE 不提供密码保护，仅在可信局域网或 VPN 中启用。';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override

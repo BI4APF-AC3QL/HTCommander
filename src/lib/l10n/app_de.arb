@@ -367,6 +367,8 @@
   "settingsEnableWebServer": "Webserver aktivieren",
   "settingsPort": "Port:",
   "settingsEnableAgwpeServer": "AGWPE-Server aktivieren",
+  "settingsAgwpeLanAccess": "AGWPE-Clients im LAN zulassen",
+  "settingsAgwpeLanAccessDescription": "AGWPE verwendet kein Passwort. Nur in einem vertrauenswürdigen LAN oder VPN aktivieren.",
 
   "settingsMapIntroGps": "Konfigurieren Sie die Datenquellen für GPS und Flugzeugverfolgung.",
   "settingsMapIntroNoGps": "Konfigurieren Sie die Datenquellen für die Flugzeugverfolgung.",

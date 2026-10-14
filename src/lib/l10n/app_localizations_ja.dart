@@ -1062,6 +1062,13 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'AGWPE サーバーを有効化';
 
   @override
+  String get settingsAgwpeLanAccess => 'LAN クライアントからの AGWPE 接続を許可';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE にはパスワード保護がありません。信頼できる LAN または VPN でのみ有効にしてください。';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override

@@ -1092,6 +1092,14 @@ class AppLocalizationsIt extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'Abilita server AGWPE';
 
   @override
+  String get settingsAgwpeLanAccess =>
+      'Consenti client AGWPE nella rete locale';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE non usa password. Attivalo solo su una rete locale o VPN affidabile.';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override

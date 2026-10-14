@@ -2044,6 +2044,18 @@ abstract class AppLocalizations {
   /// **'Enable AGWPE Server'**
   String get settingsEnableAgwpeServer;
 
+  /// No description provided for @settingsAgwpeLanAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow AGWPE clients on the LAN'**
+  String get settingsAgwpeLanAccess;
+
+  /// No description provided for @settingsAgwpeLanAccessDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'AGWPE has no password protection. Use only on a trusted LAN or VPN.'**
+  String get settingsAgwpeLanAccessDescription;
+
   /// Section title for the Home Assistant MQTT integration in Settings > Servers
   ///
   /// In en, this message translates to:

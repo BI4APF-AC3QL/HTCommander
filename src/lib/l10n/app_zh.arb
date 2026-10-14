@@ -367,6 +367,8 @@
   "settingsEnableWebServer": "启用 Web 服务器",
   "settingsPort": "端口：",
   "settingsEnableAgwpeServer": "启用 AGWPE 服务器",
+  "settingsAgwpeLanAccess": "允许局域网客户端连接",
+  "settingsAgwpeLanAccessDescription": "AGWPE 不提供密码保护，仅在可信局域网或 VPN 中启用。",
 
   "settingsMapIntroGps": "配置 GPS 和飞机跟踪数据源。",
   "settingsMapIntroNoGps": "配置飞机跟踪数据源。",

@@ -3887,6 +3887,45 @@ class _SettingsDialogState extends State<SettingsDialog>
                 ),
                 Padding(
                   padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: _settings.agwpeServerLanAccess,
+                            onChanged: _settings.agwpeServerEnabled
+                                ? (value) => setState(
+                                    () => _settings.agwpeServerLanAccess =
+                                        value ?? false,
+                                  )
+                                : null,
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _settings.agwpeServerEnabled
+                                  ? () => setState(
+                                      () => _settings.agwpeServerLanAccess =
+                                          !_settings.agwpeServerLanAccess,
+                                    )
+                                  : null,
+                              child: Text(l10n.settingsAgwpeLanAccess),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12, bottom: 8),
+                        child: Text(
+                          l10n.settingsAgwpeLanAccessDescription,
+                          style: DialogStyles.bodyStyle,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
                   child: Wrap(
                     spacing: 8,
                     runSpacing: 8,

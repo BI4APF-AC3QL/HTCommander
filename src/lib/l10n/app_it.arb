@@ -351,6 +351,8 @@
   "settingsEnableWebServer": "Abilita server web",
   "settingsPort": "Porta:",
   "settingsEnableAgwpeServer": "Abilita server AGWPE",
+  "settingsAgwpeLanAccess": "Consenti client AGWPE nella rete locale",
+  "settingsAgwpeLanAccessDescription": "AGWPE non usa password. Attivalo solo su una rete locale o VPN affidabile.",
 
   "settingsHomeAssistant": "Home Assistant",
   "settingsHomeAssistantDescription": "Esponi ogni radio connessa a Home Assistant tramite MQTT per il monitoraggio e il controllo.",

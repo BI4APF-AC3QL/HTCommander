@@ -45,6 +45,8 @@ Android 版支持与 Windows、Linux、macOS 相同的 Home Assistant MQTT 桥�
 
 Android 与 Windows 共用 Flutter 电台协议、APRS 处理、地图、频谱、卫星计算、Winlink、远程权限和循环语音录音逻辑。安卓可扫描 BLE 电台，也可通过 Bluetooth Classic RFCOMM 控制已配对电台；VR-N7500 继续使用 Classic。两者可使用电台音频通道。在“音频”页可刷新并选择 Android 当前可用的扬声器、有线、USB 或蓝牙输出路由；移除的设备会回退到系统默认输出。语音识别也处理同一接收音频流，但 Android 使用系统识别或 Android ARM64 离线回退模型。Android 端还可启用远控网页服务、AGWPE TCP 服务和 Home Assistant MQTT 桥接，后台运行时由 Android 常驻通知服务维持。
 
+AGWPE 默认只监听本机回环地址。要让同一可信局域网或 VPN 中的其他设备连接，在“设置 → 服务端”启用 AGWPE 后，再勾选“允许局域网客户端连接”。该协议没有密码保护；不要将 AGWPE 端口直接转发到公网。关闭此选项会恢复本机专用监听。
+
 平台特有项：Android 可使用 USB OTG 串口 GPS；这只用于 GPS 接收器，不提供 USB/串口电台控制。当前项目的电台传输实现没有 USB/串口电台传输或串口电台网关，因此这不是 Android 相对 Windows 的功能缺口。Android 应用通过 APK 或应用商店更新，Windows 则使用桌面更新流程。USB OTG GPS 的芯片兼容、热插拔和定位效果仍需在目标手机与接收器上验收。
 
 连接电台、APRS-IS、EchoLink、AllStarLink、Winlink 同步、网页服务、AGWPE、Home Assistant MQTT、持续手机定位或本机循环录音运行时，Android 显示常驻通知并持有部分唤醒锁；网页服务开启时还会保持 Wi-Fi 活跃，关闭网页服务后释放该锁。Winlink TCP 在短时自动重连间隔也会保持服务运行；取消同步或重试结束后，若没有其他活动任务，服务会释放。Flutter 引擎由应用持有，Activity 退出/任务从最近列表移除时，已启用的网页服务、电台连接和定位事件通道继续在同一 Dart 引擎中运行。断开最后一台电台并关闭其他运行功能后会释放服务。系统强制停止应用或厂商省电策略仍可能中断服务，需在目标手机实测。AGWPE 仅应在可信局域网/VPN中开放；它面向兼容客户端的 TCP 接口不提供远程登录密码保护。

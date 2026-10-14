@@ -367,6 +367,8 @@
   "settingsEnableWebServer": "Habilitar el servidor web",
   "settingsPort": "Puerto:",
   "settingsEnableAgwpeServer": "Habilitar el servidor AGWPE",
+  "settingsAgwpeLanAccess": "Permitir clientes AGWPE en la red local",
+  "settingsAgwpeLanAccessDescription": "AGWPE no usa contraseña. Actívelo solo en una red local o VPN de confianza.",
 
   "settingsMapIntroGps": "Configure las fuentes de datos de GPS y de seguimiento de aviones.",
   "settingsMapIntroNoGps": "Configure las fuentes de datos de seguimiento de aviones.",

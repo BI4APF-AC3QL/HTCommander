@@ -367,6 +367,8 @@
   "settingsEnableWebServer": "Web サーバーを有効化",
   "settingsPort": "ポート:",
   "settingsEnableAgwpeServer": "AGWPE サーバーを有効化",
+  "settingsAgwpeLanAccess": "LAN クライアントからの AGWPE 接続を許可",
+  "settingsAgwpeLanAccessDescription": "AGWPE にはパスワード保護がありません。信頼できる LAN または VPN でのみ有効にしてください。",
 
   "settingsMapIntroGps": "GPS と航空機追跡のデータソースを設定します。",
   "settingsMapIntroNoGps": "航空機追跡のデータソースを設定します。",
