@@ -87,7 +87,10 @@ drive_pid=$!
 wait_for_flutter_marker() {
   local marker="$1"
   local checkpoint="$2"
-  for attempt in {1..180}; do
+  # The hosted-browser checkpoint can spend up to 180 seconds loading the
+  # packaged Flutter client, and the integration test keeps its server alive
+  # for four minutes to cover that pass before advancing its own assertions.
+  for attempt in {1..360}; do
     if adb logcat -d -s flutter:I | grep -F "$marker" >/dev/null; then
       return 0
     fi
