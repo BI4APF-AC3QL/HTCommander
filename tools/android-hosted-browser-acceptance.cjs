@@ -91,6 +91,51 @@ async function main() {
     }
     evidence.mobileMenu = pages.map(([, key]) => key);
     await page.locator('#menuRadio').click();
+    await page.waitForFunction(
+      () => document.querySelector('#status')?.textContent.includes('音频通道已连接'),
+      null,
+      { timeout: 10000 },
+    );
+    assert.equal(await page.locator('#frequency').innerText(), '145.60000 MHz');
+    assert.equal(await page.locator('#squelch').inputValue(), '5');
+    await page.locator('#controlRequest').click();
+    await page.waitForFunction(
+      () => document.querySelector('#controlStatus')?.textContent.includes('你持有操作权'),
+      null,
+      { timeout: 10000 },
+    );
+    assert.equal(await page.locator('#channel').isEnabled(), true);
+    assert.equal(await page.locator('#squelch').isEnabled(), true);
+    assert.equal(await page.locator('#volume').isEnabled(), true);
+    assert.equal(await page.locator('#ptt').isDisabled(), true,
+      'the Android acceptance radio must remain receive-only');
+    await page.locator('#squelch').evaluate((element) => {
+      element.value = '6';
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.locator('#volume').evaluate((element) => {
+      element.value = '8';
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(
+      () => {
+        const events = document.querySelector('#auditEvents')?.textContent || '';
+        return events.includes('设备静噪 · 请求接受') &&
+          events.includes('调电台音量 · 请求接受');
+      },
+      null,
+      { timeout: 10000 },
+    );
+    evidence.radioControls = {
+      frequency: await page.locator('#frequency').innerText(),
+      channelOptions: await page.locator('#channel option').allTextContents(),
+      squelch: await page.locator('#squelch').inputValue(),
+      volume: await page.locator('#volume').inputValue(),
+      pttDisabled: await page.locator('#ptt').isDisabled(),
+      acceptedActions: ['squelch', 'volume'],
+      physicalRadio: false,
+      rfTransmit: false,
+    };
     await page.screenshot({ path: path.join(outputDir, 'android-remote-mobile.png'), fullPage: true });
 
     const appResponse = await page.goto(new URL('/index.html', base).toString(), {

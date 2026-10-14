@@ -161,10 +161,119 @@ void main() {
           data: 0,
           store: false,
         );
+        // Make the APK-hosted browser pass exercise a connected, receive-only
+        // radio through the real Android server. This remains a synthetic
+        // broker device and never opens Bluetooth or performs RF transmission.
+        const syntheticRadioId = 190;
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'webServerAllowTransmit',
+          data: 0,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'webServerAllowAprs',
+          data: 0,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'webServerAllowPosition',
+          data: 0,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'webServerDefaultReadOnly',
+          data: 0,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'webServerRequireControlApproval',
+          data: 0,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 1,
+          name: 'ConnectedRadios',
+          data: const [
+            {
+              'DeviceId': syntheticRadioId,
+              'FriendlyName': 'Android test radio',
+            },
+          ],
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 1,
+          name: 'SelectedRadioDeviceId',
+          data: syntheticRadioId,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: syntheticRadioId,
+          name: 'State',
+          data: 'Connected',
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: syntheticRadioId,
+          name: 'AudioState',
+          data: true,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: syntheticRadioId,
+          name: 'Settings',
+          data: const {'channelA': 0, 'squelchLevel': 5, 'scan': false},
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: syntheticRadioId,
+          name: 'Channels',
+          data: const [
+            {
+              'channelId': 0,
+              'name': 'Android test channel',
+              'rxFreq': 145600000,
+              'txDisable': true,
+            },
+          ],
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: syntheticRadioId,
+          name: 'Volume',
+          data: 4,
+          store: true,
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
 
         final server = handler!;
+        final browserSquelch = Completer<int>();
+        final browserVolume = Completer<int>();
+        final browserCommandObserver = DataBrokerClient();
+        browserCommandObserver.subscribe(
+          deviceId: syntheticRadioId,
+          name: 'SetSquelchLevel',
+          callback: (_, _, value) {
+            if (!browserSquelch.isCompleted && value is int) {
+              browserSquelch.complete(value);
+            }
+          },
+        );
+        browserCommandObserver.subscribe(
+          deviceId: syntheticRadioId,
+          name: 'SetVolumeLevel',
+          callback: (_, _, value) {
+            if (!browserVolume.isCompleted && value is int) {
+              browserVolume.complete(value);
+            }
+          },
+        );
         HttpClient? http;
         try {
           // Use a fixed emulator-only port so the host acceptance script can
@@ -227,9 +336,21 @@ void main() {
           // ignore: avoid_print
           print('HTC_ANDROID_BG_ACCEPTANCE_READY:$port');
           await tester.runAsync(() async {
-            // The host-side script runs a real Chromium pass against the APK's
-            // authenticated mobile page and Flutter bundle at this checkpoint.
-            await Future<void>.delayed(const Duration(seconds: 90));
+            // The host-side script runs Chromium against the authenticated
+            // mobile page, then loads Flutter's compiled bundle. That bundle
+            // has up to 180 seconds of its own startup/render timeout, so keep
+            // the app service alive for the full browser checkpoint.
+            await Future<void>.delayed(const Duration(minutes: 4));
+            expect(
+              await browserSquelch.future.timeout(const Duration(seconds: 1)),
+              6,
+              reason: 'the Android mobile page must send the selected squelch',
+            );
+            expect(
+              await browserVolume.future.timeout(const Duration(seconds: 1)),
+              8,
+              reason: 'the Android mobile page must send the selected volume',
+            );
           });
 
           http = HttpClient();
@@ -301,28 +422,6 @@ void main() {
             // Exercise the same radio bridge used by Windows-hosted clients,
             // but with a synthetic broker radio so this Android emulator test
             // never touches Bluetooth hardware or transmits RF.
-            const syntheticRadioId = 190;
-            DataBroker.dispatch(
-              deviceId: 1,
-              name: 'ConnectedRadios',
-              data: const [
-                {
-                  'DeviceId': syntheticRadioId,
-                  'FriendlyName': 'Simulated radio',
-                },
-              ],
-            );
-            DataBroker.dispatch(
-              deviceId: 1,
-              name: 'SelectedRadioDeviceId',
-              data: syntheticRadioId,
-            );
-            DataBroker.dispatch(
-              deviceId: syntheticRadioId,
-              name: 'State',
-              data: 'Connected',
-            );
-
             final rawCommandSeen = Completer<Uint8List>();
             final brokerObserver = DataBrokerClient();
             brokerObserver.subscribe(
@@ -359,7 +458,7 @@ void main() {
                   .firstWhere(
                     (message) =>
                         message.startsWith('radiolist:') &&
-                        message.contains('Simulated radio'),
+                        message.contains('Android test radio'),
                   )
                   .timeout(const Duration(seconds: 5));
               // The initial snapshot can arrive during the WebSocket upgrade;
@@ -370,7 +469,7 @@ void main() {
                 data: const [
                   {
                     'DeviceId': syntheticRadioId,
-                    'FriendlyName': 'Simulated radio',
+                    'FriendlyName': 'Android test radio',
                   },
                 ],
               );
@@ -577,7 +676,8 @@ void main() {
             expect(
               serverStopped,
               isTrue,
-              reason: 'Home Assistant must keep the service without HTTP server',
+              reason:
+                  'Home Assistant must keep the service without HTTP server',
             );
 
             // The shell runner sends HOME, verifies the foreground service,
@@ -601,6 +701,7 @@ void main() {
             );
           });
         } finally {
+          browserCommandObserver.dispose();
           http?.close(force: true);
           DataBroker.dispatch(deviceId: 0, name: 'webServerEnabled', data: 0);
           DataBroker.dispatch(
