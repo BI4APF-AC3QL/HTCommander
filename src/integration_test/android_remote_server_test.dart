@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter_test/flutter_test.dart';
@@ -19,6 +20,14 @@ void main() {
       final originalErrorWidgetBuilder = ErrorWidget.builder;
       final originalFlutterErrorHandler = FlutterError.onError;
       try {
+        // Flutter's integration-test view can retain its default desktop-sized
+        // metrics even on an Android emulator. Model a common phone viewport
+        // explicitly so this assertion covers the compact Android layout.
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
         app.main(<String>[]);
         await tester.pump(const Duration(seconds: 1));
         await tester.pump();
@@ -51,14 +60,22 @@ void main() {
         // the most-used functions are opened from the narrow side navigation.
         // Wait for asynchronous app startup to replace its splash screen, then
         // exercise those entries so the server test also covers the phone UI.
-        final mobileNavigation = find.byKey(
-          const ValueKey<String>('main_tab_navigation'),
+        final mobileRadioTab = find.byKey(
+          const ValueKey<String>('main_tab_Radio'),
         );
         for (var attempt = 0;
-            attempt < 100 && mobileNavigation.evaluate().isEmpty;
+            attempt < 100 && mobileRadioTab.evaluate().isEmpty;
             attempt++) {
           await tester.pump(const Duration(milliseconds: 100));
         }
+        expect(
+          mobileRadioTab,
+          findsOneWidget,
+          reason: 'the phone-sized viewport should enable compact navigation',
+        );
+        final mobileNavigation = find.byKey(
+          const ValueKey<String>('main_tab_navigation'),
+        );
         expect(mobileNavigation, findsOneWidget);
         for (final tab in const <String>[
           'Radio',
