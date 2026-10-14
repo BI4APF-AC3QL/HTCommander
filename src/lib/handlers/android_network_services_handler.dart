@@ -21,6 +21,7 @@ class AndroidNetworkServicesHandler {
   Future<void> _transition = Future<void>.value();
   bool _active = false;
   bool _allStarNodeActive = false;
+  bool _winlinkBusy = false;
   bool _disposed = false;
   Timer? _retryTimer;
   var _retryDelay = const Duration(seconds: 2);
@@ -40,6 +41,11 @@ class AndroidNetworkServicesHandler {
       name: 'ConnectedRadios',
       callback: _onSettingChanged,
     );
+    _broker.subscribe(
+      deviceId: 1,
+      name: 'WinlinkBusy',
+      callback: _onWinlinkBusyChanged,
+    );
     for (final deviceId in const [echoLinkDeviceId, allStarDeviceId]) {
       _broker.subscribe(
         deviceId: deviceId,
@@ -56,6 +62,11 @@ class AndroidNetworkServicesHandler {
   }
 
   void _onSettingChanged(int deviceId, String name, Object? value) => _apply();
+
+  void _onWinlinkBusyChanged(int deviceId, String name, Object? value) {
+    _winlinkBusy = value == true;
+    _apply();
+  }
 
   void _onAllStarNodeStateChanged(
     int deviceId,
@@ -80,6 +91,9 @@ class AndroidNetworkServicesHandler {
       // Hosted AllStar node state is event-only; keep the session we observed
       // during this process alive even if its attached radio disconnects.
       _allStarNodeActive ||
+      // Winlink TCP retries are transient but must survive Android background
+      // scheduling until the retry succeeds, is cancelled, or is exhausted.
+      _winlinkBusy ||
       _hasConnectedRadio;
 
   bool get _hasActiveInternetRadio =>

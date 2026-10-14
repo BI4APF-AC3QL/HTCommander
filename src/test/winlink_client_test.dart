@@ -143,4 +143,184 @@ void main() {
       await server.close();
     }
   });
+
+  test('keeps Winlink busy across the TCP retry gap and reconnect', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    var acceptedCount = 0;
+    final peers = <Socket>[];
+    final serverSubscription = server.listen((socket) {
+      acceptedCount++;
+      peers.add(socket);
+      if (acceptedCount == 1) socket.destroy();
+    });
+
+    final busyStates = <bool>[];
+    final connectionStates = <String>[];
+    final stateBroker = DataBrokerClient();
+    stateBroker.subscribe(
+      deviceId: 1,
+      name: 'WinlinkConnectionState',
+      callback: (_, _, data) => connectionStates.add(data! as String),
+    );
+    stateBroker.subscribe(
+      deviceId: 1,
+      name: 'WinlinkBusy',
+      callback: (_, _, data) => busyStates.add(data! as bool),
+    );
+    final client = WinlinkClient(
+      tcpRetryDelay: const Duration(milliseconds: 250),
+      maxTcpRetries: 1,
+    );
+    try {
+      await client.connectTcp(InternetAddress.loopbackIPv4.address, server.port);
+      await _waitFor(
+        () => acceptedCount == 1 && busyStates.isNotEmpty,
+        () => 'First TCP connection was not observed; accepted=$acceptedCount, busy=$busyStates',
+      );
+      await _waitFor(
+        () => connectionStates.contains('DISCONNECTED') && busyStates.last,
+        () => 'TCP connection did not enter a busy retry gap; states=$connectionStates, busy=$busyStates',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(acceptedCount, 1, reason: 'retry should wait for its backoff');
+      expect(
+        busyStates,
+        [true],
+        reason: 'no idle state may be published in the retry gap',
+      );
+
+      await _waitFor(
+        () =>
+            acceptedCount == 2 &&
+            connectionStates.isNotEmpty &&
+            connectionStates.last == 'CONNECTED',
+        () =>
+            'TCP retry did not reconnect; accepted=$acceptedCount, busy=$busyStates',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        busyStates,
+        [true],
+        reason: 'reconnect must not publish an idle pulse',
+      );
+
+      client.disconnectTcp();
+      await _waitFor(
+        () => busyStates.isNotEmpty && !busyStates.last,
+        () => 'explicit disconnect did not clear Winlink busy state: $busyStates',
+      );
+    } finally {
+      client.dispose();
+      stateBroker.dispose();
+      for (final peer in peers) {
+        peer.destroy();
+      }
+      await serverSubscription.cancel();
+      await server.close();
+    }
+  });
+
+  test('cancelling a pending Winlink retry stops further TCP attempts', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    var acceptedCount = 0;
+    final peers = <Socket>[];
+    final serverSubscription = server.listen((socket) {
+      acceptedCount++;
+      peers.add(socket);
+      socket.destroy();
+    });
+
+    final busyStates = <bool>[];
+    final connectionStates = <String>[];
+    final stateBroker = DataBrokerClient();
+    stateBroker.subscribe(
+      deviceId: 1,
+      name: 'WinlinkConnectionState',
+      callback: (_, _, data) => connectionStates.add(data! as String),
+    );
+    stateBroker.subscribe(
+      deviceId: 1,
+      name: 'WinlinkBusy',
+      callback: (_, _, data) => busyStates.add(data! as bool),
+    );
+    final client = WinlinkClient(
+      tcpRetryDelay: const Duration(milliseconds: 250),
+      maxTcpRetries: 1,
+    );
+    try {
+      await client.connectTcp(InternetAddress.loopbackIPv4.address, server.port);
+      await _waitFor(
+        () => acceptedCount == 1 && busyStates.isNotEmpty,
+        () => 'Initial connection was not observed; accepted=$acceptedCount, busy=$busyStates',
+      );
+      await _waitFor(
+        () => connectionStates.contains('DISCONNECTED') && busyStates.last,
+        () => 'TCP connection did not enter a busy retry gap; states=$connectionStates, busy=$busyStates',
+      );
+      DataBroker.dispatch(
+        deviceId: 1,
+        name: 'WinlinkDisconnect',
+        data: true,
+        store: false,
+      );
+      await _waitFor(
+        () => busyStates.isNotEmpty && !busyStates.last,
+        () => 'cancel did not clear Winlink busy state: $busyStates',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(acceptedCount, 1, reason: 'cancelled retry must not reconnect');
+      expect(busyStates.last, isFalse);
+    } finally {
+      client.dispose();
+      stateBroker.dispose();
+      for (final peer in peers) {
+        peer.destroy();
+      }
+      await serverSubscription.cancel();
+      await server.close();
+    }
+  });
+
+  test('clears Winlink busy state after TCP retries are exhausted', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    var acceptedCount = 0;
+    final peers = <Socket>[];
+    final serverSubscription = server.listen((socket) {
+      acceptedCount++;
+      peers.add(socket);
+      socket.destroy();
+    });
+
+    final busyStates = <bool>[];
+    final stateBroker = DataBrokerClient();
+    stateBroker.subscribe(
+      deviceId: 1,
+      name: 'WinlinkBusy',
+      callback: (_, _, data) => busyStates.add(data! as bool),
+    );
+    final client = WinlinkClient(
+      tcpRetryDelay: const Duration(milliseconds: 25),
+      maxTcpRetries: 1,
+    );
+    try {
+      await client.connectTcp(InternetAddress.loopbackIPv4.address, server.port);
+      await _waitFor(
+        () => acceptedCount == 2 &&
+            busyStates.isNotEmpty &&
+            !busyStates.last,
+        () => 'Retry exhaustion did not finish cleanly; accepted=$acceptedCount, busy=$busyStates',
+      );
+      expect(busyStates.first, isTrue);
+      expect(busyStates.last, isFalse);
+      expect(busyStates.where((state) => !state).length, 1);
+    } finally {
+      client.dispose();
+      stateBroker.dispose();
+      for (final peer in peers) {
+        peer.destroy();
+      }
+      await serverSubscription.cancel();
+      await server.close();
+    }
+  });
 }

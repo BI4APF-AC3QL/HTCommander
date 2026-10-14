@@ -168,4 +168,43 @@ void main() {
       }
     },
   );
+
+  test('keeps Android foreground service alive during Winlink TCP retries', () async {
+    var startCalls = 0;
+    var stopCalls = 0;
+    final handler = AndroidNetworkServicesHandler(
+      startService: () async {
+        startCalls++;
+      },
+      stopService: () async {
+        stopCalls++;
+      },
+    );
+    Future<void> settle() =>
+        Future<void>.delayed(const Duration(milliseconds: 10));
+
+    try {
+      handler.init();
+      DataBroker.dispatch(
+        deviceId: 1,
+        name: 'WinlinkBusy',
+        data: true,
+        store: false,
+      );
+      await settle();
+      expect(startCalls, 1);
+      expect(stopCalls, 0);
+
+      DataBroker.dispatch(
+        deviceId: 1,
+        name: 'WinlinkBusy',
+        data: false,
+        store: false,
+      );
+      await settle();
+      expect(stopCalls, 1);
+    } finally {
+      await handler.dispose();
+    }
+  });
 }
