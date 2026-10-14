@@ -9,14 +9,24 @@ import '../services/recording/rolling_voice_recorder.dart';
 
 /// Local-only, opt-in received voice capture for the selected physical radio.
 class RollingVoiceHandler {
-  RollingVoiceHandler({
-    this.folderProvider,
+  factory RollingVoiceHandler({
+    Future<String> Function()? folderProvider,
     bool? isAndroid,
     Future<void> Function()? startAndroidService,
     Future<void> Function()? stopAndroidService,
-  }) : _isAndroid = isAndroid ?? Platform.isAndroid,
-       _startAndroidService = startAndroidService,
-       _stopAndroidServiceOverride = stopAndroidService;
+  }) => RollingVoiceHandler._(
+    folderProvider: folderProvider,
+    _isAndroid: isAndroid ?? Platform.isAndroid,
+    _startAndroidService: startAndroidService,
+    _stopAndroidServiceOverride: stopAndroidService,
+  );
+
+  RollingVoiceHandler._({
+    this.folderProvider,
+    required this._isAndroid,
+    this._startAndroidService,
+    this._stopAndroidServiceOverride,
+  });
 
   final Future<String> Function()? folderProvider;
   final bool _isAndroid;
