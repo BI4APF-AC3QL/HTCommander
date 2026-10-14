@@ -130,6 +130,35 @@ if [[ "$background_status" != '200' ]]; then
 fi
 echo 'Android foreground service remained active and served /login after MainActivity moved to the background.'
 
+# The remote server also holds a Wi-Fi lock so the LAN endpoint stays
+# reachable while Android turns the display off. Exercise this on the
+# disposable emulator; this still does not model vendor-specific phone doze.
+adb shell settings put global stay_on_while_plugged_in 0
+adb shell input keyevent KEYCODE_SLEEP
+screen_state=''
+for attempt in {1..10}; do
+  screen_state="$(adb shell dumpsys power | tr -d '\r')"
+  if grep -Eq 'mWakefulness=Asleep|mInteractive=false' <<< "$screen_state"; then
+    break
+  fi
+  sleep 1
+done
+if ! grep -Eq 'mWakefulness=Asleep|mInteractive=false' <<< "$screen_state"; then
+  adb shell input keyevent KEYCODE_WAKEUP || true
+  cat "$drive_log"
+  echo '::error::Android emulator display did not turn off for the server reachability check.'
+  exit 1
+fi
+
+screen_off_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18735/login || true)"
+adb shell input keyevent KEYCODE_WAKEUP
+if [[ "$screen_off_status" != '200' ]]; then
+  cat "$drive_log"
+  echo "::error::Android server did not serve /login with the display off (HTTP ${screen_off_status:-no response})."
+  exit 1
+fi
+echo 'Android remote server remained reachable with the emulator display off.'
+
 adb shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
 wait_for_flutter_marker 'HTC_ANDROID_MQTT_BG_ACCEPTANCE_READY' 'MQTT-background'
 
