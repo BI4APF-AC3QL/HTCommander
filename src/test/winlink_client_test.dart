@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/winlink/winlink_client.dart';
 import 'package:htcommander/winlink/winlink_mail.dart';

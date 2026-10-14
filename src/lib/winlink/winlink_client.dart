@@ -63,11 +63,12 @@ class WinlinkDebugEntry {
 /// The Winlink B2F protocol client. Supports both TCP (telnet to a CMS server)
 /// and X25 (AX.25 session over radio) transports.
 class WinlinkClient {
-  WinlinkClient({
+  factory WinlinkClient({
     Duration tcpRetryDelay = const Duration(seconds: 2),
     int maxTcpRetries = 3,
-  }) : _tcpRetryDelay = tcpRetryDelay,
-       _maxTcpRetries = maxTcpRetries {
+  }) => WinlinkClient._(tcpRetryDelay, maxTcpRetries);
+
+  WinlinkClient._(this._tcpRetryDelay, this._maxTcpRetries) {
     _broker = DataBrokerClient();
 
     // Subscribe to broker events to start syncing
