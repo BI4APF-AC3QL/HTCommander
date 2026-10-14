@@ -40,11 +40,21 @@ void main() {
         await settle();
         expect(startAttempts, 2);
 
+        // APRS-IS remains a long-lived TCP client while it reconnects, even
+        // when no physical radio is active.
+        set('AprsIsEnabled', 1);
+        await settle();
+        expect(startAttempts, 2);
+
         set('agwpeServerEnabled', 0);
         await settle();
         expect(stopCalls, 0);
 
         set('homeAssistantEnabled', 0);
+        await settle();
+        expect(stopCalls, 0);
+
+        set('AprsIsEnabled', 0);
         await settle();
         expect(stopCalls, 1);
       } finally {
@@ -92,6 +102,67 @@ void main() {
         set(0, 'agwpeServerEnabled', 0);
         await settle();
         expect(stopCalls, 1);
+      } finally {
+        await handler.dispose();
+      }
+    },
+  );
+
+  test(
+    'keeps internet radio and hosted node sessions alive in background',
+    () async {
+      var startCalls = 0;
+      var stopCalls = 0;
+      final handler = AndroidNetworkServicesHandler(
+        startService: () async {
+          startCalls++;
+        },
+        stopService: () async {
+          stopCalls++;
+        },
+      );
+      void emit(int deviceId, String name, Object value, {bool store = true}) =>
+          DataBroker.dispatch(
+            deviceId: deviceId,
+            name: name,
+            data: value,
+            store: store,
+          );
+      Future<void> settle() =>
+          Future<void>.delayed(const Duration(milliseconds: 10));
+
+      try {
+        handler.init();
+        emit(200, 'State', 'Online');
+        await settle();
+        expect(startCalls, 1);
+
+        // A second internet-only radio keeps the shared service active after
+        // EchoLink disconnects.
+        emit(202, 'State', 'Connecting');
+        await settle();
+        emit(200, 'State', 'Disconnected');
+        await settle();
+        expect(stopCalls, 0);
+
+        emit(202, 'State', 'Disconnected');
+        await settle();
+        expect(stopCalls, 1);
+
+        // Node hosting has its own event-only lifecycle and is not represented
+        // in ConnectedRadios when the physical radio drops.
+        emit(203, 'State', 'Starting', store: false);
+        await settle();
+        expect(startCalls, 2);
+        emit(203, 'State', 'Hosting', store: false);
+        await settle();
+        emit(1, 'ConnectedRadios', []);
+        await settle();
+        expect(stopCalls, 1);
+
+        emit(203, 'State', 'Stopped', store: false);
+        await settle();
+        expect(stopCalls, 2);
       } finally {
         await handler.dispose();
       }

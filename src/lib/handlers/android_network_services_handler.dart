@@ -1,10 +1,13 @@
 import 'dart:async';
 
+import '../allstar/allstar_client.dart' show allStarDeviceId;
+import '../allstar/allstar_node.dart' show allStarNodeDeviceId;
+import '../echolink/echolink_client.dart' show echoLinkDeviceId;
 import '../services/android_server_lifecycle.dart';
 import '../services/data_broker_client.dart';
 
-/// Holds Android's foreground service while a radio or TCP/MQTT service is active.
-/// The application-owned Flutter engine keeps the Dart radio and server handlers
+/// Holds Android's foreground service while a radio or network session is active.
+/// The application-owned Flutter engine keeps the Dart radio and network handlers
 /// alive; this service keeps the process eligible to run in the background.
 class AndroidNetworkServicesHandler {
   AndroidNetworkServicesHandler({this._startService, this._stopService})
@@ -17,6 +20,7 @@ class AndroidNetworkServicesHandler {
   final Future<void> Function()? _stopService;
   Future<void> _transition = Future<void>.value();
   bool _active = false;
+  bool _allStarNodeActive = false;
   bool _disposed = false;
   Timer? _retryTimer;
   var _retryDelay = const Duration(seconds: 2);
@@ -24,7 +28,11 @@ class AndroidNetworkServicesHandler {
   void init() {
     _broker.subscribeMultiple(
       deviceId: 0,
-      names: const ['agwpeServerEnabled', 'homeAssistantEnabled'],
+      names: const [
+        'agwpeServerEnabled',
+        'homeAssistantEnabled',
+        'AprsIsEnabled',
+      ],
       callback: _onSettingChanged,
     );
     _broker.subscribe(
@@ -32,15 +40,56 @@ class AndroidNetworkServicesHandler {
       name: 'ConnectedRadios',
       callback: _onSettingChanged,
     );
+    for (final deviceId in const [echoLinkDeviceId, allStarDeviceId]) {
+      _broker.subscribe(
+        deviceId: deviceId,
+        name: 'State',
+        callback: _onSettingChanged,
+      );
+    }
+    _broker.subscribe(
+      deviceId: allStarNodeDeviceId,
+      name: 'State',
+      callback: _onAllStarNodeStateChanged,
+    );
     _apply();
   }
 
   void _onSettingChanged(int deviceId, String name, Object? value) => _apply();
 
+  void _onAllStarNodeStateChanged(
+    int deviceId,
+    String name,
+    Object? value,
+  ) {
+    _allStarNodeActive = value == 'Starting' || value == 'Hosting';
+    _apply();
+  }
+
   bool get _shouldRun =>
       (_broker.getValue<int>(0, 'agwpeServerEnabled', 0) ?? 0) == 1 ||
       (_broker.getValue<int>(0, 'homeAssistantEnabled', 0) ?? 0) == 1 ||
+      // APRS-IS is a persistent TCP session even when no physical radio is
+      // connected. Keep the process alive while it is enabled so reconnect,
+      // inbox and internet-only beacon work continue when Android backgrounds
+      // the app.
+      (_broker.getValue<int>(0, 'AprsIsEnabled', 0) ?? 0) == 1 ||
+      // EchoLink and AllStarLink can operate as internet-only radios and are
+      // intentionally absent from ConnectedRadios.
+      _hasActiveInternetRadio ||
+      // Hosted AllStar node state is event-only; keep the session we observed
+      // during this process alive even if its attached radio disconnects.
+      _allStarNodeActive ||
       _hasConnectedRadio;
+
+  bool get _hasActiveInternetRadio =>
+      _isInternetRadioActive(echoLinkDeviceId) ||
+      _isInternetRadioActive(allStarDeviceId);
+
+  bool _isInternetRadioActive(int deviceId) {
+    final state = _broker.getValueDynamic(deviceId, 'State');
+    return state == 'Online' || state == 'Connecting' || state == 'Connected';
+  }
 
   bool get _hasConnectedRadio {
     final radios = _broker.getValueDynamic(1, 'ConnectedRadios');
