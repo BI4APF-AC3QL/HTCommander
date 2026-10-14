@@ -49,9 +49,10 @@ void main() {
         final server = handler!;
         HttpClient? http;
         try {
-          // Port zero lets Android choose a free ephemeral port for this test.
-          // The app's regular settings and validation path still starts the
-          // native foreground service before opening the real Dart HTTP socket.
+          // Use a fixed emulator-only port so the host acceptance script can
+          // forward it with adb while the app is backgrounded. The app's
+          // regular settings path starts the native foreground service before
+          // opening the real Dart HTTP socket.
           DataBroker.dispatch(deviceId: 0, name: 'webServerEnabled', data: 0);
           await tester.runAsync(() async {
             final deadline = DateTime.now().add(const Duration(seconds: 10));
@@ -65,7 +66,12 @@ void main() {
             isNull,
             reason: 'the test must start from a stopped server',
           );
-          DataBroker.dispatch(deviceId: 0, name: 'webServerPort', data: 0);
+          const testPort = 18735;
+          DataBroker.dispatch(
+            deviceId: 0,
+            name: 'webServerPort',
+            data: testPort,
+          );
           DataBroker.dispatch(
             deviceId: 0,
             name: 'webServerRemoteEnabled',
@@ -95,6 +101,16 @@ void main() {
             return server.boundPort;
           });
           expect(port, isNotNull, reason: 'the real HTTP listener must bind');
+
+          // The shell acceptance script waits for this marker, presses HOME,
+          // and probes the forwarded server from the host while this test
+          // remains alive. This exercises the foreground-service path rather
+          // than merely checking the listener while MainActivity is visible.
+          // ignore: avoid_print
+          print('HTC_ANDROID_BG_ACCEPTANCE_READY:$port');
+          await tester.runAsync(() async {
+            await Future<void>.delayed(const Duration(seconds: 15));
+          });
 
           http = HttpClient();
           await tester.runAsync(() async {
