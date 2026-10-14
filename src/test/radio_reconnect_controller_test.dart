@@ -1,0 +1,147 @@
+import 'dart:async';
+
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:htcommander/services/radio_reconnect_controller.dart';
+
+const _delays = [
+  Duration(seconds: 2),
+  Duration(seconds: 4),
+  Duration(seconds: 8),
+];
+
+void main() {
+  test(
+    'failed attempts use bounded increasing delays and stop at the limit',
+    () {
+      fakeAsync((time) {
+        final attemptsAt = <Duration>[];
+        var remembered = true;
+        var exhausted = 0;
+        final controller = RadioReconnectController(
+          delays: _delays,
+          isRemembered: (_) => remembered,
+          isConnected: (_) => false,
+          attempt: (_) async {
+            attemptsAt.add(time.elapsed);
+            return false;
+          },
+          onExhausted: (_, count) => exhausted = count,
+        );
+
+        controller.schedule('aa:bb:cc:dd:ee:ff');
+        controller.schedule('AA:BB:CC:DD:EE:FF');
+        expect(controller.attemptsFor('aa:bb:cc:dd:ee:ff'), 1);
+        time.elapse(const Duration(seconds: 2));
+        time.flushMicrotasks();
+        expect(attemptsAt, [const Duration(seconds: 2)]);
+        expect(controller.attemptsFor('AA:BB:CC:DD:EE:FF'), 2);
+
+        time.elapse(const Duration(seconds: 4));
+        time.flushMicrotasks();
+        expect(attemptsAt, [
+          const Duration(seconds: 2),
+          const Duration(seconds: 6),
+        ]);
+        time.elapse(const Duration(seconds: 8));
+        time.flushMicrotasks();
+        expect(attemptsAt, hasLength(3));
+        expect(exhausted, 3);
+        expect(controller.hasWork, isFalse);
+
+        controller.schedule('AA:BB:CC:DD:EE:FF');
+        expect(exhausted, 3, reason: 'exhaustion is reported only once');
+        remembered = false;
+        controller.cancel('aa:bb:cc:dd:ee:ff');
+        controller.dispose();
+      });
+    },
+  );
+
+  test('a pending retry cannot overlap an in-flight attempt', () {
+    fakeAsync((time) {
+      final firstAttempt = Completer<bool>();
+      var attemptCount = 0;
+      final controller = RadioReconnectController(
+        delays: _delays,
+        isRemembered: (_) => true,
+        isConnected: (_) => false,
+        attempt: (_) {
+          attemptCount++;
+          return attemptCount == 1
+              ? firstAttempt.future
+              : Future<bool>.value(true);
+        },
+      );
+
+      controller.schedule('10:20:30:40:50:60');
+      time.elapse(const Duration(seconds: 2));
+      time.flushMicrotasks();
+      expect(attemptCount, 1);
+      expect(controller.hasWork, isTrue);
+
+      // A second Disconnected notification during the scan/connect must not
+      // create another timer or a concurrent connection attempt.
+      controller.schedule('10:20:30:40:50:60');
+      expect(controller.attemptsFor('10:20:30:40:50:60'), 1);
+      expect(time.nonPeriodicTimerCount, 0);
+      firstAttempt.complete(false);
+      time.flushMicrotasks();
+      expect(controller.attemptsFor('10:20:30:40:50:60'), 2);
+
+      time.elapse(const Duration(seconds: 4));
+      time.flushMicrotasks();
+      expect(attemptCount, 2);
+      expect(controller.hasWork, isFalse);
+      controller.dispose();
+    });
+  });
+
+  test(
+    'success resets backoff and explicit disconnect cancels pending retry',
+    () {
+      fakeAsync((time) {
+        var remembered = true;
+        var successes = 0;
+        final attemptTimes = <Duration>[];
+        final controller = RadioReconnectController(
+          delays: _delays,
+          isRemembered: (_) => remembered,
+          isConnected: (_) => false,
+          attempt: (_) async {
+            attemptTimes.add(time.elapsed);
+            successes++;
+            return successes >= 2;
+          },
+        );
+
+        controller.schedule('aa:bb:cc:dd:ee:ff');
+        time.elapse(const Duration(seconds: 2));
+        time.flushMicrotasks();
+        expect(controller.attemptsFor('aa:bb:cc:dd:ee:ff'), 2);
+        time.elapse(const Duration(seconds: 4));
+        time.flushMicrotasks();
+        expect(controller.attemptsFor('aa:bb:cc:dd:ee:ff'), 0);
+
+        controller.schedule('aa:bb:cc:dd:ee:ff');
+        time.elapse(const Duration(seconds: 2));
+        time.flushMicrotasks();
+        expect(attemptTimes, [
+          const Duration(seconds: 2),
+          const Duration(seconds: 6),
+          const Duration(seconds: 8),
+        ]);
+        expect(controller.hasWork, isFalse);
+
+        controller.schedule('aa:bb:cc:dd:ee:ff');
+        remembered = false;
+        controller.cancel('aa:bb:cc:dd:ee:ff');
+        time.elapse(const Duration(minutes: 1));
+        time.flushMicrotasks();
+        expect(attemptTimes, hasLength(3));
+        expect(controller.hasWork, isFalse);
+        controller.dispose();
+      });
+    },
+  );
+}
