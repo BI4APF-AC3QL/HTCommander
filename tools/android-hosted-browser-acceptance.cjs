@@ -109,8 +109,17 @@ async function main() {
         startupText.replace(/\s+/g, ' ').slice(0, 600));
     }
     await page.waitForFunction(
-      () => Boolean(document.querySelector('flutter-view')?.shadowRoot?.querySelector('canvas') ||
-        document.querySelector('flutter-view canvas, flt-glass-pane canvas, canvas')),
+      () => {
+        const pending = [document];
+        while (pending.length > 0) {
+          const root = pending.pop();
+          if (root.querySelector('canvas')) return true;
+          for (const element of root.querySelectorAll('*')) {
+            if (element.shadowRoot) pending.push(element.shadowRoot);
+          }
+        }
+        return false;
+      },
       null,
       { timeout: 60000 },
     );
@@ -120,9 +129,17 @@ async function main() {
     assert.equal(resources.canvaskitWasm, 200, 'CanvasKit renderer must load from APK');
     assert.deepEqual(errors, [], 'hosted Flutter app must have no uncaught JavaScript errors');
     const canvas = await page.evaluate(() => {
-      const view = document.querySelector('flutter-view');
-      const element = view?.shadowRoot?.querySelector('canvas') ||
-        document.querySelector('flutter-view canvas, flt-glass-pane canvas, canvas');
+      const pending = [document];
+      let element;
+      while (pending.length > 0 && !element) {
+        const root = pending.pop();
+        element = root.querySelector('canvas');
+        if (!element) {
+          for (const child of root.querySelectorAll('*')) {
+            if (child.shadowRoot) pending.push(child.shadowRoot);
+          }
+        }
+      }
       if (!element) return null;
       const rect = element.getBoundingClientRect();
       return { bitmapWidth: element.width, bitmapHeight: element.height, width: rect.width, height: rect.height };
