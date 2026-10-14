@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/widgets.dart' show ErrorWidget;
+import 'package:flutter/widgets.dart' show ErrorWidget, ValueKey;
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
 import 'package:htcommander/services/data_broker.dart';
