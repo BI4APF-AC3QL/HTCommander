@@ -4455,6 +4455,7 @@ class _MainFormState extends State<MainForm>
             controller: _tabListScrollController,
             thumbVisibility: true,
             child: ListView.builder(
+              key: const ValueKey('main_tab_navigation'),
               controller: _tabListScrollController,
               padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
               itemCount: _currentTabs.length,
@@ -4482,6 +4483,7 @@ class _MainFormState extends State<MainForm>
                         );
                       },
                       child: InkWell(
+                        key: ValueKey('main_tab_${tab.label}'),
                         onTap: () {
                           // Re-tapping the already-selected APRS tab returns it
                           // to the conversation list.

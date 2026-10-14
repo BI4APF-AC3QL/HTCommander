@@ -21,6 +21,37 @@ void main() {
       try {
         app.main(<String>[]);
         await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
+
+        // Android phones use the compact layout, where the radio controls and
+        // the most-used functions are opened from the narrow side navigation.
+        // Exercise those entries on the emulator so a successful server test
+        // also proves the phone-sized app shell is interactive.
+        final mobileNavigation = find.byKey(
+          const ValueKey<String>('main_tab_navigation'),
+        );
+        expect(mobileNavigation, findsOneWidget);
+        for (final tab in const <String>[
+          'Radio',
+          'Comms',
+          'Audio',
+          'APRS',
+          'Map',
+        ]) {
+          final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
+          expect(
+            entry,
+            findsOneWidget,
+            reason: '$tab should be in phone navigation',
+          );
+          expect(
+            entry.hitTestable(),
+            findsOneWidget,
+            reason: '$tab should be visible and tappable on a phone-sized screen',
+          );
+          await tester.tap(entry);
+          await tester.pump(const Duration(milliseconds: 350));
+        }
 
         final handler = await tester.runAsync(() async {
           final deadline = DateTime.now().add(const Duration(seconds: 120));
