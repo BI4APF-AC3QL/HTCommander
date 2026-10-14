@@ -98,6 +98,12 @@ async function main() {
     );
     assert.equal(await page.locator('#frequency').innerText(), '145.60000 MHz');
     assert.equal(await page.locator('#squelch').inputValue(), '5');
+    await page.locator('[data-page="radio"] summary')
+      .filter({ hasText: '电台音量与静噪' })
+      .click();
+    await page.locator('[data-page="radio"] summary')
+      .filter({ hasText: '操作权' })
+      .click();
     await page.locator('#controlRequest').click();
     await page.waitForFunction(
       () => document.querySelector('#controlStatus')?.textContent.includes('你持有操作权'),
