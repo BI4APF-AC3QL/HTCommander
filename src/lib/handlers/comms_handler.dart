@@ -9,14 +9,12 @@ data from radios and maintains a history of decoded/transmitted voice text.
 Scope of this port (core handler + broker contract):
   - Enable / Disable lifecycle, target-radio tracking and state dispatch.
   - Decoded text history (in-memory + JSON persistence on disk).
-  - Recording-enabled flag and RecordingState dispatch.
+  - Bounded asynchronous WAV recording and RecordingState dispatch.
   - Clear-history command and the related broadcast events.
   - Auto-disable when the target radio disconnects or its audio is turned off.
 
-The following heavy features from the original C# are intentionally STUBBED
-here as clean extension points and produce no functional behaviour yet:
-  - Speech-to-text (Whisper) decoding of incoming audio frames.
-  - Text-to-speech synthesis (Speak command).
+Speech-to-text decoding and text-to-speech synthesis are implemented through
+platform-specific audio engines. Web builds omit PCM-buffer speech recognition.
 
 Morse-code transmit is implemented: the Morse command generates tone PCM via
 MorseCodeEngine and transmits it through the radio audio path.
@@ -62,6 +60,7 @@ import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../services/db/app_database.dart';
 import '../services/notification_service.dart';
+import '../services/recording/wav_clip_writer.dart';
 import '../services/tts_service.dart';
 import '../sstv/sstv_monitor.dart';
 import '../utils/num_parsing.dart';
@@ -289,11 +288,12 @@ class CommsHandler {
   Directory? _recordingsDir;
 
   // Active recording context (set while an audio run is being captured).
-  _WavClipRecorder? _recorder;
+  WavClipWriter? _recorder;
   int _recordingDeviceId = -1;
   DateTime _recordingStartTime = DateTime.now();
   String _recordingChannel = '';
   String _recordingFilename = '';
+  int _recordingNameSuffix = 0;
   bool _recordingIsTransmit = false;
 
   // Outgoing (transmit) audio recording. Outgoing voice is captured directly
@@ -306,8 +306,6 @@ class CommsHandler {
 
   // Current audio-run context (updated from AudioDataStart events).
   String _currentChannelName = '';
-  // ignore: unused_field
-  bool _currentAudioIsTransmit = false;
 
   // Speech-to-text state. STT is always-on (gated by the persisted
   // `SpeechToTextEnabled` setting), independent of the voice-handler enable
@@ -678,9 +676,6 @@ class CommsHandler {
       '[CommsHandler] Enabled for device $deviceId, language: $language',
     );
 
-    // Speech-to-text engine initialization is deferred in this build.
-    // TODO(stt): initialize the speech-to-text engine here when available.
-
     _dispatchCommsHandlerState();
   }
 
@@ -691,8 +686,6 @@ class CommsHandler {
     final previousDeviceId = _targetDeviceId;
     _enabled = false;
     _targetDeviceId = -1;
-
-    // Speech-to-text cleanup is deferred in this build.
 
     // Indicate we are no longer listening/processing.
     if (previousDeviceId > 0) {
@@ -914,11 +907,8 @@ class CommsHandler {
     }
   }
 
-  /// Dispatches a TextReady event directly to the radio device whose audio is
-  /// being transcribed. Mirrors [_dispatchSstvTextReady] / the recording path:
-  /// the voice tab subscribes to TextReady on all devices, but the gated
-  /// [_dispatchTextReady] only fires for an enabled target radio (never set in
-  /// this build).
+  /// Dispatches a TextReady event directly to the radio whose audio is being
+  /// transcribed so the voice tab can associate the result with its source.
   void _dispatchSttTextReady(
     String text,
     String channel,
@@ -961,7 +951,7 @@ class CommsHandler {
   }
 
   // ---------------------------------------------------------------------------
-  // Recording (flag-only; WAV capture is stubbed)
+  // Audio clip recording
   // ---------------------------------------------------------------------------
 
   void _onRecordingEnable(int deviceId, String name, Object? data) {
@@ -974,7 +964,7 @@ class CommsHandler {
   void _onRecordingDisable(int deviceId, String name, Object? data) {
     if (!_recordingEnabled) return;
     // Finalize any in-progress recording before turning recording off.
-    if (_recorder != null) _finalizeRecording();
+    if (_recorder != null) unawaited(_finalizeRecording());
     _recordingEnabled = false;
     _dispatchRecordingState();
     _broker.logInfo('[CommsHandler] Recording disabled');
@@ -1030,16 +1020,10 @@ class CommsHandler {
       _handleRecordingStart(deviceId, data);
     }
 
-    // Speech-to-text segment start (deferred) for the enabled target radio.
-    if (deviceId == _targetDeviceId && _enabled) {
-      if (data is Map) {
-        final cn =
-            (data['channelName'] ?? data['ChannelName']) as String? ?? '';
-        if (cn.isNotEmpty) _currentChannelName = cn;
-        _currentAudioIsTransmit =
-            (data['transmit'] ?? data['Transmit']) as bool? ?? false;
-      }
-      // TODO(stt): begin a new speech segment.
+    if (deviceId == _targetDeviceId && _enabled && data is Map) {
+      final channel =
+          (data['channelName'] ?? data['ChannelName']) as String? ?? '';
+      if (channel.isNotEmpty) _currentChannelName = channel;
     }
 
     // Speech-to-text: begin a new recognition segment for received audio.
@@ -1099,7 +1083,7 @@ class CommsHandler {
     if (_recorder != null &&
         deviceId == _recordingDeviceId &&
         !_recordingIsTransmit) {
-      _finalizeRecording();
+      unawaited(_finalizeRecording());
     }
 
     // Finalize any in-progress SSTV decoding when the audio stream ends.
@@ -1129,11 +1113,6 @@ class CommsHandler {
       _radiosondeEmitDeviceId = deviceId;
       _radiosondeMonitor!.flush();
       _radiosondeDeviceId = -1;
-    }
-
-    // Speech-to-text flush (deferred) for the enabled target radio.
-    if (deviceId == _targetDeviceId && _enabled) {
-      // TODO(stt): flush the current speech segment.
     }
 
     // Speech-to-text: complete the active segment to force a final result.
@@ -1257,11 +1236,6 @@ class CommsHandler {
           recorder.write(bytes, offset, length);
         }
       }
-    }
-
-    // Speech-to-text (deferred) for the enabled target radio.
-    if (deviceId == _targetDeviceId && _enabled) {
-      // TODO(stt): feed PCM frames to the speech-to-text engine.
     }
 
     // Speech-to-text: feed received PCM frames into the active segment.
@@ -1486,7 +1460,7 @@ class CommsHandler {
     _txRecordTimer?.cancel();
     _txRecordTimer = null;
     if (_recorder != null && _recordingIsTransmit) {
-      _finalizeRecording();
+      unawaited(_finalizeRecording());
     }
   }
 
@@ -1496,8 +1470,9 @@ class CommsHandler {
     String channel,
     bool transmit,
   ) {
-    // Finalize any previous recording first.
-    if (_recorder != null) _finalizeRecording();
+    // Close a previous clip asynchronously so the live audio callback stays
+    // responsive while the next run starts capturing immediately.
+    if (_recorder != null) unawaited(_finalizeRecording());
 
     final dir = _recordingsDir;
     if (dir == null) {
@@ -1506,10 +1481,15 @@ class CommsHandler {
       return;
     }
 
-    final filename =
-        'Recording_${_formatTimestamp(startTime)}_${_sanitizeChannel(channel)}.wav';
-    final fullPath = '${dir.path}${Platform.pathSeparator}$filename';
-    final recorder = _WavClipRecorder.open(fullPath, _recordingSampleRate);
+    var suffix = 0;
+    var filename = _recordingFilename(startTime, channel, suffix);
+    var fullPath = '${dir.path}${Platform.pathSeparator}$filename';
+    while (File(fullPath).existsSync()) {
+      suffix++;
+      filename = _recordingFilename(startTime, channel, suffix);
+      fullPath = '${dir.path}${Platform.pathSeparator}$filename';
+    }
+    final recorder = WavClipWriter.open(fullPath, _recordingSampleRate);
     if (recorder == null) {
       _broker.logError('[CommsHandler] Failed to start recording: $filename');
       return;
@@ -1520,21 +1500,20 @@ class CommsHandler {
     _recordingStartTime = startTime;
     _recordingChannel = channel;
     _recordingFilename = filename;
+    _recordingNameSuffix = suffix;
     _recordingIsTransmit = transmit;
   }
 
-  void _finalizeRecording() {
+  Future<void> _finalizeRecording() async {
     final recorder = _recorder;
     if (recorder == null) return;
     _txRecordTimer?.cancel();
     _txRecordTimer = null;
     _recorder = null;
-    final dataBytes = recorder.dataBytes;
-    recorder.close();
-
     var filename = _recordingFilename;
     final channel = _recordingChannel;
     final startTime = _recordingStartTime;
+    final suffix = _recordingNameSuffix;
     final isReceived = !_recordingIsTransmit;
     final deviceId = _recordingDeviceId;
     final dir = _recordingsDir;
@@ -1542,6 +1521,16 @@ class CommsHandler {
     _recordingDeviceId = -1;
     _recordingFilename = '';
     _recordingChannel = '';
+    _recordingNameSuffix = 0;
+
+    final result = await recorder.close();
+    final dataBytes = result.dataBytes;
+    if (result.droppedBytes > 0 || result.failed) {
+      _broker.logError(
+        '[CommsHandler] Recording write issue: dropped '
+        '${result.droppedBytes} bytes; failed=${result.failed}',
+      );
+    }
 
     // 32000 Hz * 2 bytes/sample (16-bit mono) = 64000 bytes per second.
     final durationSeconds = dataBytes / 64000.0;
@@ -1549,17 +1538,27 @@ class CommsHandler {
       // The channel may have been resolved from the audio frames after the file
       // was created; rename the file so it reflects the correct channel name.
       if (dir != null && channel.isNotEmpty) {
-        final desired =
-            'Recording_${_formatTimestamp(startTime)}_${_sanitizeChannel(channel)}.wav';
+        var desired = _recordingFilename(startTime, channel, suffix);
         if (desired != filename) {
           try {
             final oldFile = File(
               '${dir.path}${Platform.pathSeparator}$filename',
             );
-            if (oldFile.existsSync()) {
-              oldFile.renameSync(
-                '${dir.path}${Platform.pathSeparator}$desired',
+            var desiredPath =
+                '${dir.path}${Platform.pathSeparator}$desired';
+            var collisionSuffix = suffix;
+            while (desiredPath != oldFile.path &&
+                await File(desiredPath).exists()) {
+              collisionSuffix++;
+              desired = _recordingFilename(
+                startTime,
+                channel,
+                collisionSuffix,
               );
+              desiredPath = '${dir.path}${Platform.pathSeparator}$desired';
+            }
+            if (await oldFile.exists()) {
+              await oldFile.rename(desiredPath);
               filename = desired;
             }
           } catch (e) {
@@ -1596,7 +1595,7 @@ class CommsHandler {
       // Discard recordings that are too short to be useful.
       if (dir != null) {
         try {
-          File('${dir.path}${Platform.pathSeparator}$filename').deleteSync();
+          await File('${dir.path}${Platform.pathSeparator}$filename').delete();
         } catch (_) {}
       }
       _broker.logInfo('[CommsHandler] Discarded short recording: $filename');
@@ -1645,6 +1644,12 @@ class CommsHandler {
         '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)}';
     final clock = '${two(t.hour)}-${two(t.minute)}-${two(t.second)}';
     return '${date}_$clock';
+  }
+
+  String _recordingFilename(DateTime time, String channel, int suffix) {
+    final numbered = suffix == 0 ? '' : '_$suffix';
+    return 'Recording_${_formatTimestamp(time)}_${_sanitizeChannel(channel)}'
+        '$numbered.wav';
   }
 
   // ---------------------------------------------------------------------------
@@ -3383,7 +3388,7 @@ class CommsHandler {
     _saveHistoryTimer = null;
     if (_historyDirty) unawaited(_writeVoiceTextHistory());
     _txRecordTimer?.cancel();
-    if (_recorder != null) _finalizeRecording();
+    if (_recorder != null) unawaited(_finalizeRecording());
     _cleanupSstvMonitor();
     _cleanupCwMonitor();
     _cleanupSarsatMonitor();
@@ -3392,74 +3397,5 @@ class CommsHandler {
     if (_enabled) disable();
     _broker.logInfo('[CommsHandler] Voice Handler disposing');
     _broker.dispose();
-  }
-}
-
-/// Minimal incremental WAV (PCM 16-bit mono) writer for recorded audio clips.
-/// Writes a 44-byte header up front and patches the size fields on close.
-class _WavClipRecorder {
-  final RandomAccessFile _raf;
-  final int _sampleRate;
-  int _dataBytes = 0;
-
-  _WavClipRecorder._(this._raf, this._sampleRate) {
-    _raf.writeFromSync(_header(0, _sampleRate));
-  }
-
-  int get dataBytes => _dataBytes;
-
-  static _WavClipRecorder? open(String path, int sampleRate) {
-    try {
-      final raf = File(path).openSync(mode: FileMode.write);
-      return _WavClipRecorder._(raf, sampleRate);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  void write(Uint8List bytes, int offset, int length) {
-    try {
-      if (offset == 0 && length == bytes.length) {
-        _raf.writeFromSync(bytes);
-      } else {
-        _raf.writeFromSync(bytes, offset, offset + length);
-      }
-      _dataBytes += length;
-    } catch (_) {}
-  }
-
-  void close() {
-    try {
-      // Patch the RIFF/data sizes now that the total length is known.
-      _raf.setPositionSync(0);
-      _raf.writeFromSync(_header(_dataBytes, _sampleRate));
-      _raf.closeSync();
-    } catch (_) {}
-  }
-
-  // 44-byte canonical WAV header for 16-bit mono PCM.
-  static Uint8List _header(int dataBytes, int sampleRate) {
-    const int channels = 1;
-    const int bitsPerSample = 16;
-    final int byteRate = sampleRate * channels * bitsPerSample ~/ 8;
-    const int blockAlign = channels * bitsPerSample ~/ 8;
-    final int riffSize = 36 + dataBytes;
-
-    final bytes = Uint8List(44);
-    final bd = ByteData.sublistView(bytes);
-    bytes.setAll(0, 'RIFF'.codeUnits);
-    bd.setUint32(4, riffSize, Endian.little);
-    bytes.setAll(8, 'WAVE'.codeUnits);
-    bytes.setAll(12, 'fmt '.codeUnits);
-    bd.setUint32(16, 16, Endian.little); // fmt chunk size
-    bd.setUint16(20, 1, Endian.little); // PCM
-    bd.setUint16(22, channels, Endian.little);
-    bd.setUint32(24, sampleRate, Endian.little);
-    bd.setUint32(28, byteRate, Endian.little);
-    bd.setUint16(32, blockAlign, Endian.little);
-    bd.setUint16(34, bitsPerSample, Endian.little);
-    bytes.setAll(36, 'data'.codeUnits);
-    bd.setUint32(40, dataBytes, Endian.little);
-    return bytes;
   }
 }
