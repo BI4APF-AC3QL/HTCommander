@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   void set(int id, String name, Object? data) =>
       DataBroker.dispatch(deviceId: id, name: name, data: data, store: true);
+  Future<void> waitFor(bool Function() predicate) async {
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (predicate()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(predicate(), isTrue, reason: 'condition did not settle');
+  }
   tearDown(DataBroker.reset);
   test(
     'production audio broker captures only selected received voice',
@@ -72,6 +80,67 @@ void main() {
       }
     },
   );
+  test('disabling during Android service startup releases the late start', () async {
+    final serviceStart = Completer<void>();
+    final startCalled = Completer<void>();
+    var stopCalls = 0;
+    final handler = RollingVoiceHandler(
+      isAndroid: true,
+      startAndroidService: () {
+        startCalled.complete();
+        return serviceStart.future;
+      },
+      stopAndroidService: () async {
+        stopCalls++;
+      },
+    );
+    try {
+      set(0, 'RollingVoiceEnabled', true);
+      handler.init();
+      await startCalled.future.timeout(const Duration(seconds: 2));
+
+      set(0, 'RollingVoiceEnabled', false);
+      serviceStart.complete();
+      await waitFor(() => stopCalls == 1);
+
+      expect(stopCalls, 1);
+      expect(
+        (DataBroker.getValueDynamic(0, 'RollingVoiceStatus') as Map)['running'],
+        false,
+      );
+    } finally {
+      if (!serviceStart.isCompleted) serviceStart.complete();
+      await handler.close();
+    }
+  });
+  test('closing during Android service startup stops the late start', () async {
+    final serviceStart = Completer<void>();
+    final startCalled = Completer<void>();
+    var stopCalls = 0;
+    final handler = RollingVoiceHandler(
+      isAndroid: true,
+      startAndroidService: () {
+        startCalled.complete();
+        return serviceStart.future;
+      },
+      stopAndroidService: () async {
+        stopCalls++;
+      },
+    );
+    try {
+      set(0, 'RollingVoiceEnabled', true);
+      handler.init();
+      await startCalled.future.timeout(const Duration(seconds: 2));
+
+      final closing = handler.close();
+      serviceStart.complete();
+      await closing;
+      expect(stopCalls, 1);
+    } finally {
+      if (!serviceStart.isCompleted) serviceStart.complete();
+      await handler.close();
+    }
+  });
   testWidgets('local dialog default 24h and explicit start persist config', (
     tester,
   ) async {

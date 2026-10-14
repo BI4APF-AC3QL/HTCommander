@@ -9,8 +9,19 @@ import '../services/recording/rolling_voice_recorder.dart';
 
 /// Local-only, opt-in received voice capture for the selected physical radio.
 class RollingVoiceHandler {
-  RollingVoiceHandler({this.folderProvider});
+  RollingVoiceHandler({
+    this.folderProvider,
+    bool? isAndroid,
+    Future<void> Function()? startAndroidService,
+    Future<void> Function()? stopAndroidService,
+  }) : _isAndroid = isAndroid ?? Platform.isAndroid,
+       _startAndroidService = startAndroidService,
+       _stopAndroidServiceOverride = stopAndroidService;
+
   final Future<String> Function()? folderProvider;
+  final bool _isAndroid;
+  final Future<void> Function()? _startAndroidService;
+  final Future<void> Function()? _stopAndroidServiceOverride;
   final _broker = DataBrokerClient();
   final _androidLifecycle = AndroidServerLifecycle();
   late final RollingVoiceRecorder _recorder = RollingVoiceRecorder(
@@ -19,6 +30,7 @@ class RollingVoiceHandler {
   bool _disposed = false;
   bool _androidServiceRequested = false;
   int _revision = 0;
+  Future<void> _transition = Future<void>.value();
   String? _folder;
   Map<String, Object?> _last = {};
   void init() {
@@ -66,9 +78,16 @@ class RollingVoiceHandler {
     }
   }
 
-  Future<void> _apply() async {
+  Future<void> _apply() {
     final revision = ++_revision;
-    if (_disposed) return;
+    _transition = _transition.catchError((Object _) {}).then((_) async {
+      await _applyRevision(revision);
+    });
+    return _transition;
+  }
+
+  Future<void> _applyRevision(int revision) async {
+    if (_disposed || revision != _revision) return;
     if (_broker.getValue<bool>(0, 'RollingVoiceEnabled', false) != true) {
       await _recorder.stop();
       await _stopAndroidService();
@@ -82,9 +101,10 @@ class RollingVoiceHandler {
       return;
     }
     _state({'running': false, 'starting': true});
-    if (Platform.isAndroid && !_androidServiceRequested) {
+    if (_isAndroid && !_androidServiceRequested) {
       try {
-        await _androidLifecycle.start(reason: 'recording');
+        await (_startAndroidService?.call() ??
+            _androidLifecycle.start(reason: 'recording'));
         _androidServiceRequested = true;
       } catch (_) {
         if (revision == _revision) {
@@ -92,6 +112,10 @@ class RollingVoiceHandler {
         }
         return;
       }
+      // A newer disable or close request may have arrived while Android was
+      // bringing up the foreground service. The queued transition will stop it
+      // after this start finishes; do not continue into recorder setup here.
+      if (_disposed || revision != _revision) return;
     }
     try {
       _folder ??= folderProvider != null
@@ -108,9 +132,10 @@ class RollingVoiceHandler {
   }
 
   Future<void> _stopAndroidService() async {
-    if (!Platform.isAndroid || !_androidServiceRequested) return;
+    if (!_isAndroid || !_androidServiceRequested) return;
     _androidServiceRequested = false;
-    await _androidLifecycle.stop(reason: 'recording');
+    await (_stopAndroidServiceOverride?.call() ??
+        _androidLifecycle.stop(reason: 'recording'));
   }
 
   void _audio(int id, String name, Object? value) {
@@ -166,8 +191,12 @@ class RollingVoiceHandler {
       _disposed = true;
       _revision++;
       _broker.dispose();
+      _transition = _transition.catchError((Object _) {}).then((_) async {
+        await _recorder.stop();
+        await _stopAndroidService();
+      });
     }
-    return _recorder.stop().whenComplete(_stopAndroidService);
+    return _transition;
   }
 
   void dispose() => unawaited(close());
