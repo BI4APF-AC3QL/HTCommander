@@ -15,18 +15,18 @@ class RollingVoiceHandler {
     Future<void> Function()? startAndroidService,
     Future<void> Function()? stopAndroidService,
   }) => RollingVoiceHandler._(
-    folderProvider: folderProvider,
-    _isAndroid: isAndroid ?? Platform.isAndroid,
-    _startAndroidService: startAndroidService,
-    _stopAndroidServiceOverride: stopAndroidService,
+    folderProvider,
+    isAndroid ?? Platform.isAndroid,
+    startAndroidService,
+    stopAndroidService,
   );
 
-  RollingVoiceHandler._({
+  RollingVoiceHandler._(
     this.folderProvider,
-    required this._isAndroid,
+    this._isAndroid,
     this._startAndroidService,
     this._stopAndroidServiceOverride,
-  });
+  );
 
   final Future<String> Function()? folderProvider;
   final bool _isAndroid;
