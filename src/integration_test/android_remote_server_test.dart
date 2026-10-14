@@ -16,69 +16,63 @@ import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:integration_test/integration_test.dart';
 
+Future<void> _verifyAndroidAgwpeLanBinding() async {
+  final interfaces = await NetworkInterface.list(
+    includeLoopback: false,
+    type: InternetAddressType.IPv4,
+  );
+  final lanAddress = interfaces
+      .expand((interface) => interface.addresses)
+      .firstWhere(
+        (address) =>
+            address.type == InternetAddressType.IPv4 && !address.isLoopback,
+        orElse: () => throw StateError(
+          'The Android emulator must expose a non-loopback IPv4 address',
+        ),
+      );
+
+  final localServer = AgwpeServer(0);
+  try {
+    expect(await localServer.start(), isTrue);
+    expect(localServer.boundAddress, '127.0.0.1');
+    final localPort = localServer.boundPort!;
+    var lanConnectionRejected = false;
+    try {
+      final socket = await Socket.connect(
+        lanAddress,
+        localPort,
+        timeout: const Duration(seconds: 2),
+      );
+      socket.destroy();
+    } on SocketException {
+      lanConnectionRejected = true;
+    }
+    expect(
+      lanConnectionRejected,
+      isTrue,
+      reason: 'loopback-only AGWPE must reject connections via LAN IP',
+    );
+  } finally {
+    localServer.dispose();
+  }
+
+  final lanServer = AgwpeServer(0, allowLanClients: true);
+  try {
+    expect(await lanServer.start(), isTrue);
+    expect(lanServer.boundAddress, '0.0.0.0');
+    final socket = await Socket.connect(
+      lanAddress,
+      lanServer.boundPort!,
+      timeout: const Duration(seconds: 2),
+    );
+    socket.destroy();
+  } finally {
+    lanServer.dispose();
+  }
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-
-  testWidgets(
-    'Android AGWPE stays local by default and accepts LAN clients when enabled',
-    (tester) async {
-      await tester.runAsync(() async {
-        final interfaces = await NetworkInterface.list(
-          includeLoopback: false,
-          type: InternetAddressType.IPv4,
-        );
-        final lanAddress = interfaces
-            .expand((interface) => interface.addresses)
-            .firstWhere(
-              (address) =>
-                  address.type == InternetAddressType.IPv4 &&
-                  !address.isLoopback,
-              orElse: () => throw StateError(
-                'The Android emulator must expose a non-loopback IPv4 address',
-              ),
-            );
-
-        final localServer = AgwpeServer(0);
-        try {
-          expect(await localServer.start(), isTrue);
-          expect(localServer.boundAddress, '127.0.0.1');
-          final localPort = localServer.boundPort!;
-          var lanConnectionRejected = false;
-          try {
-            final socket = await Socket.connect(
-              lanAddress,
-              localPort,
-              timeout: const Duration(seconds: 2),
-            );
-            socket.destroy();
-          } on SocketException {
-            lanConnectionRejected = true;
-          }
-          expect(
-            lanConnectionRejected,
-            isTrue,
-            reason: 'loopback-only AGWPE must reject connections via LAN IP',
-          );
-        } finally {
-          localServer.dispose();
-        }
-
-        final lanServer = AgwpeServer(0, allowLanClients: true);
-        try {
-          expect(await lanServer.start(), isTrue);
-          expect(lanServer.boundAddress, '0.0.0.0');
-          final socket = await Socket.connect(
-            lanAddress,
-            lanServer.boundPort!,
-            timeout: const Duration(seconds: 2),
-          );
-          socket.destroy();
-        } finally {
-          lanServer.dispose();
-        }
-      });
-    },
-  );
 
   testWidgets(
     'Android remote server starts, authenticates, serves the hosted UI, and stops',
@@ -121,6 +115,7 @@ void main() {
           isNotNull,
           reason: 'Android SQLite initialization must succeed before startup',
         );
+        await tester.runAsync(_verifyAndroidAgwpeLanBinding);
 
         // Android phones use the compact layout, where the radio controls and
         // the most-used functions are opened from the narrow side navigation.
