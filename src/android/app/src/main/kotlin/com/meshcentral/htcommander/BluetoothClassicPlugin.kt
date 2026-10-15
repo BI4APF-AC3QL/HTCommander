@@ -676,10 +676,16 @@ class BluetoothClassicPlugin(
         val uuid = if (audio) AUDIO_UUID else SPP_UUID
         val map = if (audio) audioConnections else controlConnections
         val accepted = disconnectExecutor.execute {
-            synchronized(lifecycleLock) {
-                connectionAttempts.cancel(normalized, uuid)
-                map.remove(normalized)?.close(DISCONNECT_REQUESTED)
-            }
+            // Socket close can block inside some OEM Bluetooth services. Do
+            // not hold lifecycleLock while cancelling a probe or closing an
+            // established socket: a new connect request is dispatched on the
+            // Android main thread and must be able to acquire that lock.
+            connectionAttempts.cancel(normalized, uuid)
+            removeAndCloseOutsideLock(
+                lock = lifecycleLock,
+                remove = { map.remove(normalized) },
+                close = { it.close(DISCONNECT_REQUESTED) },
+            )
             mainHandler.post { result.success(true) }
         }
         if (!accepted) {
