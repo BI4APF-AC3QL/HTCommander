@@ -9,6 +9,7 @@ on:
       - 'src/integration_test/**'
       - 'src/test_driver/**'
       - 'src/tools/android_emulator_acceptance.sh'
+      - 'src/tools/verify_android_stt_abis.py'
       - 'src/pubspec.yaml'
       - 'src/pubspec.lock'
       - 'src/tools/stage_android_web_assets.py'
@@ -95,6 +96,10 @@ jobs:
       - name: Build signed Android APKs by ABI
         working-directory: src
         run: flutter build apk --release --split-per-abi
+
+      - name: Verify Android speech-recognition ABI packaging
+        working-directory: src
+        run: python tools/verify_android_stt_abis.py build/app/outputs/flutter-apk
 
       - name: Test bounded Android Bluetooth queues
         working-directory: src/android
