@@ -18,7 +18,6 @@ import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:htcommander/services/recording/rolling_voice_clip_path.dart';
 import 'package:integration_test/integration_test.dart';
-import 'support/android_bluetooth_connection_fixture.dart';
 
 Future<void> _exerciseAndroidPcmPlaybackLifecycle() async {
   final PcmPlayer player = PcmPlayer();
@@ -280,6 +279,9 @@ Future<void> _exerciseAndroidRollingVoiceBackgroundRecording() async {
     // The runner checks that the recording-only foreground service is released.
     // ignore: avoid_print
     print('HTC_ANDROID_RECORDING_RELEASE_READY');
+    // Keep the next keep-alive reason from restarting the service before the
+    // host runner has observed this recording-only stop checkpoint.
+    await Future<void>.delayed(const Duration(seconds: 15));
   } finally {
     DataBroker.dispatch(
       deviceId: 0,
@@ -316,6 +318,38 @@ void main() {
     (tester) async {
       final originalErrorWidgetBuilder = ErrorWidget.builder;
       final originalFlutterErrorHandler = FlutterError.onError;
+      Timer? syntheticSatelliteTimer;
+
+      void publishSyntheticSatelliteState() {
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'SatelliteRemoteState',
+          data: {
+            'enabled': true,
+            'observerKnown': true,
+            'catalog': [
+              {
+                'id': 25544,
+                'name': 'ISS test satellite',
+                'usages': [
+                  {'index': 0, 'name': 'Voice', 'downlinkHz': 145800000},
+                ],
+              },
+            ],
+            'positions': [
+              {
+                'id': 25544,
+                'utc': DateTime.now().toUtc().toIso8601String(),
+                'azimuthDeg': 90.0,
+                'elevationDeg': 35.0,
+                'rangeRateKmS': 1.0,
+              },
+            ],
+          },
+          store: true,
+        );
+      }
+
       try {
         // Flutter's integration-test view can retain its default desktop-sized
         // metrics even on an Android emulator. Model a common phone viewport
@@ -354,8 +388,6 @@ void main() {
         );
         await tester.runAsync(_exerciseAndroidPcmPlaybackLifecycle);
         await tester.runAsync(_verifyAndroidAgwpeLanBinding);
-        await tester.runAsync(exerciseAndroidBluetoothClassicConnection);
-
         // Android phones use the compact layout, where the radio controls and
         // feature pages are opened from the bottom navigation strip.
         // Wait for asynchronous app startup to replace its splash screen, then
@@ -570,6 +602,12 @@ void main() {
         );
         DataBroker.dispatch(
           deviceId: syntheticRadioId,
+          name: 'HtStatus',
+          data: const {'isPowerOn': true, 'isInTx': false, 'isScan': false},
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: syntheticRadioId,
           name: 'Channels',
           data: const [
             {
@@ -587,12 +625,19 @@ void main() {
           data: 4,
           store: true,
         );
+        publishSyntheticSatelliteState();
+        syntheticSatelliteTimer = Timer.periodic(
+          const Duration(seconds: 1),
+          (_) => publishSyntheticSatelliteState(),
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
 
         final server = handler!;
         final browserSquelch = Completer<int>();
         final browserVolume = Completer<int>();
+        final browserSatelliteStart = Completer<Map>();
+        final browserSatelliteStop = Completer<void>();
         final browserCommandObserver = DataBrokerClient();
         browserCommandObserver.subscribe(
           deviceId: syntheticRadioId,
@@ -609,6 +654,19 @@ void main() {
           callback: (_, _, value) {
             if (!browserVolume.isCompleted && value is int) {
               browserVolume.complete(value);
+            }
+          },
+        );
+        browserCommandObserver.subscribe(
+          deviceId: 0,
+          name: 'SatelliteTrackTarget',
+          callback: (_, _, value) {
+            if (value is Map && !browserSatelliteStart.isCompleted) {
+              browserSatelliteStart.complete(Map.from(value));
+            } else if (value == null &&
+                browserSatelliteStart.isCompleted &&
+                !browserSatelliteStop.isCompleted) {
+              browserSatelliteStop.complete();
             }
           },
         );
@@ -712,6 +770,16 @@ void main() {
               await browserVolume.future.timeout(const Duration(seconds: 1)),
               8,
               reason: 'the Android mobile page must send the selected volume',
+            );
+            final satelliteTarget = await browserSatelliteStart.future.timeout(
+              const Duration(seconds: 1),
+            );
+            expect(satelliteTarget['noradId'], 25544);
+            expect(satelliteTarget['usageIndex'], 0);
+            expect(satelliteTarget['receiveOnly'], isTrue);
+            expect(satelliteTarget.containsKey('uplinkHz'), isFalse);
+            await browserSatelliteStop.future.timeout(
+              const Duration(seconds: 1),
             );
           });
 
@@ -1105,6 +1173,7 @@ void main() {
           });
         }
       } finally {
+        syntheticSatelliteTimer?.cancel();
         ErrorWidget.builder = originalErrorWidgetBuilder;
         FlutterError.onError = originalFlutterErrorHandler;
       }

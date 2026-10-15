@@ -128,13 +128,55 @@ async function main() {
       null,
       { timeout: 10000 },
     );
+    await page.locator('[data-page="radio"] summary')
+      .filter({ hasText: '卫星多普勒' })
+      .click();
+    await page.waitForFunction(
+      () => document.querySelector('#satelliteStatus')?.textContent.includes('主机观测位置已就绪'),
+      null,
+      { timeout: 10000 },
+    );
+    assert.equal(await page.locator('#satellite option').count(), 1);
+    assert.equal(await page.locator('#satellite option').first().innerText(), 'ISS test satellite');
+    assert.match(await page.locator('#satellitePreview').innerText(), /修正 .* MHz/);
+    assert.equal(await page.locator('#satelliteStart').isEnabled(), true);
+    await page.locator('#satelliteStart').click();
+    await page.waitForFunction(
+      () => {
+        const events = document.querySelector('#auditEvents')?.textContent || '';
+        return events.includes('接收多普勒开始 · 请求接受');
+      },
+      null,
+      { timeout: 10000 },
+    );
+    await page.waitForFunction(
+      () => document.querySelector('#satelliteStop')?.disabled === false,
+      null,
+      { timeout: 10000 },
+    );
+    await page.locator('#satelliteStop').click();
+    await page.waitForFunction(
+      () => {
+        const events = document.querySelector('#auditEvents')?.textContent || '';
+        return events.includes('接收多普勒停止 · 请求接受');
+      },
+      null,
+      { timeout: 10000 },
+    );
+    await page.waitForFunction(
+      () => document.querySelector('#satelliteStop')?.disabled === true,
+      null,
+      { timeout: 10000 },
+    );
     evidence.radioControls = {
       frequency: await page.locator('#frequency').innerText(),
       channelOptions: await page.locator('#channel option').allTextContents(),
       squelch: await page.locator('#squelch').inputValue(),
       volume: await page.locator('#volume').inputValue(),
+      satellite: await page.locator('#satellite option').first().innerText(),
+      satelliteReceiveOnly: true,
       pttDisabled: await page.locator('#ptt').isDisabled(),
-      acceptedActions: ['squelch', 'volume'],
+      acceptedActions: ['squelch', 'volume', 'satelliteStart', 'satelliteStop'],
       physicalRadio: false,
       rfTransmit: false,
     };

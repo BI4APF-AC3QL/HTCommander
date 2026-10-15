@@ -10,7 +10,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 
@@ -22,26 +24,54 @@ class RadioWebServerService : Service() {
         private const val EXTRA_REASON = "reason"
         private const val REASON_SERVER = RadioServiceReasonState.REASON_SERVER
         private const val ACTION_START = "com.htcommander.action.START_RADIO_SERVICE"
+        private val lifecycleLock = Any()
         @Volatile
         private var runningInstance: RadioWebServerService? = null
+        private val pendingReasons = mutableSetOf<String>()
         private val pendingStartCallbacks = mutableMapOf<String, MutableList<(String?) -> Unit>>()
+        private var startRequested = false
+
+        fun ensureNotificationChannel(context: Context) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "HTCommander 电台服务",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "电台连接、远控服务器或接收录音运行时显示"
+                setShowBadge(false)
+            }
+            context.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(channel)
+        }
 
         fun start(
             context: Context,
             reason: String = REASON_SERVER,
             onStarted: ((String?) -> Unit)? = null,
         ) {
-            val service = runningInstance
-            if (service != null) {
-                service.startReason(reason, onStarted)
-                return
-            }
-
-            if (onStarted != null) {
-                synchronized(pendingStartCallbacks) {
-                    pendingStartCallbacks.getOrPut(reason) { mutableListOf() }.add(onStarted)
+            var service: RadioWebServerService? = null
+            var requestServiceStart = false
+            synchronized(lifecycleLock) {
+                service = runningInstance
+                pendingReasons.add(reason)
+                if (service == null) {
+                    if (onStarted != null) {
+                        pendingStartCallbacks.getOrPut(reason) { mutableListOf() }
+                            .add(onStarted)
+                    }
+                    if (!startRequested) {
+                        startRequested = true
+                        requestServiceStart = true
+                    }
                 }
             }
+            service?.let {
+                it.startReason(reason, onStarted)
+                return
+            }
+            if (!requestServiceStart) return
+
             val intent = Intent(context, RadioWebServerService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_REASON, reason)
@@ -52,39 +82,54 @@ class RadioWebServerService : Service() {
                     context.startService(intent)
                 }
             } catch (error: Exception) {
-                finishPendingStart(reason, error.message ?: "Could not start service")
+                val failure = error.message ?: "Could not start service"
+                val failedReasons = synchronized(lifecycleLock) {
+                    startRequested = false
+                    pendingReasons.toList().also { pendingReasons.clear() }
+                }
+                failedReasons.forEach { failedReason ->
+                    finishPendingStart(failedReason, failure)
+                }
             }
         }
 
         private fun finishPendingStart(reason: String, error: String?) {
-            val callbacks = synchronized(pendingStartCallbacks) {
+            val callbacks = synchronized(lifecycleLock) {
                 pendingStartCallbacks.remove(reason)?.toList().orEmpty()
             }
             callbacks.forEach { it(error) }
         }
 
+        private fun pendingReasonSnapshot(): Set<String> =
+            synchronized(lifecycleLock) { pendingReasons.toSet() }
+
+        @Suppress("UNUSED_PARAMETER")
         fun stop(context: Context, reason: String = REASON_SERVER) {
-            val service = runningInstance
-            if (service != null) {
-                service.stopReason(reason)
-            } else {
-                // Stopping an already absent service is safe and avoids trying
-                // to promote a background app into a new foreground service.
-                context.stopService(Intent(context, RadioWebServerService::class.java))
+            val service = synchronized(lifecycleLock) {
+                pendingReasons.remove(reason)
+                runningInstance
             }
+            if (service != null) service.stopReason(reason)
+            else finishPendingStart(reason, "Service start was cancelled")
         }
 
     }
 
     private val reasonState = RadioServiceReasonState()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var idleStopRunnable: Runnable? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
-        runningInstance = this
-        ensureNotificationChannel()
+        Log.i("HTCommander", "Radio foreground service onCreate entered")
         startForegroundWithCurrentTypes()
+        Log.i("HTCommander", "Radio foreground service promoted")
+        synchronized(lifecycleLock) {
+            runningInstance = this
+            startRequested = false
+        }
 
         // Network services and the recorder cannot respond while Android
         // suspends the CPU. Acquire only while a user-enabled feature is active
@@ -94,7 +139,14 @@ class RadioWebServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val reason = intent?.getStringExtra(EXTRA_REASON) ?: REASON_SERVER
-        startReason(if (intent?.action == ACTION_START) reason else REASON_SERVER)
+        Log.d("HTCommander", "Radio foreground service start command: $reason")
+        val reasons = pendingReasonSnapshot()
+        if (reasons.isEmpty()) {
+            finishPendingStart(reason, "Service start was cancelled")
+            scheduleIdleStop()
+        } else {
+            reasons.forEach { startReason(it) }
+        }
         // The HTTP listener, recorder and radio bridge live in Flutter's main
         // isolate. A restarted notification-only service cannot restore them.
         return START_NOT_STICKY
@@ -103,7 +155,13 @@ class RadioWebServerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        if (runningInstance === this) runningInstance = null
+        Log.d("HTCommander", "Radio foreground service destroyed")
+        idleStopRunnable?.let(mainHandler::removeCallbacks)
+        idleStopRunnable = null
+        synchronized(lifecycleLock) {
+            if (runningInstance === this) runningInstance = null
+            startRequested = false
+        }
         releaseWifiLock()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
@@ -112,20 +170,21 @@ class RadioWebServerService : Service() {
 
     private fun stopReason(reason: String) {
         val stillActive = reasonState.set(reason, false)
+        Log.d(
+            "HTCommander",
+            "Radio foreground service released $reason; active=$stillActive",
+        )
         if (stillActive) startForegroundWithCurrentTypes()
         updateWifiLock()
         if (stillActive) return
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        stopSelf()
+        idleStopRunnable?.let(mainHandler::removeCallbacks)
+        idleStopRunnable = null
+        stopForegroundAndService()
     }
 
     private fun startReason(reason: String, onStarted: ((String?) -> Unit)? = null) {
+        idleStopRunnable?.let(mainHandler::removeCallbacks)
+        idleStopRunnable = null
         val failure = try {
             reasonState.set(reason, true)
             // Recording is started only after microphone permission has been
@@ -136,10 +195,11 @@ class RadioWebServerService : Service() {
             null
         } catch (error: Exception) {
             reasonState.set(reason, false)
+            synchronized(lifecycleLock) { pendingReasons.remove(reason) }
             Log.e("HTCommander", "Could not promote radio service for $reason", error)
             try {
                 if (reasonState.set(reason, false)) startForegroundWithCurrentTypes()
-                else stopSelf()
+                else scheduleIdleStop()
                 updateWifiLock()
             } catch (fallbackError: Exception) {
                 Log.e("HTCommander", "Could not restore radio service type", fallbackError)
@@ -148,6 +208,31 @@ class RadioWebServerService : Service() {
         }
         onStarted?.invoke(failure)
         finishPendingStart(reason, failure)
+    }
+
+    private fun scheduleIdleStop() {
+        idleStopRunnable?.let(mainHandler::removeCallbacks)
+        val stop = Runnable {
+            idleStopRunnable = null
+            stopForegroundAndService()
+        }
+        idleStopRunnable = stop
+        // Coalesce a start followed immediately by a stop while Android is
+        // still completing the foreground-service handshake. This avoids a
+        // stop/start race that can leave Android's original startup timeout
+        // armed after the service has already posted its notification.
+        mainHandler.postDelayed(stop, 1000)
+    }
+
+    private fun stopForegroundAndService() {
+        if (pendingReasonSnapshot().isNotEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
     }
 
     private fun startForegroundWithCurrentTypes() {
@@ -201,19 +286,6 @@ class RadioWebServerService : Service() {
             if (lock.isHeld) lock.release()
         }
         wifiLock = null
-    }
-
-    private fun ensureNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "HTCommander 电台服务",
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "电台连接、远控服务器或接收录音运行时显示"
-            setShowBadge(false)
-        }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
     private fun buildNotification(): Notification {

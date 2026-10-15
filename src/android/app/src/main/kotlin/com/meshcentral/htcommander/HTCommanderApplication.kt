@@ -13,6 +13,14 @@ class HTCommanderApplication : android.app.Application() {
     private var bluetoothPlugin: BluetoothClassicPlugin? = null
     private var pcmPlayerPlugin: AndroidPcmPlayerPlugin? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        // Create the channel before Android starts the time-limited foreground
+        // service lifecycle. The service can then promote itself immediately
+        // from onCreate without waiting on NotificationManager IPC.
+        RadioWebServerService.ensureNotificationChannel(this)
+    }
+
     @Synchronized
     fun provideFlutterEngine(context: Context): FlutterEngine {
         retainedEngine?.let { return it }
