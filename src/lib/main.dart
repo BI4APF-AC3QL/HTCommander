@@ -43,6 +43,7 @@ import 'handlers/agwpe_handler.dart';
 import 'handlers/android_network_services_handler.dart';
 import 'handlers/android_phone_gps_handler.dart';
 import 'services/android_server_lifecycle.dart';
+import 'services/retrying_service_lease.dart';
 import 'services/radio_reconnect_controller.dart';
 import 'handlers/web_server_handler.dart';
 import 'handlers/home_assistant_handler.dart';
@@ -1127,8 +1128,15 @@ class _MainFormState extends State<MainForm>
   // cancels this timer, so reconnect never overrides the user's choice.
   final AndroidServerLifecycle _androidServerLifecycle =
       AndroidServerLifecycle();
-  Future<void> _radioReconnectLifecycleTail = Future<void>.value();
-  bool _radioReconnectServiceRequested = false;
+  late final RetryingServiceLease _androidReconnectServiceLease =
+      RetryingServiceLease(
+        start: () => _androidServerLifecycle.start(reason: 'radioReconnect'),
+        stop: () => _androidServerLifecycle.stop(reason: 'radioReconnect'),
+        onError: (error) => _broker.logError(
+          'Android Bluetooth reconnect foreground service update failed: '
+          '$error',
+        ),
+      );
   static const List<Duration> _radioReconnectDelays = [
     Duration(seconds: 2),
     Duration(seconds: 4),
@@ -1865,27 +1873,7 @@ class _MainFormState extends State<MainForm>
   void _syncAndroidReconnectForegroundService() {
     if (kIsWeb || !Platform.isAndroid) return;
     final shouldRun = _radioReconnectController.hasWork;
-    if (shouldRun == _radioReconnectServiceRequested) return;
-    _radioReconnectServiceRequested = shouldRun;
-    _radioReconnectLifecycleTail = _radioReconnectLifecycleTail
-        .catchError((Object _) {})
-        .then((_) async {
-          try {
-            if (shouldRun) {
-              await _androidServerLifecycle.start(reason: 'radioReconnect');
-            } else {
-              await _androidServerLifecycle.stop(reason: 'radioReconnect');
-            }
-          } catch (error) {
-            _broker.logError(
-              'Android Bluetooth reconnect foreground service update failed: '
-              '$error',
-            );
-            if (_radioReconnectServiceRequested == shouldRun) {
-              _radioReconnectServiceRequested = false;
-            }
-          }
-        });
+    _androidReconnectServiceLease.setDesired(shouldRun);
   }
 
   /// Handle settings changes from DataBroker.
@@ -3403,6 +3391,9 @@ class _MainFormState extends State<MainForm>
   void dispose() {
     _tabController.removeListener(_onTabChanged);
     _radioReconnectController.dispose();
+    if (!kIsWeb && Platform.isAndroid) {
+      unawaited(_androidReconnectServiceLease.dispose());
+    }
     _broker.dispose();
     if (isDesktop) {
       windowManager.removeListener(this);

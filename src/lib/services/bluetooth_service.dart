@@ -26,6 +26,7 @@ import '../winlink/winlink_mail.dart';
 import 'android_bluetooth_discovery.dart';
 import 'android_bluetooth_permissions.dart';
 import 'android_server_lifecycle.dart';
+import 'retrying_service_lease.dart';
 import 'bluetooth_classic_macos.dart';
 import 'data_broker.dart';
 import 'data_broker_client.dart';
@@ -77,7 +78,14 @@ class BluetoothService {
   final DataBrokerClient _broker = DataBrokerClient();
   final AndroidServerLifecycle _androidServerLifecycle =
       AndroidServerLifecycle();
-  Future<void> _androidRadioServiceTail = Future<void>.value();
+  late final RetryingServiceLease _androidRadioServiceLease =
+      RetryingServiceLease(
+        start: () => _androidServerLifecycle.start(reason: 'radio'),
+        stop: () => _androidServerLifecycle.stop(reason: 'radio'),
+        onError: (error) => _broker.logError(
+          '[Android] Could not update radio foreground service: $error',
+        ),
+      );
 
   // Connected radios: deviceId -> RadioTransport (BLE or Classic)
   final Map<int, RadioTransport> _connectedRadios = {};
@@ -130,27 +138,12 @@ class BluetoothService {
   /// Keep Android awake while at least one local radio connection is active.
   Future<void> _syncAndroidRadioService() {
     if (!Platform.isAndroid) return Future<void>.value();
-    _androidRadioServiceTail = _androidRadioServiceTail.then((_) async {
-      // Read the current maps when this queued update runs. If connects and
-      // disconnects overlap, the final foreground-service intent then matches
-      // the live radio set instead of a stale snapshot.
-      final connected =
-          _connectedRadios.isNotEmpty || _classicConnections.isNotEmpty;
-      try {
-        if (connected) {
-          await _androidServerLifecycle.start(reason: 'radio');
-        } else {
-          await _androidServerLifecycle.stop(reason: 'radio');
-        }
-      } catch (error) {
-        // Foreground-service startup must not turn a working radio link into a
-        // failed connection.
-        _broker.logError(
-          '[Android] Could not update radio foreground service: $error',
-        );
-      }
-    });
-    return _androidRadioServiceTail;
+    // Submit the current radio set to the serialized reconciler so overlapping
+    // connects and disconnects converge on the latest request. Failed Android
+    // service transitions retry without failing an otherwise working radio link.
+    final connected =
+        _connectedRadios.isNotEmpty || _classicConnections.isNotEmpty;
+    return _androidRadioServiceLease.setDesired(connected);
   }
 
   // Track if Bluetooth has been initialized
@@ -1051,7 +1044,7 @@ class BluetoothService {
     // Clear Classic connections (transports already disposed above)
     _classicConnections.clear();
 
-    await _syncAndroidRadioService();
+    if (Platform.isAndroid) await _androidRadioServiceLease.dispose();
 
     _broker.dispose();
   }
