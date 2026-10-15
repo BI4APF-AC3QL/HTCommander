@@ -152,6 +152,154 @@ Future<String?> _verifyAndroidRemoteServerLanBinding(
   }
 }
 
+Future<Map<String, Object?>> _waitForAndroidRollingVoiceState({
+  required bool running,
+  int minimumKeptFiles = 0,
+}) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 15));
+  while (DateTime.now().isBefore(deadline)) {
+    final raw = DataBroker.getValueDynamic(0, 'RollingVoiceStatus');
+    if (raw is Map) {
+      final status = Map<String, Object?>.from(raw);
+      final keptFiles = status['keptFiles'] is int
+          ? status['keptFiles'] as int
+          : 0;
+      if (status['running'] == running && keptFiles >= minimumKeptFiles) {
+        return status;
+      }
+      const fatalErrors = {
+        'android_service_failed',
+        'storage_open_failed',
+        'worker_stopped',
+        'storage_write_failed',
+      };
+      if (fatalErrors.contains(status['error'])) {
+        throw StateError(
+          'Android rolling voice recorder failed: ${status['error']}',
+        );
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  throw StateError(
+    'Timed out waiting for Android rolling voice recorder: '
+    'running=$running, keptFiles>=$minimumKeptFiles, '
+    'lastStatus=${DataBroker.getValueDynamic(0, 'RollingVoiceStatus')}',
+  );
+}
+
+Future<void> _exerciseAndroidRollingVoiceBackgroundRecording() async {
+  const radioId = 192;
+  const pcmLength = 3200;
+  final savedClips = <File>[];
+  DataBroker.dispatch(
+    deviceId: 1,
+    name: 'SelectedRadioDeviceId',
+    data: radioId,
+    store: true,
+  );
+  DataBroker.dispatch(
+    deviceId: 0,
+    name: 'RollingVoiceEnabled',
+    data: true,
+    store: true,
+  );
+
+  try {
+    final ready = await _waitForAndroidRollingVoiceState(running: true);
+    final folder = ready['folder'];
+    expect(folder, isA<String>());
+
+    Future<void> injectAndVerifyClip(int expectedKeptFiles) async {
+      DataBroker.dispatch(
+        deviceId: radioId,
+        name: 'AudioDataAvailable',
+        data: <String, Object?>{
+          'data': Uint8List(pcmLength),
+          'offset': 0,
+          'length': pcmLength,
+          'channelName': 'FM',
+          'transmit': false,
+          'muted': false,
+        },
+        store: false,
+      );
+      DataBroker.dispatch(
+        deviceId: 0,
+        name: 'RollingVoicePreserve',
+        data: true,
+        store: false,
+      );
+
+      final status = await _waitForAndroidRollingVoiceState(
+        running: true,
+        minimumKeptFiles: expectedKeptFiles,
+      );
+      final recent = status['recent'];
+      expect(recent, isA<List>());
+      final kept = (recent as List)
+          .whereType<Map>()
+          .where((clip) => clip['kept'] == true)
+          .toList();
+      expect(kept.length, greaterThanOrEqualTo(expectedKeptFiles));
+      final name = kept.first['name'];
+      expect(name, isA<String>());
+      final file = File('$folder${Platform.pathSeparator}$name');
+      final bytes = await file.readAsBytes();
+      expect(bytes.length, pcmLength + 44);
+      expect(ascii.decode(bytes.sublist(0, 4)), 'RIFF');
+      expect(ascii.decode(bytes.sublist(8, 12)), 'WAVE');
+      savedClips.add(file);
+    }
+
+    await injectAndVerifyClip(1);
+    // The shell runner sends HOME after this marker, then waits for the second
+    // clip checkpoint while the app and recorder remain in the background.
+    // ignore: avoid_print
+    print('HTC_ANDROID_RECORDING_BG_ACCEPTANCE_READY');
+    await Future<void>.delayed(const Duration(seconds: 6));
+    await injectAndVerifyClip(2);
+    // ignore: avoid_print
+    print('HTC_ANDROID_RECORDING_BACKGROUND_CHECKPOINT');
+
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'RollingVoiceEnabled',
+      data: false,
+      store: true,
+    );
+    await _waitForAndroidRollingVoiceState(running: false);
+    // The runner checks that the recording-only foreground service is released.
+    // ignore: avoid_print
+    print('HTC_ANDROID_RECORDING_RELEASE_READY');
+  } finally {
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'RollingVoiceEnabled',
+      data: false,
+      store: true,
+    );
+    try {
+      await _waitForAndroidRollingVoiceState(running: false);
+    } catch (_) {
+      // Preserve the original acceptance failure while still attempting cleanup.
+    }
+    DataBroker.dispatch(
+      deviceId: 1,
+      name: 'SelectedRadioDeviceId',
+      data: -1,
+      store: true,
+    );
+    for (final clip in savedClips) {
+      try {
+        if (await clip.exists()) await clip.delete();
+      } catch (_) {
+        // The Android test app is uninstalled by the acceptance workflow.
+      }
+    }
+  }
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -862,6 +1010,11 @@ void main() {
             // ignore: avoid_print
             print('HTC_ANDROID_RADIO_ONLY_RELEASE_READY');
             await Future<void>.delayed(const Duration(seconds: 15));
+
+            // Exercise the Android local receive recorder with synthetic silent
+            // PCM. The host backgrounds the app between these checkpoints and
+            // verifies that the recording foreground service remains active.
+            await _exerciseAndroidRollingVoiceBackgroundRecording();
 
             // Exercise the Android-only foreground-service reason used by
             // Home Assistant after the web server is stopped. The broker is

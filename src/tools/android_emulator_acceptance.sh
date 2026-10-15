@@ -267,6 +267,44 @@ if [[ "$radio_service_stopped" -ne 1 ]]; then
 fi
 echo 'Android foreground service stopped after the simulated radio disconnected.'
 
+wait_for_flutter_marker 'HTC_ANDROID_RECORDING_BG_ACCEPTANCE_READY' 'rolling-recording-background'
+
+adb_cmd shell input keyevent KEYCODE_HOME
+sleep 2
+service_dump="$(adb_cmd shell dumpsys activity services)"
+if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+  cat "$drive_log"
+  echo '::error::Android foreground service stopped while local rolling recording was enabled.'
+  exit 1
+fi
+echo 'Android recording foreground service remained active after MainActivity moved to the background.'
+
+wait_for_flutter_marker 'HTC_ANDROID_RECORDING_BACKGROUND_CHECKPOINT' 'rolling-recording-write'
+service_dump="$(adb_cmd shell dumpsys activity services)"
+if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+  cat "$drive_log"
+  echo '::error::Android recording foreground service stopped before the background WAV write completed.'
+  exit 1
+fi
+echo 'Android recorder wrote and finalized a synthetic WAV clip while backgrounded.'
+
+wait_for_flutter_marker 'HTC_ANDROID_RECORDING_RELEASE_READY' 'rolling-recording-service-release'
+recording_service_stopped=0
+for attempt in {1..10}; do
+  service_dump="$(adb_cmd shell dumpsys activity services)"
+  if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+    recording_service_stopped=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$recording_service_stopped" -ne 1 ]]; then
+  cat "$drive_log"
+  echo '::error::Android foreground service stayed active after local rolling recording was disabled.'
+  exit 1
+fi
+echo 'Android foreground service stopped after local rolling recording was disabled.'
+
 adb_cmd shell am start -n com.meshcentral.htcommander/.MainActivity >/dev/null
 wait_for_flutter_marker 'HTC_ANDROID_MQTT_BG_ACCEPTANCE_READY' 'MQTT-background'
 
