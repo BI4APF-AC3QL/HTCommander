@@ -1144,26 +1144,39 @@ class _MainFormState extends State<MainForm>
     Duration(seconds: 16),
     Duration(seconds: 30),
   ];
-  late final RadioReconnectController
-  _radioReconnectController = RadioReconnectController(
-    delays: _radioReconnectDelays,
-    isRemembered: (mac) =>
-        BluetoothService().previouslyConnectedRadioMacs().contains(mac),
-    isConnected: _isRadioConnected,
-    attempt: _attemptRadioReconnect,
-    onChanged: _syncAndroidReconnectForegroundService,
-    onScheduled: (mac, delay, attempt) => _broker.logInfo(
-      '[Android] Retrying remembered radio $mac in '
-      '${delay.inSeconds}s (attempt $attempt/${_radioReconnectDelays.length}).',
-    ),
-    onExhausted: (mac, attempts) => _broker.logInfo(
-      '[Android] Automatic Bluetooth reconnect for $mac stopped after '
-      '$attempts attempts. Use Connect to retry.',
-    ),
-    onError: (mac, error) => _broker.logError(
-      '[Android] Automatic Bluetooth reconnect to $mac failed: $error',
-    ),
-  );
+  // Android keeps trying to restore a remembered radio after temporary range
+  // or adapter outages. The delay grows to five minutes to limit battery and
+  // service churn, and an explicit disconnect still cancels the retry loop.
+  static const List<Duration> _androidRadioReconnectDelays = [
+    ..._radioReconnectDelays,
+    Duration(seconds: 60),
+    Duration(seconds: 120),
+    Duration(seconds: 300),
+  ];
+  bool get _continueAndroidRadioReconnect => !kIsWeb && Platform.isAndroid;
+  late final RadioReconnectController _radioReconnectController =
+      RadioReconnectController(
+        delays: _continueAndroidRadioReconnect
+            ? _androidRadioReconnectDelays
+            : _radioReconnectDelays,
+        continueWhileRemembered: _continueAndroidRadioReconnect,
+        isRemembered: (mac) =>
+            BluetoothService().previouslyConnectedRadioMacs().contains(mac),
+        isConnected: _isRadioConnected,
+        attempt: _attemptRadioReconnect,
+        onChanged: _syncAndroidReconnectForegroundService,
+        onScheduled: (mac, delay, attempt) => _broker.logInfo(
+          '[Android] Retrying remembered radio $mac in '
+          '${delay.inSeconds}s (attempt $attempt).',
+        ),
+        onExhausted: (mac, attempts) => _broker.logInfo(
+          '[Android] Automatic Bluetooth reconnect for $mac stopped after '
+          '$attempts attempts. Use Connect to retry.',
+        ),
+        onError: (mac, error) => _broker.logError(
+          '[Android] Automatic Bluetooth reconnect to $mac failed: $error',
+        ),
+      );
 
   // Hosted web build: the host's radios (each {deviceId, name}) and which one is
   // bridged, so the browser can show the current radio and offer a switcher.

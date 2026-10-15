@@ -11,6 +11,7 @@ typedef RadioReconnectAttempt = Future<bool> Function(String macAddress);
 class RadioReconnectController {
   RadioReconnectController({
     required List<Duration> delays,
+    this.continueWhileRemembered = false,
     required this.isRemembered,
     required this.isConnected,
     required this.attempt,
@@ -21,12 +22,16 @@ class RadioReconnectController {
   }) : delays = List.unmodifiable(delays);
 
   final List<Duration> delays;
+
+  /// When true, repeat the final delay until the radio is connected or the
+  /// remembered connection is cancelled. Other callers keep finite retries.
+  final bool continueWhileRemembered;
   final bool Function(String macAddress) isRemembered;
   final bool Function(String macAddress) isConnected;
   final RadioReconnectAttempt attempt;
   final void Function()? onChanged;
   final void Function(String macAddress, Duration delay, int attempt)?
-      onScheduled;
+  onScheduled;
   final void Function(String macAddress, int attempts)? onExhausted;
   final void Function(String macAddress, Object error)? onError;
 
@@ -57,7 +62,8 @@ class RadioReconnectController {
     if (_timers.containsKey(mac) || _inFlight.contains(mac)) return;
 
     final attemptIndex = _attemptCounts[mac] ?? 0;
-    if (attemptIndex >= delays.length) {
+    final canContinue = continueWhileRemembered && delays.isNotEmpty;
+    if (attemptIndex >= delays.length && !canContinue) {
       if (_exhaustionReported.add(mac)) {
         onExhausted?.call(mac, attemptIndex);
       }
@@ -65,7 +71,8 @@ class RadioReconnectController {
     }
 
     _attemptCounts[mac] = attemptIndex + 1;
-    final delay = delays[attemptIndex];
+    final delayIndex = attemptIndex.clamp(0, delays.length - 1);
+    final delay = delays[delayIndex];
     _timers[mac] = Timer(delay, () {
       _timers.remove(mac);
       if (_disposed || !isRemembered(mac)) {

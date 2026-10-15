@@ -58,6 +58,50 @@ void main() {
     },
   );
 
+  test('continuous reconnect repeats the capped delay until cancelled', () {
+    fakeAsync((time) {
+      var attempts = 0;
+      var exhausted = 0;
+      final controller = RadioReconnectController(
+        delays: _delays,
+        continueWhileRemembered: true,
+        isRemembered: (_) => true,
+        isConnected: (_) => false,
+        attempt: (_) async {
+          attempts++;
+          return false;
+        },
+        onExhausted: (_, _) => exhausted++,
+      );
+
+      controller.schedule('AA:BB:CC:DD:EE:FF');
+      time.elapse(const Duration(seconds: 2));
+      time.flushMicrotasks();
+      time.elapse(const Duration(seconds: 4));
+      time.flushMicrotasks();
+      time.elapse(const Duration(seconds: 8));
+      time.flushMicrotasks();
+      expect(attempts, 3);
+      expect(controller.attemptsFor('AA:BB:CC:DD:EE:FF'), 4);
+
+      // After reaching the final delay, retries continue at that capped
+      // interval rather than ending or growing without bound.
+      time.elapse(const Duration(seconds: 8));
+      time.flushMicrotasks();
+      expect(attempts, 4);
+      expect(controller.attemptsFor('AA:BB:CC:DD:EE:FF'), 5);
+      expect(exhausted, 0);
+      expect(controller.hasWork, isTrue);
+
+      controller.cancel('AA:BB:CC:DD:EE:FF');
+      time.elapse(const Duration(seconds: 30));
+      time.flushMicrotasks();
+      expect(attempts, 4, reason: 'cancellation prevents later retries');
+      expect(controller.hasWork, isFalse);
+      controller.dispose();
+    });
+  });
+
   test('a pending retry cannot overlap an in-flight attempt', () {
     fakeAsync((time) {
       final firstAttempt = Completer<bool>();
