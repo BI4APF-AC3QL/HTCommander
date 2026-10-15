@@ -171,7 +171,7 @@ Future<void> _verifyHttpsProxySession(
     final login = await http.postUrl(backend.resolve('/login'));
     login.followRedirects = false;
     login.headers.set(HttpHeaders.hostHeader, origin.host);
-    login.headers.set(HttpHeaders.originHeader, origin.origin);
+    login.headers.set('Origin', origin.origin);
     login.headers.contentType = ContentType(
       'application',
       'x-www-form-urlencoded',
@@ -209,7 +209,7 @@ Future<void> _verifyHttpsProxySession(
       ).toString(),
       headers: {
         HttpHeaders.hostHeader: origin.host,
-        HttpHeaders.originHeader: origin.origin,
+        'Origin': origin.origin,
         HttpHeaders.cookieHeader: 'htc_bridge=${session.value}',
       },
     );
