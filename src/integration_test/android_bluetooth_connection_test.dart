@@ -150,6 +150,104 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
   }
 }
 
+Future<void> _verifyHttpsProxySession(
+  int port,
+  int expectedRadioId,
+) async {
+  final backend = Uri(scheme: 'http', host: '::1', port: port);
+  final origin = Uri.parse('https://radio.example.test');
+  final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+  try {
+    final formRequest = await http.getUrl(backend.resolve('/login'));
+    formRequest.headers.set(HttpHeaders.hostHeader, origin.host);
+    final form = await formRequest.close();
+    expect(form.statusCode, HttpStatus.ok);
+    final csrf = form.cookies.singleWhere(
+      (cookie) => cookie.name == 'htc_login',
+    );
+    expect(csrf.secure, isTrue);
+    await form.drain<void>();
+
+    final login = await http.postUrl(backend.resolve('/login'));
+    login.followRedirects = false;
+    login.headers.set(HttpHeaders.hostHeader, origin.host);
+    login.headers.set(HttpHeaders.originHeader, origin.origin);
+    login.headers.contentType = ContentType(
+      'application',
+      'x-www-form-urlencoded',
+    );
+    login.cookies.add(csrf);
+    login.write(
+      Uri(
+        queryParameters: {
+          'csrf': csrf.value,
+          'password': _testRemotePassword,
+        },
+      ).query,
+    );
+    final signedIn = await login.close();
+    expect(signedIn.statusCode, HttpStatus.seeOther);
+    final session = signedIn.cookies.singleWhere(
+      (cookie) => cookie.name == 'htc_bridge',
+    );
+    expect(session.secure, isTrue);
+    await signedIn.drain<void>();
+
+    final pageRequest = await http.getUrl(backend.resolve('/remote.html'));
+    pageRequest.headers.set(HttpHeaders.hostHeader, origin.host);
+    pageRequest.cookies.add(session);
+    final page = await pageRequest.close();
+    expect(page.statusCode, HttpStatus.ok);
+    await page.drain<void>();
+
+    final socket = await WebSocket.connect(
+      Uri(
+        scheme: 'ws',
+        host: '::1',
+        port: port,
+        path: '/websocket.aspx',
+      ).toString(),
+      headers: {
+        HttpHeaders.hostHeader: origin.host,
+        HttpHeaders.originHeader: origin.origin,
+        HttpHeaders.cookieHeader: 'htc_bridge=${session.value}',
+      },
+    );
+    final response = Completer<Map<String, Object?>>();
+    final subscription = socket.listen((event) {
+      if (event is! String || !event.startsWith('remote:')) return;
+      final decoded = jsonDecode(event.substring(7));
+      if (decoded is Map && decoded['state'] is Map && !response.isCompleted) {
+        response.complete(Map<String, Object?>.from(decoded['state'] as Map));
+      }
+    });
+    try {
+      socket.add('remote:{"op":"state"}');
+      final state = await response.future.timeout(const Duration(seconds: 5));
+      expect(state['radioId'], expectedRadioId);
+      expect(state['connected'], isTrue);
+    } finally {
+      await subscription.cancel();
+      await socket.close();
+    }
+  } finally {
+    http.close(force: true);
+  }
+}
+
+Future<void> _verifyAndroidRemotePaths(
+  int port,
+  int expectedRadioId,
+  List<Uint8List> bluetoothWrites,
+) async {
+  await _verifyRemoteServerSeesConnectedRadio(
+    port,
+    expectedRadioId,
+    bluetoothWrites,
+  );
+  await _verifyHttpsProxySession(port, expectedRadioId);
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -199,6 +297,10 @@ void main() {
           setServerSetting('webServerPort', 0);
           setServerSetting('webServerRemoteEnabled', 1);
           setServerSetting('webServerPassword', _testRemotePassword);
+          setServerSetting(
+            'webServerPublicOrigin',
+            'https://radio.example.test',
+          );
           setServerSetting('webServerDefaultReadOnly', 0);
           setServerSetting('webServerRequireControlApproval', 0);
           setServerSetting('AllowTransmit', 0);
@@ -215,7 +317,7 @@ void main() {
           try {
             await exerciseAndroidBluetoothClassicConnection(
               onConnected: (radioId, bluetoothWrites) =>
-                  _verifyRemoteServerSeesConnectedRadio(
+                  _verifyAndroidRemotePaths(
                     server.boundPort!,
                     radioId,
                     bluetoothWrites,
