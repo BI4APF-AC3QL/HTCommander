@@ -14,6 +14,29 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+
+/** A playback worker may only write to the AudioTrack for its own epoch. */
+internal class AudioPlaybackEpoch {
+    private var current = 0L
+
+    @Synchronized
+    fun start(): Long = ++current
+
+    @Synchronized
+    fun invalidate(): Long = ++current
+
+    @Synchronized
+    fun isCurrent(epoch: Long): Boolean = current == epoch
+
+    /** Run worker cleanup atomically with respect to start/invalidate. */
+    @Synchronized
+    fun ifCurrent(epoch: Long, action: () -> Unit): Boolean {
+        if (current != epoch) return false
+        action()
+        return true
+    }
+}
 
 /** Android PCM playback with selectable AudioTrack output routing. */
 class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
@@ -21,7 +44,10 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
     EventChannel.StreamHandler {
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val queueLock = Object()
+    private val audioControlExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "HTCommanderAudioControl").apply { isDaemon = true }
+    }
+    private val queueLock = Any()
     private val pending = LinkedBlockingDeque<ByteArray>()
     private val methodChannel = MethodChannel(messenger, METHOD_CHANNEL)
     private val eventChannel = EventChannel(messenger, EVENT_CHANNEL)
@@ -29,6 +55,7 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
     @Volatile private var audioTrack: AudioTrack? = null
     @Volatile private var worker: Thread? = null
     @Volatile private var playing = false
+    private val playbackEpoch = AudioPlaybackEpoch()
     @Volatile private var eventSink: EventChannel.EventSink? = null
     private var sampleRate = 0
     private var channelCount = 1
@@ -46,20 +73,23 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
             when (call.method) {
                 "listDevices" -> result.success(listOutputDevices())
                 "setup" -> {
-                    setup(
-                        call.argument<Int>("sampleRate") ?: 0,
-                        call.argument<Int>("channels") ?: 0,
-                        call.argument<String>("deviceId") ?: "",
-                    )
-                    result.success(true)
+                    val rate = call.argument<Int>("sampleRate") ?: 0
+                    val channels = call.argument<Int>("channels") ?: 0
+                    val deviceId = call.argument<String>("deviceId") ?: ""
+                    runAudioControl(result) {
+                        setup(rate, channels, deviceId)
+                        true
+                    }
                 }
                 "setFeedThreshold" -> {
                     feedThresholdFrames = call.argument<Int>("threshold") ?: 0
                     result.success(null)
                 }
                 "start" -> {
-                    startPlayback()
-                    result.success(null)
+                    runAudioControl(result) {
+                        startPlayback()
+                        null
+                    }
                 }
                 "feed" -> {
                     val bytes = call.argument<ByteArray>("buffer")
@@ -71,13 +101,35 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
                     }
                 }
                 "release" -> {
-                    releasePlayback()
-                    result.success(null)
+                    runAudioControl(result) {
+                        releasePlayback()
+                        null
+                    }
                 }
                 else -> result.notImplemented()
             }
         } catch (error: Exception) {
             result.error("ANDROID_PCM_PLAYER", error.message ?: "Audio playback failed", null)
+        }
+    }
+
+    private fun runAudioControl(
+        result: MethodChannel.Result,
+        operation: () -> Any?,
+    ) {
+        audioControlExecutor.execute {
+            try {
+                val value = operation()
+                mainHandler.post { result.success(value) }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    result.error(
+                        "ANDROID_PCM_PLAYER",
+                        error.message ?: "Audio playback failed",
+                        null,
+                    )
+                }
+            }
         }
     }
 
@@ -159,9 +211,10 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
     private fun startPlayback() {
         val track = checkNotNull(audioTrack) { "Call setup before start" }
         if (!playing) {
+            val epoch = playbackEpoch.start()
             track.play()
             playing = true
-            worker = Thread(::playQueuedAudio, "HTCommanderPcmPlayback").apply {
+            worker = Thread({ playQueuedAudio(epoch) }, "HTCommanderPcmPlayback").apply {
                 priority = Thread.MAX_PRIORITY
                 start()
             }
@@ -190,42 +243,64 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
         }
     }
 
-    private fun playQueuedAudio() {
-        while (playing && !Thread.currentThread().isInterrupted) {
-            val chunk = try {
-                pending.pollFirst(100, TimeUnit.MILLISECONDS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                break
-            } ?: continue
-            synchronized(queueLock) {
-                pendingBytes = maxOf(0, pendingBytes - chunk.size)
-            }
-
-            val track = audioTrack ?: break
-            var offset = 0
-            while (playing && offset < chunk.size) {
-                val written = try {
-                    track.write(chunk, offset, chunk.size - offset, AudioTrack.WRITE_BLOCKING)
-                } catch (_: IllegalStateException) {
+    private fun playQueuedAudio(epoch: Long) {
+        try {
+            while (isPlaybackActive(epoch)) {
+                val chunk = try {
+                    pending.pollFirst(100, TimeUnit.MILLISECONDS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
                     break
+                } ?: continue
+                synchronized(queueLock) {
+                    pendingBytes = maxOf(0, pendingBytes - chunk.size)
                 }
-                if (written <= 0) break
-                offset += written
+
+                val track = audioTrack ?: break
+                var offset = 0
+                while (isPlaybackActive(epoch) && offset < chunk.size) {
+                    val written = try {
+                        track.write(
+                            chunk,
+                            offset,
+                            chunk.size - offset,
+                            AudioTrack.WRITE_BLOCKING,
+                        )
+                    } catch (_: IllegalStateException) {
+                        break
+                    }
+                    if (written <= 0) break
+                    offset += written
+                }
+                if (!isPlaybackActive(epoch)) break
+                val queuedFrames = synchronized(queueLock) { pendingBytes / frameBytes }
+                if (queuedFrames <= feedThresholdFrames) {
+                    mainHandler.post { eventSink?.success(queuedFrames) }
+                }
             }
-            val queuedFrames = synchronized(queueLock) { pendingBytes / frameBytes }
-            if (queuedFrames <= feedThresholdFrames) {
-                mainHandler.post { eventSink?.success(queuedFrames) }
+        } finally {
+            playbackEpoch.ifCurrent(epoch) {
+                playing = false
+                if (worker === Thread.currentThread()) worker = null
             }
         }
     }
 
+    private fun isPlaybackActive(epoch: Long): Boolean =
+        playing && playbackEpoch.isCurrent(epoch) && !Thread.currentThread().isInterrupted
+
     private fun releasePlayback() {
         playing = false
+        // Invalidate before releasing the AudioTrack so an old blocking write
+        // cannot resume against a newly configured track after a quick restart.
+        playbackEpoch.invalidate()
         synchronized(queueLock) {
             pending.clear()
             pendingBytes = 0
         }
+        val previousWorker = worker
+        worker = null
+        previousWorker?.interrupt()
         val track = audioTrack
         audioTrack = null
         try {
@@ -239,9 +314,6 @@ class AndroidPcmPlayerPlugin(context: Context, messenger: BinaryMessenger) :
         } catch (_: IllegalStateException) {
             // Release is idempotent from the app's point of view.
         }
-        worker?.interrupt()
-        worker?.join(500)
-        worker = null
     }
 
     companion object {
