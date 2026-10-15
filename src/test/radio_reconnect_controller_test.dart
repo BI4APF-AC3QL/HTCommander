@@ -12,6 +12,53 @@ const _delays = [
 
 void main() {
   test(
+    'Bluetooth restore triggers one serialized remembered-radio scan',
+    () async {
+      final adapterStates = StreamController<bool>.broadcast(sync: true);
+      final firstReconnect = Completer<void>();
+      final secondReconnect = Completer<void>();
+      var reconnects = 0;
+      final watcher = RadioAdapterReconnectWatcher(
+        adapterEnabledChanges: adapterStates.stream,
+        reconnect: () async {
+          reconnects++;
+          if (reconnects == 1) await firstReconnect.future;
+          if (reconnects == 2) secondReconnect.complete();
+        },
+      );
+
+      // Initial adapter status is not a new event needing another startup scan.
+      adapterStates.add(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(reconnects, 0);
+
+      adapterStates.add(false);
+      adapterStates.add(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(reconnects, 1);
+
+      // A repeated enabled value does nothing; another off/on during the active
+      // scan queues one follow-up instead of overlapping a second Bluetooth scan.
+      adapterStates.add(true);
+      adapterStates.add(false);
+      adapterStates.add(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(reconnects, 1);
+
+      firstReconnect.complete();
+      await secondReconnect.future;
+      expect(reconnects, 2);
+
+      await watcher.dispose();
+      adapterStates.add(false);
+      adapterStates.add(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(reconnects, 2);
+      await adapterStates.close();
+    },
+  );
+
+  test(
     'failed attempts use bounded increasing delays and stop at the limit',
     () {
       fakeAsync((time) {

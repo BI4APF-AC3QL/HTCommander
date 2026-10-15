@@ -1141,6 +1141,8 @@ class _MainFormState extends State<MainForm>
   // or adapter outages. The delay grows to five minutes to limit battery and
   // service churn, and an explicit disconnect still cancels the retry loop.
   bool get _continueAndroidRadioReconnect => !kIsWeb && Platform.isAndroid;
+  bool _autoReconnectInProgress = false;
+  bool _autoReconnectPending = false;
   late final RadioReconnectController _radioReconnectController =
       RadioReconnectController(
         delays: _continueAndroidRadioReconnect
@@ -1164,6 +1166,7 @@ class _MainFormState extends State<MainForm>
           '[Android] Automatic Bluetooth reconnect to $mac failed: $error',
         ),
       );
+  RadioAdapterReconnectWatcher? _androidAdapterReconnectWatcher;
 
   // Hosted web build: the host's radios (each {deviceId, name}) and which one is
   // bridged, so the browser can show the current radio and offer a switcher.
@@ -1345,6 +1348,20 @@ class _MainFormState extends State<MainForm>
       name: 'State',
       callback: _onRadioStateChanged,
     );
+
+    // A failed reconnect can otherwise wait for the full backoff interval
+    // after Bluetooth is switched back on. Startup already checks the initial
+    // adapter state; only a later off-to-on transition requests a fresh scan.
+    if (!kIsWeb && Platform.isAndroid) {
+      _androidAdapterReconnectWatcher = RadioAdapterReconnectWatcher(
+        adapterEnabledChanges:
+            BluetoothService().bluetoothAdapterEnabledChanges,
+        reconnect: _autoReconnectRadios,
+        onError: (error) => _broker.logError(
+          '[Android] Bluetooth adapter state monitoring failed: $error',
+        ),
+      );
+    }
 
     // Hosted web build: the host's radio list (name + selection) drives the
     // current radio name and the radio switcher.
@@ -1653,6 +1670,25 @@ class _MainFormState extends State<MainForm>
   /// dialogs. The stored list is only changed by explicit connect/disconnect,
   /// so closing the app (or a radio going out of range) leaves it intact.
   Future<void> _autoReconnectRadios() async {
+    if (!mounted) return;
+    if (_autoReconnectInProgress) {
+      _autoReconnectPending = true;
+      return;
+    }
+
+    _autoReconnectInProgress = true;
+    try {
+      do {
+        _autoReconnectPending = false;
+        await _scanAndReconnectRadios();
+      } while (_autoReconnectPending && mounted);
+    } finally {
+      _autoReconnectInProgress = false;
+    }
+  }
+
+  Future<void> _scanAndReconnectRadios() async {
+    if (!mounted) return;
     final bluetoothService = BluetoothService();
     final knownMacs = bluetoothService.previouslyConnectedRadioMacs().toSet();
     if (knownMacs.isEmpty) return;
@@ -3390,6 +3426,9 @@ class _MainFormState extends State<MainForm>
   @override
   void dispose() {
     _tabController.removeListener(_onTabChanged);
+    final adapterWatcher = _androidAdapterReconnectWatcher;
+    _androidAdapterReconnectWatcher = null;
+    if (adapterWatcher != null) unawaited(adapterWatcher.dispose());
     _radioReconnectController.dispose();
     if (!kIsWeb && Platform.isAndroid) {
       unawaited(_androidReconnectServiceLease.dispose());

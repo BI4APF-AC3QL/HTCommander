@@ -190,3 +190,74 @@ class RadioReconnectController {
     onChanged?.call();
   }
 }
+
+/// Requests one serialized remembered-radio scan when Bluetooth comes back on.
+///
+/// Adapter state streams emit their current value on subscription, so an
+/// initial `true` is intentionally ignored; startup already performs its own
+/// reconnect scan. Only an observed off-to-on transition triggers another.
+class RadioAdapterReconnectWatcher {
+  RadioAdapterReconnectWatcher({
+    required Stream<bool> adapterEnabledChanges,
+    required this.reconnect,
+    this.onError,
+  }) {
+    _subscription = adapterEnabledChanges.listen(
+      _onAdapterEnabledChanged,
+      onError: (Object error) {
+        try {
+          onError?.call(error);
+        } catch (_) {
+          // Diagnostics must not break adapter observation.
+        }
+      },
+    );
+  }
+
+  final Future<void> Function() reconnect;
+  final void Function(Object error)? onError;
+
+  late final StreamSubscription<bool> _subscription;
+  bool? _lastEnabled;
+  bool _running = false;
+  bool _pending = false;
+  bool _disposed = false;
+
+  void _onAdapterEnabledChanged(bool enabled) {
+    final wasEnabled = _lastEnabled;
+    _lastEnabled = enabled;
+    if (_disposed || wasEnabled != false || !enabled) return;
+
+    // If the adapter toggles repeatedly during a scan, run one more scan after
+    // the current one settles instead of starting parallel Bluetooth scans.
+    _pending = true;
+    if (!_running) unawaited(_drainReconnectRequests());
+  }
+
+  Future<void> _drainReconnectRequests() async {
+    _running = true;
+    try {
+      while (_pending && !_disposed) {
+        _pending = false;
+        try {
+          await reconnect();
+        } catch (error) {
+          try {
+            onError?.call(error);
+          } catch (_) {
+            // Diagnostics must not break adapter recovery.
+          }
+        }
+      }
+    } finally {
+      _running = false;
+      if (_pending && !_disposed) unawaited(_drainReconnectRequests());
+    }
+  }
+
+  Future<void> dispose() {
+    _disposed = true;
+    _pending = false;
+    return _subscription.cancel();
+  }
+}

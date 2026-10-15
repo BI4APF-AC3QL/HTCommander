@@ -149,8 +149,17 @@ class BluetoothService {
   // Track if Bluetooth has been initialized
   static bool _bluetoothInitialized = false;
 
-  /// Check if Bluetooth is available on this platform
-  /// On first call, waits for adapter to initialize
+  /// Emits whether the system Bluetooth adapter is on.
+  ///
+  /// Android uses this stream to retry remembered radios as soon as Bluetooth
+  /// is re-enabled. The initial state is also emitted by the platform plugin.
+  Stream<bool> get bluetoothAdapterEnabledChanges =>
+      FlutterBluePlus.adapterState
+          .map((state) => state == BluetoothAdapterState.on)
+          .distinct();
+
+  /// Check if Bluetooth is available on this platform. On first call, waits
+  /// for the adapter to initialize.
   static Future<bool> checkBluetooth() async {
     if (kIsWeb) return _checkBluetoothWeb();
     if (Platform.isWindows) return _checkBluetoothWindows();
