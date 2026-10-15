@@ -264,6 +264,10 @@ Future<void> _exerciseAndroidRollingVoiceBackgroundRecording() async {
     await injectAndVerifyClip(2);
     // ignore: avoid_print
     print('HTC_ANDROID_RECORDING_BACKGROUND_CHECKPOINT');
+    // The host acceptance script polls logcat before checking that Android's
+    // foreground service is still active. Keep recording enabled long enough
+    // for that external check to observe the post-write state.
+    await Future<void>.delayed(const Duration(seconds: 10));
 
     DataBroker.dispatch(
       deviceId: 0,
