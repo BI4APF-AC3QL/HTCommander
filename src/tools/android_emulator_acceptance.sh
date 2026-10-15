@@ -247,7 +247,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-timeout --signal=TERM --kill-after=30s 8m flutter drive \
+timeout --signal=TERM --kill-after=30s 16m flutter drive \
+  --no-pub \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/android_remote_server_test.dart \
   --no-dds \
@@ -260,7 +261,9 @@ wait_for_flutter_marker() {
   # The hosted-browser checkpoint can spend up to 180 seconds loading the
   # packaged Flutter client, and the integration test keeps its server alive
   # for four minutes to cover that pass before advancing its own assertions.
-  for attempt in {1..360}; do
+  # Allow additional time for slower CI emulators to compile the test APK and
+  # reach the later recording/MQTT checkpoints within the 16-minute drive cap.
+  for attempt in {1..480}; do
     if adb_cmd logcat -d -s flutter:I | grep -F "$marker" >/dev/null; then
       return 0
     fi
