@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "version": "2026.10.12",
-  "sourceDate": 20261012,
+  "version": "2026.10.15",
+  "sourceDate": 20261015,
   "url": "https://github.com/BI4APF-AC3QL/HTCommander/releases/download/winlink-db/winlink_packet.wdb.xz",
   "compressed": true,
-  "sizeBytes": 12248,
-  "md5": "7172098cc820c4174de4940b2ac5e00a",
-  "recordCount": 1255,
-  "gatewayCount": 1194,
-  "recordsMd5": "0815531ef83ed0ed43e914373b622848"
+  "sizeBytes": 12392,
+  "md5": "b14a2391b0de7f39df8b705ff5236dfe",
+  "recordCount": 1270,
+  "gatewayCount": 1209,
+  "recordsMd5": "6ad7ccde5489016b899432639c46d8a7"
 }
