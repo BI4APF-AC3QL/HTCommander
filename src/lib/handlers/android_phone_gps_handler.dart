@@ -13,21 +13,31 @@ class AndroidPhoneGpsHandler {
     Stream<AndroidCoordinates> Function()? positions,
     this.startService,
     this.stopService,
+    this.retryDelay = const Duration(seconds: 2),
   }) : _isAndroid = isAndroid ?? Platform.isAndroid,
        _positions = positions ?? AndroidCurrentLocation.watchPosition,
        _broker = DataBrokerClient(),
-       _lifecycle = AndroidServerLifecycle();
+       _lifecycle = AndroidServerLifecycle(),
+       _retryDelay = retryDelay {
+    assert(
+      retryDelay > Duration.zero && retryDelay <= const Duration(minutes: 1),
+    );
+  }
 
   static const _enabledKey = 'PhoneGpsTrackingEnabled';
   final bool _isAndroid;
   final Stream<AndroidCoordinates> Function() _positions;
   final Future<void> Function()? startService;
   final Future<void> Function()? stopService;
+  final Duration retryDelay;
   final DataBrokerClient _broker;
   final AndroidServerLifecycle _lifecycle;
   StreamSubscription<AndroidCoordinates>? _subscription;
   Future<void> _transition = Future<void>.value();
+  Timer? _retryTimer;
+  Duration _retryDelay;
   bool _active = false;
+  bool _serviceRequested = false;
   bool _disposed = false;
 
   void init() {
@@ -44,42 +54,45 @@ class AndroidPhoneGpsHandler {
 
   void _apply() {
     if (_disposed || !_isAndroid) return;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _transition = _transition.catchError((Object _) {}).then((_) async {
       if (_disposed) return;
-      final desired = _enabled;
-      if (desired == _active) return;
-      if (desired) {
-        try {
-          await (startService?.call() ?? _lifecycle.start(reason: 'location'));
-          if (_disposed || !_enabled) {
-            await (stopService?.call() ?? _lifecycle.stop(reason: 'location'));
-            return;
-          }
-          _subscription = _positions().listen(
-            _onPosition,
-            onError: _onStreamError,
-            onDone: _onStreamDone,
-            cancelOnError: true,
-          );
-          _active = true;
-        } on Object catch (error) {
-          _broker.logError('Android phone GPS could not start: $error');
-          _broker.dispatch(
-            deviceId: 0,
-            name: _enabledKey,
-            data: 0,
-          );
-          try {
-            await (stopService?.call() ??
-                _lifecycle.stop(reason: 'location'));
-          } on Object {
-            // Keep the original startup failure for the application log.
-          }
-        }
+      if (_enabled) {
+        await _startTracking();
       } else {
         await _stopTracking();
       }
     });
+  }
+
+  Future<void> _startTracking() async {
+    if (_active) return;
+    try {
+      if (!_serviceRequested) {
+        // Record the request before awaiting the platform call. If the channel
+        // reports an error after Android accepted the start command, the error
+        // path still attempts to release the native service.
+        _serviceRequested = true;
+        await (startService?.call() ?? _lifecycle.start(reason: 'location'));
+      }
+      if (_disposed || !_enabled) {
+        await _stopLocationService();
+        return;
+      }
+      _subscription = _positions().listen(
+        _onPosition,
+        onError: _onStreamError,
+        onDone: _onStreamDone,
+        cancelOnError: true,
+      );
+      _active = true;
+      _retryDelay = retryDelay;
+    } on Object catch (error) {
+      _broker.logError('Android phone GPS could not start: $error');
+      _broker.dispatch(deviceId: 0, name: _enabledKey, data: 0);
+      await _stopLocationService();
+    }
   }
 
   void _onPosition(AndroidCoordinates position) {
@@ -117,16 +130,50 @@ class AndroidPhoneGpsHandler {
   }
 
   Future<void> _stopTracking() async {
-    await _subscription?.cancel();
+    try {
+      await _subscription?.cancel();
+    } on Object catch (error) {
+      _broker.logError('Android phone GPS stream could not stop: $error');
+    }
     _subscription = null;
-    if (!_active) return;
     _active = false;
-    await (stopService?.call() ?? _lifecycle.stop(reason: 'location'));
+    await _stopLocationService();
+  }
+
+  Future<void> _stopLocationService() async {
+    if (!_serviceRequested) return;
+    try {
+      await (stopService?.call() ?? _lifecycle.stop(reason: 'location'));
+      _serviceRequested = false;
+      _retryDelay = retryDelay;
+    } on Object catch (error) {
+      _broker.logError('Android phone GPS service could not stop: $error');
+      _scheduleStopRetry();
+    }
+  }
+
+  void _scheduleStopRetry() {
+    if (_disposed || _retryTimer != null || !_serviceRequested) return;
+    final delay = _retryDelay;
+    _retryDelay = Duration(
+      milliseconds: (_retryDelay.inMilliseconds * 2)
+          .clamp(
+            retryDelay.inMilliseconds,
+            const Duration(minutes: 1).inMilliseconds,
+          )
+          .toInt(),
+    );
+    _retryTimer = Timer(delay, () {
+      _retryTimer = null;
+      _apply();
+    });
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _broker.dispose();
     _transition = _transition.catchError((Object _) {}).then((_) async {
       await _stopTracking();
