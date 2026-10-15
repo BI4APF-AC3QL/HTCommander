@@ -133,7 +133,10 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
       // that the radio and server remain connected together in the background.
       // ignore: avoid_print
       print('HTC_ANDROID_BT_REMOTE_BG_ACCEPTANCE_READY:$port');
-      await Future<void>.delayed(const Duration(seconds: 8));
+      // Leave enough time for the emulator driver to background the Activity,
+      // turn the display off and verify the forwarded HTTP endpoint while the
+      // same radio connection and authenticated WebSocket remain active.
+      await Future<void>.delayed(const Duration(seconds: 20));
       final background = await sendCommand({'op': 'state'});
       final backgroundState = Map<String, Object?>.from(
         background['state']! as Map,

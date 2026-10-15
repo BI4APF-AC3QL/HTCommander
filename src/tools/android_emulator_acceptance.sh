@@ -175,6 +175,36 @@ if [[ "$bt_background_status" != '200' ]]; then
 fi
 echo 'Android kept the connected Bluetooth radio and remote server available together in the background.'
 
+# Check the combined radio + remote-server session with the display asleep.
+# The emulator is disposable and this test has already rejected physical
+# devices above. The foreground service must keep the Flutter process alive,
+# while the server reason holds Wi-Fi so the forwarded login remains reachable.
+adb_cmd shell settings put global stay_on_while_plugged_in 0
+adb_cmd shell input keyevent KEYCODE_SLEEP
+screen_state=''
+for attempt in {1..10}; do
+  screen_state="$(adb_cmd shell dumpsys power | tr -d '\r')"
+  if grep -Eq 'mWakefulness=Asleep|mInteractive=false' <<< "$screen_state"; then
+    break
+  fi
+  sleep 1
+done
+if ! grep -Eq 'mWakefulness=Asleep|mInteractive=false' <<< "$screen_state"; then
+  adb_cmd shell input keyevent KEYCODE_WAKEUP || true
+  cat "$bt_drive_log"
+  echo '::error::Android emulator display did not turn off for the connected-radio background check.'
+  exit 1
+fi
+sleep 2
+bt_screen_off_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18736/login || true)"
+adb_cmd shell input keyevent KEYCODE_WAKEUP || true
+if [[ "$bt_screen_off_status" != '200' ]]; then
+  cat "$bt_drive_log"
+  echo "::error::Android remote server stopped serving /login with the connected radio and display asleep (HTTP ${bt_screen_off_status:-no response})."
+  exit 1
+fi
+echo 'Android kept the connected radio and remote server reachable with the display asleep.'
+
 if ! wait "$bt_drive_pid"; then
   cat "$bt_drive_log"
   exit 1
