@@ -5,8 +5,9 @@ import 'dart:typed_data';
 import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart' show FlutterError;
+import 'package:flutter/material.dart' show TabBarView;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter/widgets.dart' show ErrorWidget, ValueKey;
+import 'package:flutter/widgets.dart' show ErrorWidget, Scrollable, ValueKey;
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
 import 'package:htcommander/radio/gaia_protocol.dart';
@@ -76,17 +77,16 @@ Future<String?> _verifyAndroidRemoteServerLanBinding(
   required InternetAddressType addressType,
   required bool requiredAddress,
 }) async {
-  final addresses = (await NetworkInterface.list(
-    includeLoopback: false,
-    type: addressType,
-  ))
-      .expand((interface) => interface.addresses)
-      .where(
-        (address) => address.type == addressType &&
-            !address.isLoopback &&
-            !address.isLinkLocal,
-      )
-      .toList();
+  final addresses =
+      (await NetworkInterface.list(includeLoopback: false, type: addressType))
+          .expand((interface) => interface.addresses)
+          .where(
+            (address) =>
+                address.type == addressType &&
+                !address.isLoopback &&
+                !address.isLinkLocal,
+          )
+          .toList();
   if (addresses.isEmpty) {
     if (!requiredAddress) return null;
     throw StateError(
@@ -111,11 +111,11 @@ Future<String?> _verifyAndroidRemoteServerLanBinding(
         final response = await request.close().timeout(
           const Duration(seconds: 3),
         );
-        final body = await utf8.decoder.bind(response).join().timeout(
-          const Duration(seconds: 3),
-        );
-        if (response.statusCode == HttpStatus.ok &&
-            body.contains('远程访问密码')) {
+        final body = await utf8.decoder
+            .bind(response)
+            .join()
+            .timeout(const Duration(seconds: 3));
+        if (response.statusCode == HttpStatus.ok && body.contains('远程访问密码')) {
           return address.address;
         }
         lastError = StateError(
@@ -182,7 +182,7 @@ void main() {
         await tester.runAsync(_verifyAndroidAgwpeLanBinding);
 
         // Android phones use the compact layout, where the radio controls and
-        // the most-used functions are opened from the narrow side navigation.
+        // feature pages are opened from the bottom navigation strip.
         // Wait for asynchronous app startup to replace its splash screen, then
         // exercise those entries so the server test also covers the phone UI.
         final mobileRadioTab = find.byKey(
@@ -203,7 +203,28 @@ void main() {
         final mobileNavigation = find.byKey(
           const ValueKey<String>('main_tab_navigation'),
         );
+        final mobileScrollable = find.descendant(
+          of: mobileNavigation,
+          matching: find.byType(Scrollable),
+        );
         expect(mobileNavigation, findsOneWidget);
+        expect(mobileScrollable, findsOneWidget);
+        final navigationRect = tester.getRect(mobileNavigation);
+        expect(
+          navigationRect.width,
+          greaterThan(380),
+          reason: 'phone navigation should span the screen width',
+        );
+        expect(
+          navigationRect.height,
+          lessThanOrEqualTo(72),
+          reason: 'phone navigation should use a compact bottom strip',
+        );
+        expect(
+          tester.getSize(find.byType(TabBarView).first).width,
+          greaterThan(380),
+          reason: 'radio and feature pages should retain the full phone width',
+        );
 
         // Expose every tab available in the native desktop app so the phone
         // acceptance check covers the same feature pages. These values are
@@ -246,12 +267,16 @@ void main() {
           'Debug',
         ]) {
           final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
+          await tester.scrollUntilVisible(
+            entry,
+            160,
+            scrollable: mobileScrollable,
+          );
           expect(
             entry,
             findsOneWidget,
             reason: '$tab should be in phone navigation',
           );
-          await tester.ensureVisible(entry);
           expect(
             entry.hitTestable(),
             findsOneWidget,

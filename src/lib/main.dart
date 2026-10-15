@@ -1048,8 +1048,9 @@ class _MainFormState extends State<MainForm>
   late List<_TabInfo> _currentTabs;
   bool _radioVisible = true;
   bool _showTabNames = true;
-  // Whether the vertical tab list on the right is shown. Only togglable while
-  // in compact mode; always shown when not in compact mode.
+  // Whether compact-mode tab navigation is shown. It is a bottom strip on
+  // Android phones and a side list on other compact layouts; always shown in
+  // non-compact mode.
   bool _tabsVisible = true;
   bool _showAllChannels = false;
   // Whether channel tiles show the frequency under the name. Toggled from the
@@ -1135,8 +1136,8 @@ class _MainFormState extends State<MainForm>
     Duration(seconds: 16),
     Duration(seconds: 30),
   ];
-  late final RadioReconnectController _radioReconnectController =
-      RadioReconnectController(
+  late final RadioReconnectController
+  _radioReconnectController = RadioReconnectController(
     delays: _radioReconnectDelays,
     isRemembered: (mac) =>
         BluetoothService().previouslyConnectedRadioMacs().contains(mac),
@@ -4435,10 +4436,13 @@ class _MainFormState extends State<MainForm>
 
   Widget _buildTabPanel() {
     // Use a key based on compact mode to force clean rebuild when mode changes
+    final useBottomNavigation = _isCompactMode && !kIsWeb && Platform.isAndroid;
     return Column(
       key: ValueKey('tab_panel_${_isCompactMode}_${_currentTabs.length}'),
       children: [
-        // Tabs on the right side (vertical)
+        // Keep the tab content full-width on Android phones. The horizontal
+        // navigation below uses vertical space instead of reducing the map,
+        // APRS, and radio controls to a narrow column.
         Expanded(
           child: Row(
             children: [
@@ -4463,11 +4467,135 @@ class _MainFormState extends State<MainForm>
                 ),
               ),
               // Hide the tab list only in compact mode when the user toggles it off
-              if (!_isCompactMode || _tabsVisible) _buildVerticalTabList(),
+              if (!useBottomNavigation && (!_isCompactMode || _tabsVisible))
+                _buildVerticalTabList(),
             ],
           ),
         ),
+        if (useBottomNavigation && _tabsVisible) _buildHorizontalTabList(),
       ],
+    );
+  }
+
+  void _selectTab(int index) {
+    final tab = _currentTabs[index];
+    // Re-tapping the already-selected APRS tab returns it to the conversation
+    // list.
+    if (_tabController.index == index && tab.label == 'APRS') {
+      _broker.dispatch(
+        deviceId: 1,
+        name: 'AprsShowContactList',
+        data: null,
+        store: false,
+      );
+    }
+    // Re-tapping Mail returns to the mailbox list, saving a draft when needed.
+    if (_tabController.index == index && tab.label == 'Mail') {
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'MailShowList',
+        data: null,
+        store: false,
+      );
+    }
+    _tabController.animateTo(index);
+  }
+
+  Widget _buildHorizontalTabList() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 68,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
+      ),
+      child: AnimatedBuilder(
+        animation: _tabController,
+        builder: (context, child) {
+          return ListView.builder(
+            key: const ValueKey('main_tab_navigation'),
+            controller: _tabListScrollController,
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            itemCount: _currentTabs.length,
+            itemBuilder: (context, index) {
+              final tab = _currentTabs[index];
+              final isSelected = _tabController.index == index;
+              final title = _tabDisplayName(tab.label);
+              return SizedBox(
+                width: 76,
+                child: GestureDetector(
+                  onSecondaryTapUp: (details) =>
+                      _showTabContextMenu(context, details.globalPosition, tab),
+                  onLongPressStart: (details) =>
+                      _showTabContextMenu(context, details.globalPosition, tab),
+                  child: Tooltip(
+                    message: title,
+                    child: InkWell(
+                      key: ValueKey('main_tab_${tab.label}'),
+                      onTap: () => _selectTab(index),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            top: 0,
+                            left: 22,
+                            right: 22,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              height: 3,
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? colorScheme.primary
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(4, 7, 4, 2),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Image.asset(
+                                  tab.assetPath,
+                                  width: 24,
+                                  height: 24,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Icon(
+                                        tab.fallbackIcon,
+                                        size: 24,
+                                        color: isSelected
+                                            ? colorScheme.primary
+                                            : colorScheme.onSurfaceVariant,
+                                      ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  title,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: isSelected
+                                        ? colorScheme.primary
+                                        : colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -4513,31 +4641,7 @@ class _MainFormState extends State<MainForm>
                       },
                       child: InkWell(
                         key: ValueKey('main_tab_${tab.label}'),
-                        onTap: () {
-                          // Re-tapping the already-selected APRS tab returns it
-                          // to the conversation list.
-                          if (_tabController.index == index &&
-                              tab.label == 'APRS') {
-                            _broker.dispatch(
-                              deviceId: 1,
-                              name: 'AprsShowContactList',
-                              data: null,
-                              store: false,
-                            );
-                          }
-                          // Re-tapping the already-selected Mail tab returns it
-                          // to the mailbox list (saving a draft when composing).
-                          if (_tabController.index == index &&
-                              tab.label == 'Mail') {
-                            _broker.dispatch(
-                              deviceId: 0,
-                              name: 'MailShowList',
-                              data: null,
-                              store: false,
-                            );
-                          }
-                          _tabController.animateTo(index);
-                        },
+                        onTap: () => _selectTab(index),
                         child: Stack(
                           children: [
                             // Selection marker on the leading edge, matching the
