@@ -747,6 +747,18 @@ void main() {
               (total, chunk) => total + chunk.length,
             );
             expect(scriptBytes, greaterThan(100000));
+            expect(
+              scriptResponse.contentLength,
+              scriptBytes,
+              reason:
+                  'the Android server must declare the exact hosted JavaScript byte length',
+            );
+            expect(
+              scriptResponse.headers.value(HttpHeaders.contentEncodingHeader),
+              isNull,
+              reason:
+                  'the Android server must not transform bytes after setting Content-Length',
+            );
 
             final wasmRequest = await http!.getUrl(
               base.resolve('/canvaskit/canvaskit.wasm'),
