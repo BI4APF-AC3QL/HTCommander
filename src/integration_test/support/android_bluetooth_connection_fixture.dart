@@ -8,7 +8,7 @@ import 'package:htcommander/services/data_broker.dart';
 /// Exercises the Android Classic Bluetooth path against mocked native
 /// channels. No Bluetooth hardware, radio frames, or RF transmission is used.
 Future<void> exerciseAndroidBluetoothClassicConnection({
-  Future<void> Function(int radioId)? onConnected,
+  Future<void> Function(int radioId, List<Uint8List> writes)? onConnected,
 }) async {
   const permissionChannel = MethodChannel(
     'flutter.baseflow.com/permissions/methods',
@@ -136,7 +136,7 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
       reason: 'startup traffic must stay limited to receive/query commands',
     );
 
-    await onConnected?.call(radioId);
+    await onConnected?.call(radioId, writes);
 
     await bluetooth.disconnectRadio(radioId);
     expect(bluetooth.connectedRadioIds, isNot(contains(radioId)));

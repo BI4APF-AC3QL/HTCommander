@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart' show ErrorWidget;
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
+import 'package:htcommander/radio/gaia_protocol.dart';
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:integration_test/integration_test.dart';
@@ -18,6 +20,7 @@ const _testRemotePassword = 'android-radio-server-test-password';
 Future<void> _verifyRemoteServerSeesConnectedRadio(
   int port,
   int expectedRadioId,
+  List<Uint8List> bluetoothWrites,
 ) async {
   final base = Uri(scheme: 'http', host: '::1', port: port);
   final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
@@ -59,26 +62,68 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
       ).toString(),
       headers: {'Origin': base.origin, 'Cookie': 'htc_bridge=${session.value}'},
     );
-    final connectedState = Completer<Map<String, Object?>>();
+    Completer<Map<String, Object?>>? pendingResponse;
     final subscription = socket.listen((event) {
       if (event is! String || !event.startsWith('remote:')) return;
       final message = jsonDecode(event.substring(7));
-      if (message is! Map || message['state'] is! Map) return;
-      final state = Map<String, Object?>.from(message['state'] as Map);
-      if (!connectedState.isCompleted && state['connected'] == true) {
-        connectedState.complete(state);
+      if (message is! Map) return;
+      final response = pendingResponse;
+      if (response != null && !response.isCompleted) {
+        pendingResponse = null;
+        response.complete(Map<String, Object?>.from(message));
       }
     });
+
+    Future<Map<String, Object?>> sendCommand(Map<String, Object?> command) {
+      final response = Completer<Map<String, Object?>>();
+      pendingResponse = response;
+      socket.add('remote:${jsonEncode(command)}');
+      return response.future.timeout(const Duration(seconds: 5));
+    }
+
     try {
-      socket.add('remote:{"op":"state"}');
-      final state = await connectedState.future.timeout(
-        const Duration(seconds: 5),
-      );
+      final initial = await sendCommand({'op': 'state'});
+      final state = Map<String, Object?>.from(initial['state']! as Map);
       expect(state['radioId'], expectedRadioId);
       expect(state['connected'], isTrue);
       final dashboard = Map<String, Object?>.from(state['dashboard']! as Map);
       final radio = Map<String, Object?>.from(dashboard['radio']! as Map);
       expect(radio['link'], 'Connected');
+
+      final control = await sendCommand({'op': 'requestControl'});
+      final controlledState = Map<String, Object?>.from(
+        control['state']! as Map,
+      );
+      expect(controlledState['controlOwner'], control['clientId']);
+
+      final writeCount = bluetoothWrites.length;
+      final volume = await sendCommand({'op': 'volume', 'value': 8});
+      expect(volume['error'], isNull);
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      bool volumeCommandReachedBluetooth() => bluetoothWrites
+          .skip(writeCount)
+          .any(
+            (frame) =>
+                frame.length >= 9 &&
+                frame[0] == 0xFF &&
+                frame[1] == 0x01 &&
+                frame[4] == 0 &&
+                frame[5] == RadioCommandGroup.basic.value &&
+                frame[6] == 0 &&
+                frame[7] == RadioBasicCommand.setVolume.value &&
+                frame[8] == 8,
+          );
+
+      while (!volumeCommandReachedBluetooth() &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(
+        volumeCommandReachedBluetooth(),
+        isTrue,
+        reason:
+            'a remote volume command must reach the connected Android Classic radio transport',
+      );
     } finally {
       await subscription.cancel();
       await socket.close();
@@ -137,6 +182,8 @@ void main() {
           setServerSetting('webServerPort', 0);
           setServerSetting('webServerRemoteEnabled', 1);
           setServerSetting('webServerPassword', _testRemotePassword);
+          setServerSetting('webServerDefaultReadOnly', 0);
+          setServerSetting('webServerRequireControlApproval', 0);
           setServerSetting('AllowTransmit', 0);
           setServerSetting('webServerAllowTransmit', 0);
           setServerSetting('webServerEnabled', 1);
@@ -150,10 +197,12 @@ void main() {
 
           try {
             await exerciseAndroidBluetoothClassicConnection(
-              onConnected: (radioId) => _verifyRemoteServerSeesConnectedRadio(
-                server.boundPort!,
-                radioId,
-              ),
+              onConnected: (radioId, bluetoothWrites) =>
+                  _verifyRemoteServerSeesConnectedRadio(
+                    server.boundPort!,
+                    radioId,
+                    bluetoothWrites,
+                  ),
             );
           } finally {
             setServerSetting('webServerEnabled', 0);
