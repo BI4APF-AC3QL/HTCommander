@@ -16,6 +16,7 @@ import 'package:htcommander/services/agwpe/agwpe_server.dart';
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/services/db/app_database.dart';
+import 'package:htcommander/services/recording/rolling_voice_store.dart';
 import 'package:integration_test/integration_test.dart';
 
 Future<void> _exerciseAndroidPcmPlaybackLifecycle() async {
@@ -244,8 +245,10 @@ Future<void> _exerciseAndroidRollingVoiceBackgroundRecording() async {
       expect(kept.length, greaterThanOrEqualTo(expectedKeptFiles));
       final name = kept.first['name'];
       expect(name, isA<String>());
-      final file = File(
-        '$folder${Platform.pathSeparator}kept${Platform.pathSeparator}$name',
+      final file = rollingVoiceClipFile(
+        folder as String,
+        name as String,
+        kept: true,
       );
       final bytes = await file.readAsBytes();
       expect(bytes.length, pcmLength + 44);

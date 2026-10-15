@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -7,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
+import '../services/recording/rolling_voice_store.dart';
 
 class RollingVoiceDialog extends StatefulWidget {
   const RollingVoiceDialog({super.key});
@@ -40,8 +39,7 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
     required bool kept,
   }) async {
     try {
-      final keptPath = kept ? 'kept${Platform.pathSeparator}' : '';
-      final file = File('$folder${Platform.pathSeparator}$keptPath$name');
+      final file = rollingVoiceClipFile(folder, name, kept: kept);
       final bytes = await file.readAsBytes();
       await FilePicker.saveFile(
         dialogTitle: '保存接收录音',

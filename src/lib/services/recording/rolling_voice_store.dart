@@ -2,6 +2,12 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+/// Resolves a clip listed in recorder status to its local WAV file.
+File rollingVoiceClipFile(String folder, String name, {required bool kept}) {
+  final subdirectory = kept ? 'kept${Platform.pathSeparator}' : '';
+  return File('$folder${Platform.pathSeparator}$subdirectory$name');
+}
+
 /// File operations run only in the recorder isolate (or isolated unit tests).
 /// Only files with this store's names in its dedicated directory are managed.
 class RollingVoiceStore {

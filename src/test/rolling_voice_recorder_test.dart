@@ -52,6 +52,23 @@ void main() {
     expect(store.snapshot()['keptFiles'], 1);
     expect(user.readAsBytesSync(), [1, 2, 3]);
   });
+  test('kept clip export path resolves to the protected file', () {
+    final store = RollingVoiceStore(dir, clock: () => now);
+    final pcm = Uint8List.fromList([1, 2, 3, 4]);
+    store.append(2, 'Voice', pcm);
+    expect(store.preserveLatest(), 'saved');
+
+    final status = store.snapshot();
+    final clip = (status['recent'] as List).whereType<Map>().single;
+    expect(clip['kept'], true);
+    final file = rollingVoiceClipFile(
+      dir.path,
+      clip['name'] as String,
+      kept: clip['kept'] as bool,
+    );
+    expect(file.existsSync(), true);
+    expect(file.readAsBytesSync().sublist(44), pcm);
+  });
   test(
     'disk budget reserves active minute and deletes oldest completed clips',
     () {
