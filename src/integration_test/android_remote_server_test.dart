@@ -18,6 +18,7 @@ import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:htcommander/services/recording/rolling_voice_clip_path.dart';
 import 'package:integration_test/integration_test.dart';
+import 'support/android_bluetooth_connection_fixture.dart';
 
 Future<void> _exerciseAndroidPcmPlaybackLifecycle() async {
   final PcmPlayer player = PcmPlayer();
@@ -353,6 +354,7 @@ void main() {
         );
         await tester.runAsync(_exerciseAndroidPcmPlaybackLifecycle);
         await tester.runAsync(_verifyAndroidAgwpeLanBinding);
+        await tester.runAsync(exerciseAndroidBluetoothClassicConnection);
 
         // Android phones use the compact layout, where the radio controls and
         // feature pages are opened from the bottom navigation strip.

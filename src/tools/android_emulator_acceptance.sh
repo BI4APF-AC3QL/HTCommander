@@ -104,6 +104,15 @@ echo "HTCommander $device_abi release APK installed and remained running for 15 
 adb_cmd uninstall com.meshcentral.htcommander
 cd "$src_root"
 test -f integration_test/android_remote_server_test.dart
+test -f integration_test/android_bluetooth_connection_test.dart
+# Verify Android's permission and Classic method-channel path independently so
+# failures are easy to diagnose before the longer remote-server/browser run.
+timeout --signal=TERM --kill-after=30s 4m flutter drive \
+  --no-pub \
+  --driver=test_driver/integration_test.dart \
+  --target=integration_test/android_bluetooth_connection_test.dart \
+  --no-dds \
+  -d "$emulator_serial"
 drive_log="$(mktemp)"
 drive_pid=""
 cleanup() {
