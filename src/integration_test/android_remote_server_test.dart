@@ -11,11 +11,28 @@ import 'package:flutter/widgets.dart' show ErrorWidget, Scrollable, ValueKey;
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
 import 'package:htcommander/radio/gaia_protocol.dart';
+import 'package:htcommander/radio/pcm_player.dart';
 import 'package:htcommander/services/agwpe/agwpe_server.dart';
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/data_broker_client.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:integration_test/integration_test.dart';
+
+Future<void> _exerciseAndroidPcmPlaybackLifecycle() async {
+  final PcmPlayer player = PcmPlayer();
+  try {
+    // Silent samples exercise AudioTrack setup, queued writes, release, and
+    // immediate restart without connecting a radio or producing RF output.
+    for (var cycle = 0; cycle < 4; cycle++) {
+      await player.setup(sampleRate: 32000, channelCount: 1);
+      await player.feed(Int16List(32000));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await player.release();
+    }
+  } finally {
+    await player.release();
+  }
+}
 
 Future<void> _verifyAndroidAgwpeLanBinding() async {
   final interfaces = await NetworkInterface.list(
@@ -179,6 +196,7 @@ void main() {
           isNotNull,
           reason: 'Android SQLite initialization must succeed before startup',
         );
+        await tester.runAsync(_exerciseAndroidPcmPlaybackLifecycle);
         await tester.runAsync(_verifyAndroidAgwpeLanBinding);
 
         // Android phones use the compact layout, where the radio controls and
