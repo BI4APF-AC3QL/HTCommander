@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/handlers/rolling_voice_handler.dart';
@@ -243,6 +245,55 @@ void main() {
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
+    }
+  });
+  testWidgets('Android exports protected clips from the kept subdirectory', (
+    tester,
+  ) async {
+    final originalPlatform = debugDefaultTargetPlatformOverride;
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final directory = Directory.systemTemp.createTempSync(
+      'htc-rolling-kept-export-',
+    );
+    const name = 'rx_123_2_abcd1234_0.wav';
+    final wavBytes = Uint8List.fromList([1, 2, 3, 4]);
+    final clip = File(
+      '${directory.path}${Platform.pathSeparator}kept'
+      '${Platform.pathSeparator}$name',
+    )..createSync(recursive: true);
+    clip.writeAsBytesSync(wavBytes);
+    Uint8List? exportedBytes;
+    const filePicker = MethodChannel(
+      'miguelruivo.flutter.plugins.filepicker',
+    );
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(filePicker, (call) async {
+      expect(call.method, 'save');
+      exportedBytes = (call.arguments as Map)['bytes'] as Uint8List;
+      return null;
+    });
+    try {
+      set(0, 'RollingVoiceStatus', {
+        'running': true,
+        'folder': directory.path,
+        'files': 0,
+        'keptFiles': 1,
+        'recent': [
+          {'name': name, 'bytes': wavBytes.length, 'kept': true},
+        ],
+      });
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: RollingVoiceDialog())),
+      );
+      await tester.ensureVisible(find.byTooltip('导出 WAV'));
+      await tester.tap(find.byTooltip('导出 WAV'));
+      await tester.pumpAndSettle();
+      expect(exportedBytes, orderedEquals(wavBytes));
+    } finally {
+      messenger.setMockMethodCallHandler(filePicker, null);
+      debugDefaultTargetPlatformOverride = originalPlatform;
+      directory.deleteSync(recursive: true);
     }
   });
 }

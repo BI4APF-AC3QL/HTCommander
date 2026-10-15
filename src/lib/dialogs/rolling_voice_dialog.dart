@@ -34,9 +34,14 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
     super.dispose();
   }
 
-  Future<void> _exportClip(String folder, String name) async {
+  Future<void> _exportClip(
+    String folder,
+    String name, {
+    required bool kept,
+  }) async {
     try {
-      final file = File('$folder${Platform.pathSeparator}$name');
+      final keptPath = kept ? 'kept${Platform.pathSeparator}' : '';
+      final file = File('$folder${Platform.pathSeparator}$keptPath$name');
       final bytes = await file.readAsBytes();
       await FilePicker.saveFile(
         dialogTitle: '保存接收录音',
@@ -215,7 +220,11 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
                         IconButton(
                           tooltip: '导出 WAV',
                           onPressed: () =>
-                              _exportClip(folder, item['name'] as String),
+                              _exportClip(
+                                folder,
+                                item['name'] as String,
+                                kept: item['kept'] == true,
+                              ),
                           icon: const Icon(Icons.save_alt),
                         ),
                     ],

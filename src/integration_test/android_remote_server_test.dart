@@ -244,7 +244,9 @@ Future<void> _exerciseAndroidRollingVoiceBackgroundRecording() async {
       expect(kept.length, greaterThanOrEqualTo(expectedKeptFiles));
       final name = kept.first['name'];
       expect(name, isA<String>());
-      final file = File('$folder${Platform.pathSeparator}$name');
+      final file = File(
+        '$folder${Platform.pathSeparator}kept${Platform.pathSeparator}$name',
+      );
       final bytes = await file.readAsBytes();
       expect(bytes.length, pcmLength + 44);
       expect(ascii.decode(bytes.sublist(0, 4)), 'RIFF');
