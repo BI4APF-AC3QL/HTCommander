@@ -11,11 +11,23 @@ import 'android_server_lifecycle.dart';
 /// Calls are serialized so simultaneous input starts/stops cannot drop the
 /// shared `microphone` service reason while another input is still capturing.
 class AndroidRecordingServiceLease {
+  /// Shared process lease for every local microphone input.
+  ///
+  /// The native service tracks the microphone foreground-service reason as a
+  /// single state, so independent Dart lease instances must not stop one
+  /// another's capture.
+  static final AndroidRecordingServiceLease shared =
+      AndroidRecordingServiceLease._(!kIsWeb && Platform.isAndroid);
+
   AndroidRecordingServiceLease({
     bool? enabled,
     this.startService,
     this.stopService,
   }) : _enabled = enabled ?? (!kIsWeb && Platform.isAndroid);
+
+  AndroidRecordingServiceLease._(this._enabled)
+    : startService = null,
+      stopService = null;
 
   final bool _enabled;
   final Future<void> Function()? startService;

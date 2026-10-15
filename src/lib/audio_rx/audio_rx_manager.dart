@@ -60,7 +60,8 @@ class AudioRxManager {
   AudioRxManager(
     this._softwareModem, {
     AndroidRecordingServiceLease? recordingService,
-  }) : _recordingService = recordingService ?? AndroidRecordingServiceLease();
+  }) : _recordingService =
+           recordingService ?? AndroidRecordingServiceLease.shared;
 
   final SoftwareModem _softwareModem;
   final AndroidRecordingServiceLease _recordingService;

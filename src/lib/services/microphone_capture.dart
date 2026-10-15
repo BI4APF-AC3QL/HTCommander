@@ -22,8 +22,20 @@ import 'package:record/record.dart';
 /// the unused channel's noise; [auto] tracks and emits the louder channel.
 enum MonoReduction { mix, left, right, auto }
 
+/// Minimal capture surface shared by the microphone owner and its test fakes.
+abstract interface class MicrophoneCaptureSource {
+  double get gain;
+  set gain(double value);
+  String? get deviceId;
+  set deviceId(String? value);
+  bool get isCapturing;
+  Future<bool> hasPermission();
+  Future<bool> start(void Function(Uint8List pcm16) onData);
+  Future<void> stop();
+}
+
 /// when the spectrogram no longer needs it.
-class MicrophoneCapture {
+class MicrophoneCapture implements MicrophoneCaptureSource {
   MicrophoneCapture({
     this.sampleRate = 32000,
     this.gain = 1.0,
@@ -40,12 +52,14 @@ class MicrophoneCapture {
   /// delivered (1.0 = unchanged). Boosts a quiet microphone for both the
   /// spectrograph and push-to-talk transmit. May be changed at any time while
   /// capture is running.
+  @override
   double gain;
 
   /// Identifier of the input (microphone) device to capture from, or null to
   /// use the operating-system default device. Matches the `id` reported by
   /// [listInputDevices]. Changing this only takes effect on the next [start];
   /// callers that want it applied immediately should [stop] then [start].
+  @override
   String? deviceId;
 
   /// Number of channels to request from the device. Values >1 let a stereo
@@ -97,6 +111,7 @@ class MicrophoneCapture {
   }
 
   /// Whether capture is currently running.
+  @override
   bool get isCapturing => _subscription != null;
 
   /// Starts microphone capture, invoking [onData] for each chunk of 16-bit PCM.
@@ -104,6 +119,7 @@ class MicrophoneCapture {
   /// Returns true once capture has started, or false if permission was denied
   /// or capture could not be started. Safe to call repeatedly; subsequent calls
   /// while already capturing return true without restarting.
+  @override
   Future<bool> start(void Function(Uint8List pcm16) onData) async {
     if (isCapturing) return true;
     if (_starting) return false;
@@ -154,6 +170,7 @@ class MicrophoneCapture {
   /// Requests/checks microphone permission without opening the input stream.
   /// Android uses this before promoting its microphone foreground service,
   /// because a microphone service type requires RECORD_AUDIO to be granted.
+  @override
   Future<bool> hasPermission() async {
     try {
       return await _recorder.hasPermission();
@@ -242,6 +259,7 @@ class MicrophoneCapture {
   }
 
   /// Stops capture and releases the microphone.
+  @override
   Future<void> stop() async {
     await _subscription?.cancel();
     _subscription = null;
