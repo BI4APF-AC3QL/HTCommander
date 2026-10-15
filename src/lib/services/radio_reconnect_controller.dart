@@ -2,12 +2,33 @@ import 'dart:async';
 
 typedef RadioReconnectAttempt = Future<bool> Function(String macAddress);
 
-/// Schedules bounded, sequential reconnect attempts for remembered radios.
+/// Shared retry schedules used by native radio connection flows.
+abstract final class RadioReconnectPolicy {
+  static const desktopDelays = <Duration>[
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 16),
+    Duration(seconds: 30),
+  ];
+
+  /// Android keeps the remembered radio recoverable while the user has not
+  /// explicitly disconnected it. The final retry interval is capped at five
+  /// minutes to limit battery and foreground-service churn.
+  static const androidDelays = <Duration>[
+    ...desktopDelays,
+    Duration(seconds: 60),
+    Duration(seconds: 120),
+    Duration(seconds: 300),
+  ];
+}
+
+/// Schedules sequential reconnect attempts for remembered radios.
 ///
 /// The controller owns retry timing and prevents state-change notifications
 /// from starting a second attempt while the current scan or connection is in
-/// progress. Platform-specific discovery and connection work stays with the
-/// caller.
+/// progress. Retry limits and delays are selected by the caller's policy;
+/// platform-specific discovery and connection work stays with the caller.
 class RadioReconnectController {
   RadioReconnectController({
     required List<Duration> delays,

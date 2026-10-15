@@ -1137,28 +1137,15 @@ class _MainFormState extends State<MainForm>
           '$error',
         ),
       );
-  static const List<Duration> _radioReconnectDelays = [
-    Duration(seconds: 2),
-    Duration(seconds: 4),
-    Duration(seconds: 8),
-    Duration(seconds: 16),
-    Duration(seconds: 30),
-  ];
   // Android keeps trying to restore a remembered radio after temporary range
   // or adapter outages. The delay grows to five minutes to limit battery and
   // service churn, and an explicit disconnect still cancels the retry loop.
-  static const List<Duration> _androidRadioReconnectDelays = [
-    ..._radioReconnectDelays,
-    Duration(seconds: 60),
-    Duration(seconds: 120),
-    Duration(seconds: 300),
-  ];
   bool get _continueAndroidRadioReconnect => !kIsWeb && Platform.isAndroid;
   late final RadioReconnectController _radioReconnectController =
       RadioReconnectController(
         delays: _continueAndroidRadioReconnect
-            ? _androidRadioReconnectDelays
-            : _radioReconnectDelays,
+            ? RadioReconnectPolicy.androidDelays
+            : RadioReconnectPolicy.desktopDelays,
         continueWhileRemembered: _continueAndroidRadioReconnect,
         isRemembered: (mac) =>
             BluetoothService().previouslyConnectedRadioMacs().contains(mac),

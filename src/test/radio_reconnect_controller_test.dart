@@ -102,6 +102,47 @@ void main() {
     });
   });
 
+  test('Android retry schedule grows to a five-minute ceiling', () {
+    fakeAsync((time) {
+      final scheduledDelays = <Duration>[];
+      var attempts = 0;
+      final controller = RadioReconnectController(
+        delays: RadioReconnectPolicy.androidDelays,
+        continueWhileRemembered: true,
+        isRemembered: (_) => true,
+        isConnected: (_) => false,
+        attempt: (_) async {
+          attempts++;
+          return false;
+        },
+        onScheduled: (_, delay, __) => scheduledDelays.add(delay),
+      );
+
+      controller.schedule('AA:BB:CC:DD:EE:FF');
+      for (final delay in RadioReconnectPolicy.androidDelays) {
+        time.elapse(delay);
+        time.flushMicrotasks();
+      }
+
+      expect(attempts, RadioReconnectPolicy.androidDelays.length);
+      expect(
+        scheduledDelays,
+        [
+          ...RadioReconnectPolicy.androidDelays,
+          const Duration(minutes: 5),
+        ],
+      );
+      expect(controller.hasWork, isTrue);
+
+      controller.cancel('AA:BB:CC:DD:EE:FF');
+      time.elapse(const Duration(minutes: 5));
+      time.flushMicrotasks();
+      expect(attempts, RadioReconnectPolicy.androidDelays.length);
+      expect(controller.hasWork, isFalse);
+      controller.dispose();
+    });
+  });
+
   test('a pending retry cannot overlap an in-flight attempt', () {
     fakeAsync((time) {
       final firstAttempt = Completer<bool>();
