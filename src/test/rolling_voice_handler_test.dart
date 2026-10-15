@@ -261,7 +261,7 @@ void main() {
       '${Platform.pathSeparator}$name',
     )..createSync(recursive: true);
     clip.writeAsBytesSync(wavBytes);
-    Uint8List? exportedBytes;
+    final exportedBytes = Completer<Uint8List>();
     const filePicker = MethodChannel(
       'miguelruivo.flutter.plugins.filepicker',
     );
@@ -269,7 +269,7 @@ void main() {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(filePicker, (call) async {
       expect(call.method, 'save');
-      exportedBytes = (call.arguments as Map)['bytes'] as Uint8List;
+      exportedBytes.complete((call.arguments as Map)['bytes'] as Uint8List);
       return null;
     });
     try {
@@ -287,8 +287,10 @@ void main() {
       );
       await tester.ensureVisible(find.byTooltip('导出 WAV'));
       await tester.tap(find.byTooltip('导出 WAV'));
-      await tester.pumpAndSettle();
-      expect(exportedBytes, orderedEquals(wavBytes));
+      final exported = await tester.runAsync(
+        () => exportedBytes.future.timeout(const Duration(seconds: 2)),
+      );
+      expect(exported, orderedEquals(wavBytes));
     } finally {
       messenger.setMockMethodCallHandler(filePicker, null);
       debugDefaultTargetPlatformOverride = originalPlatform;
