@@ -22,27 +22,29 @@ class RadioWebServerService : Service() {
         private const val NOTIFICATION_ID = 8042
         private const val EXTRA_REASON = "reason"
         private const val REASON_SERVER = RadioServiceReasonState.REASON_SERVER
-        private const val REASON_RECORDING = RadioServiceReasonState.REASON_RECORDING
-        private const val REASON_NETWORK_SERVICES = RadioServiceReasonState.REASON_NETWORK_SERVICES
         private const val ACTION_START = "com.htcommander.action.START_RADIO_SERVICE"
-        private const val ACTION_STOP = "com.htcommander.action.STOP_RADIO_SERVER"
+        @Volatile
+        private var runningInstance: RadioWebServerService? = null
 
         fun start(context: Context, reason: String = REASON_SERVER) {
-            startCommand(context, ACTION_START, reason)
-        }
-
-        fun stop(context: Context, reason: String = REASON_SERVER) {
-            startCommand(context, ACTION_STOP, reason)
-        }
-
-        private fun startCommand(context: Context, action: String, reason: String) {
             val intent = Intent(context, RadioWebServerService::class.java)
-                .setAction(action)
+                .setAction(ACTION_START)
                 .putExtra(EXTRA_REASON, reason)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
+            }
+        }
+
+        fun stop(context: Context, reason: String = REASON_SERVER) {
+            val service = runningInstance
+            if (service != null) {
+                service.stopReason(reason)
+            } else {
+                // Stopping an already absent service is safe and avoids trying
+                // to promote a background app into a new foreground service.
+                context.stopService(Intent(context, RadioWebServerService::class.java))
             }
         }
 
@@ -54,6 +56,7 @@ class RadioWebServerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        runningInstance = this
         ensureNotificationChannel()
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= 34) {
@@ -74,22 +77,11 @@ class RadioWebServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val reason = intent?.getStringExtra(EXTRA_REASON) ?: REASON_SERVER
-        val active = when (intent?.action) {
-            ACTION_STOP -> reasonState.set(reason, false)
-            ACTION_START -> reasonState.set(reason, true)
-            else -> reasonState.set(REASON_SERVER, true)
-        }
+        reasonState.set(
+            if (intent?.action == ACTION_START) reason else REASON_SERVER,
+            true,
+        )
         updateWifiLock()
-        if (!active) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-            } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
-            }
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
         // The HTTP listener, recorder and radio bridge live in Flutter's main
         // isolate. A restarted notification-only service cannot restore them.
         return START_NOT_STICKY
@@ -98,10 +90,25 @@ class RadioWebServerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        if (runningInstance === this) runningInstance = null
         releaseWifiLock()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         super.onDestroy()
+    }
+
+    private fun stopReason(reason: String) {
+        val stillActive = reasonState.set(reason, false)
+        updateWifiLock()
+        if (stillActive) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
     }
 
     // The user-enabled server/recorder must keep the CPU available for its
