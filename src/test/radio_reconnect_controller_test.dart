@@ -115,7 +115,7 @@ void main() {
           attempts++;
           return false;
         },
-        onScheduled: (_, delay, __) => scheduledDelays.add(delay),
+        onScheduled: (_, delay, _) => scheduledDelays.add(delay),
       );
 
       controller.schedule('AA:BB:CC:DD:EE:FF');
