@@ -88,6 +88,12 @@ Future<void> exerciseAndroidBluetoothClassicConnection() async {
       'Connected',
       reason: 'the Bluetooth service should publish a live Classic radio',
     );
+    expect(
+      bluetooth.previouslyConnectedRadioMacs(),
+      contains(fakeAddress),
+      reason:
+          'a successful Classic connection must be remembered for reconnect',
+    );
 
     // Radio startup is deliberately receive/query-only. Give it time to queue
     // its safe initialization reads through the Android method-channel bridge.
@@ -131,6 +137,11 @@ Future<void> exerciseAndroidBluetoothClassicConnection() async {
     await bluetooth.disconnectRadio(radioId);
     expect(bluetooth.connectedRadioIds, isNot(contains(radioId)));
     expect(DataBroker.getValue<String>(radioId, 'State'), 'Disconnected');
+    expect(
+      bluetooth.previouslyConnectedRadioMacs(),
+      isNot(contains(fakeAddress)),
+      reason: 'an explicit disconnect must cancel future automatic reconnects',
+    );
     expect(nativeDisconnectCalls, greaterThanOrEqualTo(1));
   } finally {
     for (final radioId in bluetooth.connectedRadioIds.toList()) {
