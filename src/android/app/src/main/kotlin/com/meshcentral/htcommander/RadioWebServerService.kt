@@ -153,7 +153,7 @@ class RadioWebServerService : Service() {
     private fun startForegroundWithCurrentTypes() {
         val types = RadioServiceForegroundTypes.forSdk(
             Build.VERSION.SDK_INT,
-            reasonState.isActive(RadioServiceReasonState.REASON_RECORDING),
+            reasonState.isActive(RadioServiceReasonState.REASON_MICROPHONE),
         )
         if (types != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(), types)

@@ -20,6 +20,7 @@ internal class RadioServiceReasonState {
         const val REASON_RADIO_RECONNECT = "radioReconnect"
         const val REASON_SERVER = "server"
         const val REASON_RECORDING = "recording"
+        const val REASON_MICROPHONE = "microphone"
         const val REASON_NETWORK_SERVICES = "networkServices"
 
         private val VALID_REASONS = setOf(
@@ -27,6 +28,7 @@ internal class RadioServiceReasonState {
             REASON_RADIO_RECONNECT,
             REASON_SERVER,
             REASON_RECORDING,
+            REASON_MICROPHONE,
             REASON_NETWORK_SERVICES,
         )
     }

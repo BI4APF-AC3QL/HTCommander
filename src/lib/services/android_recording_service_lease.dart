@@ -6,10 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'android_server_lifecycle.dart';
 
 /// Keeps Android's microphone-capable foreground service active while one or
-/// more local receive audio inputs are open.
+/// more local microphone inputs are open.
 ///
 /// Calls are serialized so simultaneous input starts/stops cannot drop the
-/// shared `recording` service reason while another input is still capturing.
+/// shared `microphone` service reason while another input is still capturing.
 class AndroidRecordingServiceLease {
   AndroidRecordingServiceLease({
     bool? enabled,
@@ -27,7 +27,7 @@ class AndroidRecordingServiceLease {
 
   Future<void> acquire() => _enqueue(() async {
     if (_leases == 0 && _enabled) {
-      await (startService?.call() ?? _lifecycle.start(reason: 'recording'));
+      await (startService?.call() ?? _lifecycle.start(reason: 'microphone'));
     }
     _leases++;
   });
@@ -36,7 +36,7 @@ class AndroidRecordingServiceLease {
     if (_leases == 0) return;
     _leases--;
     if (_leases == 0 && _enabled) {
-      await (stopService?.call() ?? _lifecycle.stop(reason: 'recording'));
+      await (stopService?.call() ?? _lifecycle.stop(reason: 'microphone'));
     }
   });
 

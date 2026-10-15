@@ -10,6 +10,11 @@ class RadioServiceReasonStateTest {
         val state = RadioServiceReasonState()
 
         assertTrue(state.set(RadioServiceReasonState.REASON_RECORDING, true))
+        assertFalse(state.isActive(RadioServiceReasonState.REASON_MICROPHONE))
+        assertTrue(state.set(RadioServiceReasonState.REASON_MICROPHONE, true))
+        assertTrue(state.isActive(RadioServiceReasonState.REASON_MICROPHONE))
+        assertTrue(state.set(RadioServiceReasonState.REASON_MICROPHONE, false))
+        assertFalse(state.isActive(RadioServiceReasonState.REASON_MICROPHONE))
         assertFalse(state.shouldKeepWifiActive)
 
         assertTrue(state.set(RadioServiceReasonState.REASON_RADIO, true))
