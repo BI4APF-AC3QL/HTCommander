@@ -175,7 +175,28 @@ echo 'Android foreground service remained active and served /login after MainAct
 # Load both the authenticated mobile remote page and the actual Flutter web
 # client from this release APK in Chromium. This catches broken packaged JS,
 # CanvasKit, cookie auth and mobile-menu rendering that HTTP asset probes miss.
-node ../tools/android-hosted-browser-acceptance.cjs http://127.0.0.1:18735
+if ! node ../tools/android-hosted-browser-acceptance.cjs http://127.0.0.1:18735; then
+  diagnostic_root="${HTC_ANDROID_BROWSER_OUTPUT:-${RUNNER_TEMP:-/tmp}/android-hosted-browser}"
+  diagnostic_dir="$diagnostic_root/android-runtime"
+  mkdir -p "$diagnostic_dir"
+  printf 'forwarded /login status: ' > "$diagnostic_dir/forwarded-login.txt"
+  curl --connect-timeout 2 --max-time 4 --silent --output /dev/null \
+    --write-out '%{http_code}\n' http://127.0.0.1:18735/login \
+    >> "$diagnostic_dir/forwarded-login.txt" 2>&1 || true
+  adb_cmd shell pidof com.meshcentral.htcommander \
+    > "$diagnostic_dir/app-pid.txt" 2>&1 || true
+  adb_cmd shell dumpsys activity services \
+    | grep -E -A 12 -B 3 'RadioWebServerService|Foreground' \
+    > "$diagnostic_dir/foreground-service.txt" 2>&1 || true
+  adb_cmd shell dumpsys meminfo com.meshcentral.htcommander \
+    > "$diagnostic_dir/app-memory.txt" 2>&1 || true
+  adb_cmd logcat -d -b crash -v threadtime \
+    > "$diagnostic_dir/crash-log.txt" 2>&1 || true
+  adb_cmd logcat -d -v threadtime \
+    | grep -E 'com\.meshcentral\.htcommander|AndroidRuntime|FATAL EXCEPTION|Fatal signal|OutOfMemory|ActivityTaskManager|ActivityManager' \
+    | tail -n 500 > "$diagnostic_dir/app-log.txt" || true
+  exit 1
+fi
 
 # The remote server also holds a Wi-Fi lock so the LAN endpoint stays
 # reachable while Android turns the display off. Exercise this on the

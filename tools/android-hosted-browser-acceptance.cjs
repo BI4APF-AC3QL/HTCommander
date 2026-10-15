@@ -31,27 +31,10 @@ async function main() {
     hasTouch: true,
   });
   const page = await context.newPage();
+  let flutterPage;
   const errors = [];
   const consoleDiagnostics = [];
   const resources = {};
-  page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => {
-    if ((message.type() === 'error' || message.type() === 'warning') &&
-        consoleDiagnostics.length < 40) {
-      consoleDiagnostics.push(`${message.type()}: ${message.text()}`);
-    }
-  });
-  page.on('requestfailed', (request) => {
-    if (consoleDiagnostics.length < 40) {
-      consoleDiagnostics.push(`request failed: ${request.url()} (${request.failure()?.errorText || 'unknown'})`);
-    }
-  });
-  page.on('response', (response) => {
-    const pathname = new URL(response.url()).pathname;
-    if (pathname.endsWith('/main.dart.js')) resources.mainDartJs = response.status();
-    if (pathname.endsWith('/canvaskit.wasm')) resources.canvaskitWasm = response.status();
-    if (pathname.endsWith('/flutter_bootstrap.js')) resources.flutterBootstrap = response.status();
-  });
 
   const evidence = {
     source: 'installed Android APK via adb forward',
@@ -156,22 +139,45 @@ async function main() {
     };
     await page.screenshot({ path: path.join(outputDir, 'android-remote-mobile.png'), fullPage: true });
 
-    const appResponse = await page.goto(new URL('/index.html', base).toString(), {
+    // Keep the authenticated remote page and its WebSocket alive while the
+    // much larger hosted Flutter bundle loads in a separate tab. This tests
+    // simultaneous remote/API and static-asset traffic without making a page
+    // navigation tear down the control session mid-acceptance.
+    flutterPage = await context.newPage();
+    flutterPage.on('pageerror', (error) => errors.push(error.message));
+    flutterPage.on('console', (message) => {
+      if ((message.type() === 'error' || message.type() === 'warning') &&
+          consoleDiagnostics.length < 40) {
+        consoleDiagnostics.push(`${message.type()}: ${message.text()}`);
+      }
+    });
+    flutterPage.on('requestfailed', (request) => {
+      if (consoleDiagnostics.length < 40) {
+        consoleDiagnostics.push(`request failed: ${request.url()} (${request.failure()?.errorText || 'unknown'})`);
+      }
+    });
+    flutterPage.on('response', (response) => {
+      const pathname = new URL(response.url()).pathname;
+      if (pathname.endsWith('/main.dart.js')) resources.mainDartJs = response.status();
+      if (pathname.endsWith('/canvaskit.wasm')) resources.canvaskitWasm = response.status();
+      if (pathname.endsWith('/flutter_bootstrap.js')) resources.flutterBootstrap = response.status();
+    });
+    const appResponse = await flutterPage.goto(new URL('/index.html', base).toString(), {
       waitUntil: 'domcontentloaded',
       timeout: 15000,
     });
     assert.equal(appResponse.status(), 200, 'APK-hosted Flutter app must load');
-    await page.waitForFunction(
+    await flutterPage.waitForFunction(
       () => Boolean(document.querySelector('flutter-view, flt-glass-pane')),
       null,
-      { timeout: 120000 },
+      { timeout: 60000 },
     );
-    const startupText = await page.locator('body').innerText();
+    const startupText = await flutterPage.locator('body').innerText();
     if (/could not start|无法启动|Unsupported operation/i.test(startupText)) {
       throw new Error('Flutter app startup failed: ' +
         startupText.replace(/\s+/g, ' ').slice(0, 600));
     }
-    await page.waitForFunction(
+    await flutterPage.waitForFunction(
       () => {
         const pending = [document];
         while (pending.length > 0) {
@@ -186,7 +192,7 @@ async function main() {
       null,
       { timeout: 60000 },
     );
-    await page.waitForTimeout(1000);
+    await flutterPage.waitForTimeout(1000);
     assert.equal(resources.flutterBootstrap, 200, 'Flutter bootstrap must load from APK');
     assert.equal(resources.mainDartJs, 200, 'compiled Flutter app must load from APK');
     assert.equal(resources.canvaskitWasm, 200, 'CanvasKit renderer must load from APK');
@@ -196,7 +202,7 @@ async function main() {
       [],
       'hosted Flutter app must not report browser console errors',
     );
-    const canvas = await page.evaluate(() => {
+    const canvas = await flutterPage.evaluate(() => {
       const pending = [document];
       let element;
       while (pending.length > 0 && !element) {
@@ -216,14 +222,14 @@ async function main() {
       canvas.width > 0 && canvas.height > 0, 'Flutter must create a visible, sized render surface');
     evidence.flutter = {
       servedFromApk: true,
-      customView: await page.locator('flutter-view, flt-glass-pane').count(),
+      customView: await flutterPage.locator('flutter-view, flt-glass-pane').count(),
       canvas,
       resources,
       pageErrors: errors,
-      horizontalOverflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      horizontalOverflow: await flutterPage.evaluate(() => document.documentElement.scrollWidth > innerWidth),
     };
     assert.equal(evidence.flutter.horizontalOverflow, false);
-    await page.screenshot({ path: path.join(outputDir, 'android-hosted-flutter.png'), fullPage: true });
+    await flutterPage.screenshot({ path: path.join(outputDir, 'android-hosted-flutter.png'), fullPage: true });
     fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
     console.log(`Android APK browser acceptance passed. Evidence: ${evidencePath}`);
   } catch (error) {
@@ -232,9 +238,10 @@ async function main() {
     evidence.pageErrors = errors;
     evidence.consoleDiagnostics = consoleDiagnostics;
     try {
-      evidence.currentPath = new URL(page.url()).pathname;
-      evidence.visibleText = (await page.locator('body').innerText()).slice(0, 1200);
-      await page.screenshot({ path: path.join(outputDir, 'failure.png'), fullPage: true });
+      const diagnosticPage = flutterPage || page;
+      evidence.currentPath = new URL(diagnosticPage.url()).pathname;
+      evidence.visibleText = (await diagnosticPage.locator('body').innerText()).slice(0, 1200);
+      await diagnosticPage.screenshot({ path: path.join(outputDir, 'failure.png'), fullPage: true });
     } catch (_) {
       // Keep diagnostics available even if Chromium exited before rendering.
     }

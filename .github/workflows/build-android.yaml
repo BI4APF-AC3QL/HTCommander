@@ -169,6 +169,7 @@ jobs:
             ${{ runner.temp }}/android-hosted-browser/**/evidence.json
             ${{ runner.temp }}/android-hosted-browser/**/failure.json
             ${{ runner.temp }}/android-hosted-browser/**/*.png
+            ${{ runner.temp }}/android-hosted-browser/android-runtime/*.txt
 
       - name: Restore pubspec after Android packaging
         if: always()
