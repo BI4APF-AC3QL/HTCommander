@@ -197,13 +197,35 @@ if ! grep -Eq 'mWakefulness=Asleep|mInteractive=false' <<< "$screen_state"; then
 fi
 sleep 2
 bt_screen_off_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18736/login || true)"
-adb_cmd shell input keyevent KEYCODE_WAKEUP || true
 if [[ "$bt_screen_off_status" != '200' ]]; then
+  adb_cmd shell input keyevent KEYCODE_WAKEUP || true
   cat "$bt_drive_log"
   echo "::error::Android remote server stopped serving /login with the connected radio and display asleep (HTTP ${bt_screen_off_status:-no response})."
   exit 1
 fi
 echo 'Android kept the connected radio and remote server reachable with the display asleep.'
+
+# Keep the display asleep until the integration test sends a second volume
+# command through its still-authenticated WebSocket and observes the matching
+# GAIA write on the mocked Android Bluetooth transport.
+screen_off_control_ok=''
+for attempt in {1..120}; do
+  if adb_cmd logcat -d -s flutter:I | grep -F 'HTC_ANDROID_BT_REMOTE_SCREEN_OFF_CONTROL_OK' >/dev/null; then
+    screen_off_control_ok=true
+    break
+  fi
+  if ! kill -0 "$bt_drive_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+adb_cmd shell input keyevent KEYCODE_WAKEUP || true
+if [[ "$screen_off_control_ok" != true ]]; then
+  cat "$bt_drive_log"
+  echo '::error::Android remote control did not complete a Bluetooth command while the display was asleep.'
+  exit 1
+fi
+echo 'Android completed a remote radio command with the display asleep.'
 
 if ! wait "$bt_drive_pid"; then
   cat "$bt_drive_log"

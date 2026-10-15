@@ -144,6 +144,11 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
       expect(backgroundState['radioId'], expectedRadioId);
       expect(backgroundState['connected'], isTrue);
       await sendVolumeAndVerify(9);
+      // The emulator driver waits for this while the display is still asleep,
+      // proving the authenticated control session can issue a radio command
+      // after Android has backgrounded the Activity and suspended the display.
+      // ignore: avoid_print
+      print('HTC_ANDROID_BT_REMOTE_SCREEN_OFF_CONTROL_OK');
     } finally {
       await subscription.cancel();
       await socket.close();
