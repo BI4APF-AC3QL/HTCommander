@@ -96,34 +96,51 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
       );
       expect(controlledState['controlOwner'], control['clientId']);
 
-      final writeCount = bluetoothWrites.length;
-      final volume = await sendCommand({'op': 'volume', 'value': 8});
-      expect(volume['error'], isNull);
-      final deadline = DateTime.now().add(const Duration(seconds: 3));
-      bool volumeCommandReachedBluetooth() => bluetoothWrites
-          .skip(writeCount)
-          .any(
-            (frame) =>
-                frame.length >= 9 &&
-                frame[0] == 0xFF &&
-                frame[1] == 0x01 &&
-                frame[4] == 0 &&
-                frame[5] == RadioCommandGroup.basic.value &&
-                frame[6] == 0 &&
-                frame[7] == RadioBasicCommand.setVolume.value &&
-                frame[8] == 8,
-          );
+      Future<void> sendVolumeAndVerify(int level) async {
+        final writeCount = bluetoothWrites.length;
+        final volume = await sendCommand({'op': 'volume', 'value': level});
+        expect(volume['error'], isNull);
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        bool volumeCommandReachedBluetooth() => bluetoothWrites
+            .skip(writeCount)
+            .any(
+              (frame) =>
+                  frame.length >= 9 &&
+                  frame[0] == 0xFF &&
+                  frame[1] == 0x01 &&
+                  frame[4] == 0 &&
+                  frame[5] == RadioCommandGroup.basic.value &&
+                  frame[6] == 0 &&
+                  frame[7] == RadioBasicCommand.setVolume.value &&
+                  frame[8] == level,
+            );
 
-      while (!volumeCommandReachedBluetooth() &&
-          DateTime.now().isBefore(deadline)) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        while (!volumeCommandReachedBluetooth() &&
+            DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(
+          volumeCommandReachedBluetooth(),
+          isTrue,
+          reason: 'remote volume must reach the Android Classic radio bridge',
+        );
       }
-      expect(
-        volumeCommandReachedBluetooth(),
-        isTrue,
-        reason:
-            'a remote volume command must reach the connected Android Classic radio transport',
+
+      await sendVolumeAndVerify(8);
+
+      // The host-side emulator script backgrounds MainActivity after this
+      // marker. Keep the authenticated socket open so the next requests prove
+      // that the radio and server remain connected together in the background.
+      // ignore: avoid_print
+      print('HTC_ANDROID_BT_REMOTE_BG_ACCEPTANCE_READY:$port');
+      await Future<void>.delayed(const Duration(seconds: 8));
+      final background = await sendCommand({'op': 'state'});
+      final backgroundState = Map<String, Object?>.from(
+        background['state']! as Map,
       );
+      expect(backgroundState['radioId'], expectedRadioId);
+      expect(backgroundState['connected'], isTrue);
+      await sendVolumeAndVerify(9);
     } finally {
       await subscription.cancel();
       await socket.close();

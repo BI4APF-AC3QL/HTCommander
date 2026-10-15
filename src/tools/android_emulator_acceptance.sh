@@ -107,12 +107,82 @@ test -f integration_test/android_remote_server_test.dart
 test -f integration_test/android_bluetooth_connection_test.dart
 # Verify Android's permission and Classic method-channel path independently so
 # failures are easy to diagnose before the longer remote-server/browser run.
+bt_drive_log="$(mktemp)"
 timeout --signal=TERM --kill-after=30s 4m flutter drive \
   --no-pub \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/android_bluetooth_connection_test.dart \
   --no-dds \
-  -d "$emulator_serial"
+  -d "$emulator_serial" >"$bt_drive_log" 2>&1 &
+bt_drive_pid=$!
+bt_drive_cleanup() {
+  adb_cmd forward --remove tcp:18736 >/dev/null 2>&1 || true
+  if [[ -n "$bt_drive_pid" ]] && kill -0 "$bt_drive_pid" 2>/dev/null; then
+    kill "$bt_drive_pid" 2>/dev/null || true
+    wait "$bt_drive_pid" 2>/dev/null || true
+  fi
+  rm -f "$bt_drive_log"
+}
+trap bt_drive_cleanup EXIT
+
+bt_ready_line=''
+for attempt in {1..240}; do
+  bt_ready_line="$(adb_cmd logcat -d -s flutter:I | grep -F 'HTC_ANDROID_BT_REMOTE_BG_ACCEPTANCE_READY:' | tail -n 1 || true)"
+  if [[ -n "$bt_ready_line" ]]; then
+    break
+  fi
+  if ! kill -0 "$bt_drive_pid" 2>/dev/null; then
+    cat "$bt_drive_log"
+    echo '::error::Android Bluetooth/remote integration test exited before its background checkpoint.'
+    exit 1
+  fi
+  sleep 1
+done
+if [[ -z "$bt_ready_line" ]]; then
+  cat "$bt_drive_log"
+  echo '::error::Timed out waiting for the Android Bluetooth/remote background checkpoint.'
+  exit 1
+fi
+bt_remote_port="${bt_ready_line##*:}"
+if [[ ! "$bt_remote_port" =~ ^[0-9]+$ ]]; then
+  cat "$bt_drive_log"
+  echo '::error::Android Bluetooth/remote test published an invalid server port.'
+  exit 1
+fi
+
+adb_cmd shell input keyevent KEYCODE_HOME
+sleep 2
+service_dump="$(adb_cmd shell dumpsys activity services)"
+if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
+  cat "$bt_drive_log"
+  echo '::error::Android foreground service stopped with both Bluetooth and remote server active.'
+  exit 1
+fi
+adb_cmd forward --remove tcp:18736 >/dev/null 2>&1 || true
+adb_cmd forward tcp:18736 "tcp:$bt_remote_port"
+bt_background_status=''
+for attempt in {1..8}; do
+  bt_background_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18736/login || true)"
+  if [[ "$bt_background_status" == '200' ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ "$bt_background_status" != '200' ]]; then
+  cat "$bt_drive_log"
+  echo "::error::Android Bluetooth/remote server stopped serving /login in the background (HTTP ${bt_background_status:-no response})."
+  exit 1
+fi
+echo 'Android kept the connected Bluetooth radio and remote server available together in the background.'
+
+if ! wait "$bt_drive_pid"; then
+  cat "$bt_drive_log"
+  exit 1
+fi
+cat "$bt_drive_log"
+bt_drive_pid=''
+bt_drive_cleanup
+trap - EXIT
 drive_log="$(mktemp)"
 drive_pid=""
 cleanup() {
