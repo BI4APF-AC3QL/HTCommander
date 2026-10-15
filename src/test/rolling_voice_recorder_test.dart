@@ -53,7 +53,7 @@ void main() {
     expect(store.snapshot()['keptFiles'], 1);
     expect(user.readAsBytesSync(), [1, 2, 3]);
   });
-  test('kept clip export path resolves to the protected file', () {
+  test('kept clip export path resolves to the protected file', () async {
     final store = RollingVoiceStore(dir, clock: () => now);
     final pcm = Uint8List.fromList([1, 2, 3, 4]);
     store.append(2, 'Voice', pcm);
