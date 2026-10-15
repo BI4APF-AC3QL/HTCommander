@@ -141,6 +141,52 @@ void main() {
       await handler.close();
     }
   });
+  test(
+    'retries stopping Android recording service after transient failure',
+    () async {
+      final dir = Directory.systemTemp.createTempSync('htc-rolling-service-');
+      var starts = 0;
+      var stops = 0;
+      final handler = RollingVoiceHandler(
+        folderProvider: () async => dir.path,
+        isAndroid: true,
+        startAndroidService: () async {
+          starts++;
+        },
+        stopAndroidService: () async {
+          stops++;
+          if (stops == 1) throw StateError('temporary stop failure');
+        },
+        retryDelay: const Duration(milliseconds: 5),
+      );
+      try {
+        set(0, 'RollingVoiceEnabled', true);
+        handler.init();
+        await waitFor(
+          () =>
+              (DataBroker.getValueDynamic(0, 'RollingVoiceStatus') as Map?)?[
+                  'running'
+              ] ==
+              true,
+        );
+        expect(starts, 1);
+
+        set(0, 'RollingVoiceEnabled', false);
+        await waitFor(() => stops == 2);
+
+        expect(stops, 2);
+        expect(
+          (DataBroker.getValueDynamic(0, 'RollingVoiceStatus') as Map)[
+            'running'
+          ],
+          false,
+        );
+      } finally {
+        await handler.close();
+        dir.deleteSync(recursive: true);
+      }
+    },
+  );
   testWidgets('local dialog default 24h and explicit start persist config', (
     tester,
   ) async {

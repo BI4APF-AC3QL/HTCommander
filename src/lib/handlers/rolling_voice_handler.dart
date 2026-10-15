@@ -14,11 +14,13 @@ class RollingVoiceHandler {
     bool? isAndroid,
     Future<void> Function()? startAndroidService,
     Future<void> Function()? stopAndroidService,
+    Duration retryDelay = const Duration(seconds: 2),
   }) => RollingVoiceHandler._(
     folderProvider,
     isAndroid ?? Platform.isAndroid,
     startAndroidService,
     stopAndroidService,
+    retryDelay,
   );
 
   RollingVoiceHandler._(
@@ -26,12 +28,18 @@ class RollingVoiceHandler {
     this._isAndroid,
     this._startAndroidService,
     this._stopAndroidServiceOverride,
-  );
+    this.retryDelay,
+  ) : _androidServiceRetryDelay = retryDelay {
+    assert(
+      retryDelay > Duration.zero && retryDelay <= const Duration(minutes: 1),
+    );
+  }
 
   final Future<String> Function()? folderProvider;
   final bool _isAndroid;
   final Future<void> Function()? _startAndroidService;
   final Future<void> Function()? _stopAndroidServiceOverride;
+  final Duration retryDelay;
   final _broker = DataBrokerClient();
   final _androidLifecycle = AndroidServerLifecycle();
   late final RollingVoiceRecorder _recorder = RollingVoiceRecorder(
@@ -39,6 +47,8 @@ class RollingVoiceHandler {
   );
   bool _disposed = false;
   bool _androidServiceRequested = false;
+  Timer? _androidServiceRetryTimer;
+  Duration _androidServiceRetryDelay;
   int _revision = 0;
   Future<void> _transition = Future<void>.value();
   String? _folder;
@@ -98,28 +108,36 @@ class RollingVoiceHandler {
 
   Future<void> _applyRevision(int revision) async {
     if (_disposed || revision != _revision) return;
-    if (_broker.getValue<bool>(0, 'RollingVoiceEnabled', false) != true) {
-      await _recorder.stop();
+    final enabled =
+        _broker.getValue<bool>(0, 'RollingVoiceEnabled', false) == true;
+    if (!enabled) {
+      await _stopRecorder();
       await _stopAndroidService();
       if (revision == _revision) {
         _state({'running': false, 'folder': _folder, 'retentionHours': _hours});
       }
       return;
     }
+    _androidServiceRetryTimer?.cancel();
+    _androidServiceRetryTimer = null;
     if (_recorder.ready) {
       _recorder.setHours(_hours);
       return;
     }
     _state({'running': false, 'starting': true});
     if (_isAndroid && !_androidServiceRequested) {
+      // Mark the request before awaiting the platform call. Android may accept
+      // the start command even if the channel reports an error afterwards.
+      _androidServiceRequested = true;
       try {
         await (_startAndroidService?.call() ??
             _androidLifecycle.start(reason: 'recording'));
-        _androidServiceRequested = true;
+        _androidServiceRetryDelay = retryDelay;
       } catch (_) {
         if (revision == _revision) {
           _state({'running': false, 'error': 'android_service_failed'});
         }
+        await _stopAndroidService();
         return;
       }
       // A newer disable or close request may have arrived while Android was
@@ -143,9 +161,44 @@ class RollingVoiceHandler {
 
   Future<void> _stopAndroidService() async {
     if (!_isAndroid || !_androidServiceRequested) return;
-    _androidServiceRequested = false;
-    await (_stopAndroidServiceOverride?.call() ??
-        _androidLifecycle.stop(reason: 'recording'));
+    try {
+      await (_stopAndroidServiceOverride?.call() ??
+          _androidLifecycle.stop(reason: 'recording'));
+      _androidServiceRequested = false;
+      _androidServiceRetryDelay = retryDelay;
+      _androidServiceRetryTimer?.cancel();
+      _androidServiceRetryTimer = null;
+    } on Object catch (error) {
+      _broker.logError('Android recording service could not stop: $error');
+      _scheduleAndroidServiceStopRetry();
+    }
+  }
+
+  Future<void> _stopRecorder() async {
+    try {
+      await _recorder.stop();
+    } on Object catch (error) {
+      // Still release Android's foreground-service request if recorder cleanup
+      // fails, for example after an isolate or platform-channel error.
+      _broker.logError('Rolling voice recorder could not stop: $error');
+    }
+  }
+
+  void _scheduleAndroidServiceStopRetry() {
+    if (_androidServiceRetryTimer != null || !_androidServiceRequested) return;
+    final delay = _androidServiceRetryDelay;
+    _androidServiceRetryDelay = Duration(
+      milliseconds: (_androidServiceRetryDelay.inMilliseconds * 2)
+          .clamp(
+            retryDelay.inMilliseconds,
+            const Duration(minutes: 1).inMilliseconds,
+          )
+          .toInt(),
+    );
+    _androidServiceRetryTimer = Timer(delay, () {
+      _androidServiceRetryTimer = null;
+      unawaited(_stopAndroidService());
+    });
   }
 
   void _audio(int id, String name, Object? value) {
@@ -202,7 +255,7 @@ class RollingVoiceHandler {
       _revision++;
       _broker.dispose();
       _transition = _transition.catchError((Object _) {}).then((_) async {
-        await _recorder.stop();
+        await _stopRecorder();
         await _stopAndroidService();
       });
     }
