@@ -172,13 +172,10 @@ void main() {
       }
 
       expect(attempts, RadioReconnectPolicy.androidDelays.length);
-      expect(
-        scheduledDelays,
-        [
-          ...RadioReconnectPolicy.androidDelays,
-          const Duration(minutes: 5),
-        ],
-      );
+      expect(scheduledDelays, [
+        ...RadioReconnectPolicy.androidDelays,
+        const Duration(minutes: 5),
+      ]);
       expect(controller.hasWork, isTrue);
 
       controller.cancel('AA:BB:CC:DD:EE:FF');
@@ -227,6 +224,44 @@ void main() {
       expect(controller.hasWork, isFalse);
       controller.dispose();
     });
+  });
+
+  test('a stale cancelled timer cannot consume a replacement retry', () async {
+    final timers = <_ManualTimer>[];
+    var attempts = 0;
+    const mac = 'AA:BB:CC:DD:EE:FF';
+    final controller = RadioReconnectController(
+      delays: _delays,
+      isRemembered: (_) => true,
+      isConnected: (_) => false,
+      attempt: (_) async {
+        attempts++;
+        return true;
+      },
+      createTimer: (_, callback) {
+        final timer = _ManualTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+
+    controller.schedule(mac);
+    controller.cancel(mac);
+    controller.schedule(mac);
+    expect(timers, hasLength(2));
+
+    // Some platform timer implementations may deliver a callback after
+    // cancel(). It must not remove the current timer or trigger an early scan.
+    timers.first.fireEvenIfCancelled();
+    expect(attempts, 0);
+    expect(controller.attemptsFor(mac), 1);
+    expect(controller.hasWork, isTrue);
+
+    timers[1].fire();
+    await Future<void>.delayed(Duration.zero);
+    expect(attempts, 1);
+    expect(controller.hasWork, isFalse);
+    controller.dispose();
   });
 
   test('immediate startup reconnect is serialized with scheduled retries', () {
@@ -318,4 +353,31 @@ void main() {
       });
     },
   );
+}
+
+class _ManualTimer implements Timer {
+  _ManualTimer(this._callback);
+
+  final void Function() _callback;
+  bool _isActive = true;
+
+  @override
+  void cancel() => _isActive = false;
+
+  @override
+  bool get isActive => _isActive;
+
+  @override
+  int get tick => 0;
+
+  void fire() {
+    if (!_isActive) return;
+    _isActive = false;
+    _callback();
+  }
+
+  void fireEvenIfCancelled() {
+    _isActive = false;
+    _callback();
+  }
 }

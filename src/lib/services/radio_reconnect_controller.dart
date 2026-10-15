@@ -36,6 +36,7 @@ class RadioReconnectController {
     required this.isRemembered,
     required this.isConnected,
     required this.attempt,
+    this.createTimer = Timer.new,
     this.onChanged,
     this.onScheduled,
     this.onExhausted,
@@ -50,6 +51,7 @@ class RadioReconnectController {
   final bool Function(String macAddress) isRemembered;
   final bool Function(String macAddress) isConnected;
   final RadioReconnectAttempt attempt;
+  final Timer Function(Duration delay, void Function() callback) createTimer;
   final void Function()? onChanged;
   final void Function(String macAddress, Duration delay, int attempt)?
   onScheduled;
@@ -94,7 +96,11 @@ class RadioReconnectController {
     _attemptCounts[mac] = attemptIndex + 1;
     final delayIndex = attemptIndex.clamp(0, delays.length - 1);
     final delay = delays[delayIndex];
-    _timers[mac] = Timer(delay, () {
+    late final Timer timer;
+    timer = createTimer(delay, () {
+      // A cancelled timer callback can still be delivered by a platform. Do
+      // not let it remove or run ahead of a newer retry for the same radio.
+      if (!identical(_timers[mac], timer)) return;
       _timers.remove(mac);
       if (_disposed || !isRemembered(mac)) {
         cancel(mac);
@@ -110,6 +116,7 @@ class RadioReconnectController {
       onChanged?.call();
       unawaited(_runAttempt(mac, attempt));
     });
+    _timers[mac] = timer;
     onScheduled?.call(mac, delay, attemptIndex + 1);
     onChanged?.call();
   }
