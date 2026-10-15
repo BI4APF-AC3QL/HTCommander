@@ -14,8 +14,11 @@ import 'update_dialog.dart';
 class HTAboutDialog extends StatelessWidget {
   const HTAboutDialog({super.key});
 
+  // Android CI builds are published as prereleases, which GitHub excludes
+  // from `/releases/latest`. Open the release list so users can find the
+  // newest test APK as well as stable releases.
   static final Uri _androidReleasesUri = Uri.parse(
-    'https://github.com/BI4APF-AC3QL/HTCommander/releases/latest',
+    'https://github.com/BI4APF-AC3QL/HTCommander/releases',
   );
 
   @override
