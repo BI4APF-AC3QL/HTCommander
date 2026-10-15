@@ -71,20 +71,27 @@ Future<void> _verifyAndroidAgwpeLanBinding() async {
   }
 }
 
-Future<String> _verifyAndroidRemoteServerLanBinding(int port) async {
+Future<String?> _verifyAndroidRemoteServerLanBinding(
+  int port, {
+  required InternetAddressType addressType,
+  required bool requiredAddress,
+}) async {
   final addresses = (await NetworkInterface.list(
     includeLoopback: false,
-    type: InternetAddressType.IPv4,
+    type: addressType,
   ))
       .expand((interface) => interface.addresses)
       .where(
-        (address) =>
-            address.type == InternetAddressType.IPv4 && !address.isLoopback,
+        (address) => address.type == addressType &&
+            !address.isLoopback &&
+            !address.isLinkLocal,
       )
       .toList();
   if (addresses.isEmpty) {
+    if (!requiredAddress) return null;
     throw StateError(
-      'The Android emulator must expose a non-loopback IPv4 address',
+      'The Android emulator must expose a non-loopback '
+      '$addressType address',
     );
   }
 
@@ -461,7 +468,11 @@ void main() {
           expect(port, isNotNull, reason: 'the real HTTP listener must bind');
 
           final lanAddress = await tester.runAsync(
-            () => _verifyAndroidRemoteServerLanBinding(port!),
+            () => _verifyAndroidRemoteServerLanBinding(
+              port!,
+              addressType: InternetAddressType.IPv4,
+              requiredAddress: true,
+            ),
           );
           expect(
             lanAddress,
@@ -469,13 +480,23 @@ void main() {
             reason:
                 'the Android server must serve its login page on a LAN address',
           );
+          final ipv6Address = await tester.runAsync(
+            () => _verifyAndroidRemoteServerLanBinding(
+              port!,
+              addressType: InternetAddressType.IPv6,
+              requiredAddress: false,
+            ),
+          );
 
           // The shell acceptance script waits for this marker, presses HOME,
           // and probes the forwarded server from the host while this test
           // remains alive. This exercises the foreground-service path rather
           // than merely checking the listener while MainActivity is visible.
           // ignore: avoid_print
-          print('HTC_ANDROID_BG_ACCEPTANCE_READY:$port:$lanAddress');
+          print(
+            'HTC_ANDROID_BG_ACCEPTANCE_READY:$port:$lanAddress:'
+            '${ipv6Address ?? "no-non-link-local-ipv6"}',
+          );
           await tester.runAsync(() async {
             // The host-side script runs Chromium against the authenticated
             // mobile page, then loads Flutter's compiled bundle. That bundle
