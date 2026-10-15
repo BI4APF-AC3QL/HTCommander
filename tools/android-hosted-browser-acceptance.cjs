@@ -144,6 +144,13 @@ async function main() {
     // integration test covers the server independently; this keeps adb
     // forwarding and Chromium's large response transfer isolated here.
     await page.close();
+    const serverProbe = await context.request.get(new URL('/login', base).toString());
+    assert.equal(
+      serverProbe.status(),
+      200,
+      'Android web server must stay available after the last remote client disconnects',
+    );
+    await serverProbe.dispose();
 
     // Load the complete hosted Flutter client in a separate page after the
     // remote control session has closed.

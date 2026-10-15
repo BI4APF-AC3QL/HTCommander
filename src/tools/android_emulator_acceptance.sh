@@ -179,6 +179,7 @@ if ! node ../tools/android-hosted-browser-acceptance.cjs http://127.0.0.1:18735;
   diagnostic_root="${HTC_ANDROID_BROWSER_OUTPUT:-${RUNNER_TEMP:-/tmp}/android-hosted-browser}"
   diagnostic_dir="$diagnostic_root/android-runtime"
   mkdir -p "$diagnostic_dir"
+  cp "$drive_log" "$diagnostic_dir/flutter-drive.log"
   printf 'forwarded /login status: ' > "$diagnostic_dir/forwarded-login.txt"
   curl --connect-timeout 2 --max-time 4 --silent --output /dev/null \
     --write-out '%{http_code}\n' http://127.0.0.1:18735/login \
