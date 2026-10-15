@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:htcommander/services/recording/rolling_voice_clip_reader.dart';
 import 'package:htcommander/services/recording/rolling_voice_store.dart';
 import 'package:htcommander/services/recording/rolling_voice_recorder.dart';
 
@@ -61,13 +62,12 @@ void main() {
     final status = store.snapshot();
     final clip = (status['recent'] as List).whereType<Map>().single;
     expect(clip['kept'], true);
-    final file = rollingVoiceClipFile(
+    final bytes = await readRollingVoiceClipBytes(
       dir.path,
       clip['name'] as String,
       kept: clip['kept'] as bool,
     );
-    expect(file.existsSync(), true);
-    expect(file.readAsBytesSync().sublist(44), pcm);
+    expect(bytes.sublist(44), pcm);
   });
   test(
     'disk budget reserves active minute and deletes oldest completed clips',

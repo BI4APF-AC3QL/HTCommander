@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
-import '../services/recording/rolling_voice_store.dart';
+import '../services/recording/rolling_voice_clip_reader.dart';
 
 class RollingVoiceDialog extends StatefulWidget {
   const RollingVoiceDialog({super.key});
@@ -39,8 +39,11 @@ class _RollingVoiceDialogState extends State<RollingVoiceDialog> {
     required bool kept,
   }) async {
     try {
-      final file = rollingVoiceClipFile(folder, name, kept: kept);
-      final bytes = await file.readAsBytes();
+      final bytes = await readRollingVoiceClipBytes(
+        folder,
+        name,
+        kept: kept,
+      );
       await FilePicker.saveFile(
         dialogTitle: '保存接收录音',
         fileName: name,

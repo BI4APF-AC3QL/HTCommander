@@ -42,6 +42,7 @@ dependencies:
   desktop_multi_window: ^0.3.0
   window_manager: ^0.5.2
   file_picker: ^11.0.2
+  path: ^1.9.1
   shared_preferences: ^2.2.3
   flutter_blue_plus: ^1.35.2
   # Android USB-OTG GPS receivers commonly expose FTDI/CP210x/CH34x/CDC serial.
