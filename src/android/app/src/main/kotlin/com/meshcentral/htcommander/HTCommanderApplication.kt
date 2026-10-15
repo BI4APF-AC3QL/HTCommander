@@ -68,10 +68,16 @@ class HTCommanderApplication : android.app.Application() {
                         "start" -> {
                             if (reason == "location") {
                                 PhoneLocationService.start(appContext)
+                                result.success(true)
                             } else {
-                                RadioWebServerService.start(appContext, reason)
+                                RadioWebServerService.start(appContext, reason) { error ->
+                                    if (error == null) {
+                                        result.success(true)
+                                    } else {
+                                        result.error("ANDROID_SERVER_SERVICE", error, null)
+                                    }
+                                }
                             }
-                            result.success(true)
                         }
                         "stop" -> {
                             if (reason == "location") {

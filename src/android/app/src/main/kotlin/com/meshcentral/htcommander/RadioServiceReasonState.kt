@@ -10,6 +10,8 @@ internal class RadioServiceReasonState {
         return activeReasons.isNotEmpty()
     }
 
+    fun isActive(reason: String): Boolean = reason in activeReasons
+
     val shouldKeepWifiActive: Boolean
         get() = REASON_SERVER in activeReasons
 

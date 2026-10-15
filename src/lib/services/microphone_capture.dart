@@ -109,17 +109,18 @@ class MicrophoneCapture {
     if (_starting) return false;
     _starting = true;
     try {
-      final hasPermission = await _recorder.hasPermission();
-      if (!hasPermission) return false;
+      if (!await hasPermission()) return false;
 
       final String? id = deviceId;
-      final InputDevice? device =
-          (id == null || id.isEmpty) ? null : InputDevice(id: id, label: id);
+      final InputDevice? device = (id == null || id.isEmpty)
+          ? null
+          : InputDevice(id: id, label: id);
 
       // Prefer the requested channel count (so a stereo device exposes both
       // channels), falling back to mono if the device rejects it.
-      final List<int> attempts =
-          requestedChannels > 1 ? <int>[requestedChannels, 1] : <int>[1];
+      final List<int> attempts = requestedChannels > 1
+          ? <int>[requestedChannels, 1]
+          : <int>[1];
       for (final int channels in attempts) {
         try {
           final stream = await _recorder.startStream(
@@ -150,6 +151,17 @@ class MicrophoneCapture {
     }
   }
 
+  /// Requests/checks microphone permission without opening the input stream.
+  /// Android uses this before promoting its microphone foreground service,
+  /// because a microphone service type requires RECORD_AUDIO to be granted.
+  Future<bool> hasPermission() async {
+    try {
+      return await _recorder.hasPermission();
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Collapses an interleaved [_activeChannels]-channel block to mono per
   /// [monoReduction]. Returns [pcm16] unchanged for a mono capture.
   Uint8List _reduceToMono(Uint8List pcm16) {
@@ -175,7 +187,10 @@ class MicrophoneCapture {
     final int sel = _selectChannel(src, frames, ch);
     for (int f = 0; f < frames; f++) {
       dst.setInt16(
-          f * 2, src.getInt16((f * ch + sel) * 2, Endian.little), Endian.little);
+        f * 2,
+        src.getInt16((f * ch + sel) * 2, Endian.little),
+        Endian.little,
+      );
     }
     return out;
   }
