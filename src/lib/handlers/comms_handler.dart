@@ -320,7 +320,12 @@ class CommsHandler {
   SpeechToTextEngine? _sttEngine;
   StreamSubscription<SpeechResult>? _sttResultSub;
   StreamSubscription<bool>? _sttProcessingSub;
-  bool _speechToTextEnabled = true;
+  // Android's system recognizer requires RECORD_AUDIO at runtime. Keep speech
+  // recognition opt-in there so a fresh install does not trigger a microphone
+  // permission prompt during app startup; enabling it from the Comms menu
+  // requests permission at the point of use. Other platforms retain the
+  // existing enabled-by-default behavior.
+  bool _speechToTextEnabled = kIsWeb || !Platform.isAndroid;
   bool _sttReady = false;
   int _sttDeviceId = -1;
   bool _sttSegmentActive = false;
@@ -552,8 +557,13 @@ class CommsHandler {
       name: 'SpeechToTextEnabled',
       callback: _onSpeechToTextEnabledChanged,
     );
-    _speechToTextEnabled =
-        _broker.getValue<bool>(0, 'SpeechToTextEnabled', true) ?? true;
+    final speechToTextDefault = kIsWeb || !Platform.isAndroid;
+    _speechToTextEnabled = _broker.getValue<bool>(
+          0,
+          'SpeechToTextEnabled',
+          speechToTextDefault,
+        ) ??
+        speechToTextDefault;
 
     // Restore persisted recording flag (device 0 = settings).
     _recordingEnabled =

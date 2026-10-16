@@ -110,7 +110,10 @@ class _CommsTabState extends State<CommsTab>
   bool _audioEnabled = false;
   bool _isListening = false;
   bool _isProcessing = false;
-  bool _isTransmitting = false;  bool _speechToTextEnabled = true;
+  bool _isTransmitting = false;
+  // Android asks for microphone access only when the user opts into speech
+  // recognition from this tab.
+  bool _speechToTextEnabled = kIsWeb || !Platform.isAndroid;
   bool _sttModelReady = false;
   bool _recordAudio = false;
   bool _decodeMorse = false;
@@ -404,8 +407,13 @@ class _CommsTabState extends State<CommsTab>
       _morseKeySettings = MorseKeySettings.fromJson(storedMorse);
     }
     _allowTransmit = (_broker.getValue<int>(0, 'AllowTransmit', 1) ?? 1) != 0;
-    _speechToTextEnabled =
-        _broker.getValue<bool>(0, 'SpeechToTextEnabled', true) ?? true;
+    final speechToTextDefault = kIsWeb || !Platform.isAndroid;
+    _speechToTextEnabled = _broker.getValue<bool>(
+          0,
+          'SpeechToTextEnabled',
+          speechToTextDefault,
+        ) ??
+        speechToTextDefault;
     _initSttModelStatus();
     _recordAudio = _broker.getValue<bool>(0, 'RecordingState', false) ?? false;
     _decodeMorse =

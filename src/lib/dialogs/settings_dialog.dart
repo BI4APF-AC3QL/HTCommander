@@ -28,6 +28,7 @@ import '../services/locale_controller.dart';
 import '../services/mqtt/mqtt_client_facade.dart';
 import '../services/theme_controller.dart';
 import '../services/tts_service.dart';
+import '../services/notification_service.dart';
 import '../services/android_current_location.dart';
 import '../services/winlink_gateway_service.dart';
 import '../services/sherpa_model_manager.dart';
@@ -1015,6 +1016,9 @@ class _SettingsDialogState extends State<SettingsDialog>
     _settings.avatarIcon = _avatarIcon;
     _settings.avatarImage = _avatarImage;
     _settings.saveToDataBroker();
+    if (_settings.messageNotifications && !kIsWeb && Platform.isAndroid) {
+      await NotificationService.instance.requestAndroidPermission();
+    }
     _broker.dispatch(
       deviceId: 0,
       name: 'PhoneGpsTrackingEnabled',

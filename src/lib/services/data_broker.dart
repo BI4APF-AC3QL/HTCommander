@@ -231,9 +231,12 @@ class DataBroker {
   static Future<void> loadSecrets() async {
     if (!SecretStore.isSupported) return;
     final broker = _instance;
+    final storedSecrets = await SecretStore.instance.readAll(_secretKeys);
     for (final name in _secretKeys) {
       try {
-        String? value = await SecretStore.instance.read(name);
+        String? value = storedSecrets == null
+            ? await SecretStore.instance.read(name)
+            : storedSecrets[name];
         final legacyKey = 'databroker_$name';
         final legacy = broker._prefs?.getString(legacyKey);
         if ((value == null || value.isEmpty) &&
