@@ -288,6 +288,20 @@ class WebServerHandler {
     if (name == 'webServerEnabled') _enabled = data == 1;
     if (name == 'webServerPort' && data is int) _port = data;
     _remote.recallControl();
+    // Permission changes are read dynamically by RemoteRadioController and
+    // apply to the next command/state snapshot. Rebinding for them would drop
+    // every authenticated phone session even though the listener is unchanged.
+    if (!const {
+      'webServerEnabled',
+      'webServerPort',
+      'webServerRemoteEnabled',
+      'webServerPassword',
+      'webServerPublicOrigin',
+      'webServerDefaultReadOnly',
+      'webServerRequireControlApproval',
+    }.contains(name)) {
+      return;
+    }
     _rebindTimer?.cancel();
     _rebindTimer = Timer(const Duration(milliseconds: 200), () async {
       await _stopServer();

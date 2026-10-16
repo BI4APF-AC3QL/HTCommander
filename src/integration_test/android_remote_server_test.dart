@@ -8,10 +8,12 @@ import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/material.dart' show TabBarView;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart' show ErrorWidget, Scrollable, ValueKey;
+import 'package:htcommander/aprs/aprs_packet.dart';
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
 import 'package:htcommander/radio/gaia_protocol.dart';
 import 'package:htcommander/radio/pcm_player.dart';
+import 'package:htcommander/radio/radio.dart' show TransmitDataFrameData;
 import 'package:htcommander/services/agwpe/agwpe_server.dart';
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/data_broker_client.dart';
@@ -575,7 +577,22 @@ void main() {
         DataBroker.dispatch(
           deviceId: 0,
           name: 'webServerAllowAprs',
-          data: 0,
+          data: 1,
+          store: true,
+        );
+        // Permit APRS only for this synthetic, disconnected test radio so the
+        // hosted page can exercise the complete submit path. Remote voice PTT
+        // remains disabled above; this never opens Bluetooth or reaches RF.
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'AllowTransmit',
+          data: 1,
+          store: true,
+        );
+        DataBroker.dispatch(
+          deviceId: 0,
+          name: 'CallSign',
+          data: 'AC3QL',
           store: true,
         );
         DataBroker.dispatch(
@@ -647,6 +664,12 @@ void main() {
               'rxFreq': 145600000,
               'txDisable': true,
             },
+            {
+              'channelId': 3,
+              'name': 'APRS',
+              'rxFreq': 144390000,
+              'txDisable': false,
+            },
           ],
           store: true,
         );
@@ -667,6 +690,7 @@ void main() {
         final server = handler!;
         final browserSquelch = Completer<int>();
         final browserVolume = Completer<int>();
+        final browserAprsFrame = Completer<TransmitDataFrameData>();
         final browserSatelliteStart = Completer<Map>();
         final browserSatelliteStop = Completer<void>();
         final browserCommandObserver = DataBrokerClient();
@@ -685,6 +709,16 @@ void main() {
           callback: (_, _, value) {
             if (!browserVolume.isCompleted && value is int) {
               browserVolume.complete(value);
+            }
+          },
+        );
+        browserCommandObserver.subscribe(
+          deviceId: syntheticRadioId,
+          name: 'TransmitDataFrame',
+          callback: (_, _, value) {
+            if (!browserAprsFrame.isCompleted &&
+                value is TransmitDataFrameData) {
+              browserAprsFrame.complete(value);
             }
           },
         );
@@ -812,6 +846,14 @@ void main() {
             await browserSatelliteStop.future.timeout(
               const Duration(seconds: 1),
             );
+            final aprsFrame = await browserAprsFrame.future.timeout(
+              const Duration(seconds: 1),
+            );
+            expect(aprsFrame.channelId, 3);
+            expect(aprsFrame.packet, isNotNull);
+            final parsedAprs = AprsPacket.parse(aprsFrame.packet!);
+            expect(parsedAprs?.messageData.addressee, 'BI4APF-7');
+            expect(parsedAprs?.messageData.msgText, 'Android test message');
           });
 
           http = HttpClient();
@@ -975,6 +1017,58 @@ void main() {
               );
               final receivedResponse = await relayedResponse;
               expect(receivedResponse, orderedEquals(responseBytes));
+
+              final remoteResponses = socketEvents.stream
+                  .where(
+                    (event) => event is String && event.startsWith('remote:'),
+                  )
+                  .map((event) => jsonDecode((event as String).substring(7)))
+                  .where((message) => message is Map)
+                  .cast<Map>();
+              radioSocket.add('remote:{"op":"requestControl"}');
+              final controlState = await remoteResponses
+                  .firstWhere(
+                    (message) =>
+                        message['state'] is Map &&
+                        (message['state'] as Map)['controlOwner'] ==
+                            message['clientId'],
+                  )
+                  .timeout(const Duration(seconds: 5));
+              expect(controlState['clientId'], isA<int>());
+
+              // Changing APRS permissions must revoke current control without
+              // rebinding the listener or dropping the authenticated socket.
+              DataBroker.dispatch(
+                deviceId: 0,
+                name: 'AllowTransmit',
+                data: 0,
+                store: true,
+              );
+              DataBroker.dispatch(
+                deviceId: 0,
+                name: 'webServerAllowAprs',
+                data: 0,
+                store: true,
+              );
+              DataBroker.dispatch(
+                deviceId: 0,
+                name: 'CallSign',
+                data: '',
+                store: true,
+                allowEmpty: true,
+              );
+              await Future<void>.delayed(const Duration(milliseconds: 400));
+              expect(server.boundPort, port);
+              radioSocket.add('remote:{"op":"state"}');
+              final restrictedState = await remoteResponses
+                  .firstWhere(
+                    (message) =>
+                        message['state'] is Map &&
+                        (message['state'] as Map)['aprsAllowed'] == false &&
+                        (message['state'] as Map)['controlOwner'] == null,
+                  )
+                  .timeout(const Duration(seconds: 5));
+              expect((restrictedState['state'] as Map)['aprsAllowed'], isFalse);
             } finally {
               await radioSocket?.close();
               await socketSubscription?.cancel();
@@ -997,7 +1091,17 @@ void main() {
               );
             }
 
-            final appRequest = await http!.getUrl(base.resolve('/index.html'));
+            // Match the IPv4 loopback route used by adb forwarding and the
+            // hosted Chromium browser for packaged assets. Keep the earlier
+            // auth/WebSocket checks on IPv6 loopback as a separate path.
+            final assetBase = Uri(
+              scheme: 'http',
+              host: '127.0.0.1',
+              port: port,
+            );
+            final appRequest = await http!.getUrl(
+              assetBase.resolve('/index.html'),
+            );
             appRequest.cookies.add(session);
             final appResponse = await appRequest.close();
             expect(appResponse.statusCode, HttpStatus.ok);
@@ -1007,7 +1111,7 @@ void main() {
             );
 
             final scriptRequest = await http!.getUrl(
-              base.resolve('/main.dart.js'),
+              assetBase.resolve('/main.dart.js'),
             );
             scriptRequest.cookies.add(session);
             final scriptResponse = await scriptRequest.close();
@@ -1035,7 +1139,7 @@ void main() {
             );
 
             final wasmRequest = await http!.getUrl(
-              base.resolve('/canvaskit/canvaskit.wasm'),
+              assetBase.resolve('/canvaskit/canvaskit.wasm'),
             );
             wasmRequest.cookies.add(session);
             final wasmResponse = await wasmRequest.close();
@@ -1191,6 +1295,25 @@ void main() {
             deviceId: 0,
             name: 'webServerPassword',
             data: '',
+            allowEmpty: true,
+          );
+          DataBroker.dispatch(
+            deviceId: 0,
+            name: 'AllowTransmit',
+            data: 0,
+            store: true,
+          );
+          DataBroker.dispatch(
+            deviceId: 0,
+            name: 'webServerAllowAprs',
+            data: 0,
+            store: true,
+          );
+          DataBroker.dispatch(
+            deviceId: 0,
+            name: 'CallSign',
+            data: '',
+            store: true,
             allowEmpty: true,
           );
           DataBroker.dispatch(deviceId: 0, name: 'webServerPort', data: 8080);

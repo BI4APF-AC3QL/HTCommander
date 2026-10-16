@@ -193,6 +193,33 @@ async function main() {
       null,
       { timeout: 10000 },
     );
+    await page.locator('#menuAprs').click();
+    assert.equal(await page.locator('#aprsSend').isEnabled(), true,
+      'the synthetic Android host should expose its explicitly enabled APRS permission');
+    await page.locator('#aprsDestination').fill('BI4APF-7');
+    await page.locator('#aprsText').fill('Android test message');
+    await page.locator('#aprsSend').click();
+    assert.equal(await page.locator('#aprsConfirmation').isVisible(), true,
+      'APRS submission must require a preview and confirmation');
+    assert.match(await page.locator('#aprsPreview').innerText(), /BI4APF-7/);
+    assert.match(await page.locator('#aprsPreview').innerText(), /Android test message/);
+    await page.locator('#aprsConfirm').click();
+    await page.waitForFunction(
+      () => {
+        const events = document.querySelector('#auditEvents')?.textContent || '';
+        return events.includes('APRS 消息请求 · 请求接受');
+      },
+      null,
+      { timeout: 10000 },
+    );
+    await page.waitForFunction(
+      () => (document.querySelector('#aprsDeliveries')?.textContent || '')
+        .includes('BI4APF-7 · 等待 ACK'),
+      null,
+      { timeout: 10000 },
+    );
+    assert.equal(await page.locator('#ptt').isDisabled(), true,
+      'APRS message access must not enable voice PTT');
     evidence.radioControls = {
       frequency: await page.locator('#frequency').innerText(),
       channelOptions: await page.locator('#channel option').allTextContents(),
@@ -202,6 +229,14 @@ async function main() {
       satelliteReceiveOnly: true,
       pttDisabled: await page.locator('#ptt').isDisabled(),
       acceptedActions: ['squelch', 'volume', 'satelliteStart', 'satelliteStop'],
+      physicalRadio: false,
+      rfTransmit: false,
+    };
+    evidence.aprs = {
+      previewRequired: true,
+      confirmedThroughHostedPage: true,
+      deliveryState: await page.locator('#aprsDeliveries').innerText(),
+      radioPttDisabled: await page.locator('#ptt').isDisabled(),
       physicalRadio: false,
       rfTransmit: false,
     };
