@@ -16,6 +16,10 @@ void main() {
     }
     expect(find.byKey(const ValueKey('main_tab_more')), findsOneWidget);
     expect(find.byKey(const ValueKey('compact_more_Satellite')), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('main_tab_navigation'))).height,
+      lessThanOrEqualTo(72),
+    );
     expect(tester.takeException(), isNull);
   });
 

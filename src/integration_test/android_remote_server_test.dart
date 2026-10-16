@@ -410,12 +410,7 @@ void main() {
         final mobileNavigation = find.byKey(
           const ValueKey<String>('main_tab_navigation'),
         );
-        final mobileScrollable = find.descendant(
-          of: mobileNavigation,
-          matching: find.byType(Scrollable),
-        );
         expect(mobileNavigation, findsOneWidget);
-        expect(mobileScrollable, findsOneWidget);
         final navigationRect = tester.getRect(mobileNavigation);
         expect(
           navigationRect.width,
@@ -458,39 +453,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 350));
 
-        for (final tab in const <String>[
-          'Radio',
-          'Comms',
-          'Audio',
-          'APRS',
-          'Map',
-          'Satellite',
-          'Mail',
-          'Terminal',
-          'Contacts',
-          'BBS',
-          'Torrent',
-          'Packets',
-          'Debug',
-        ]) {
-          final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
-          await tester.scrollUntilVisible(
-            entry,
-            160,
-            scrollable: mobileScrollable,
-          );
-          expect(
-            entry,
-            findsOneWidget,
-            reason: '$tab should be in phone navigation',
-          );
-          expect(
-            entry.hitTestable(),
-            findsOneWidget,
-            reason:
-                '$tab should be visible and tappable on a phone-sized screen',
-          );
-          await tester.tap(entry);
+        Future<void> verifySelectedTab(String tab) async {
           // Wait for the tab-change notification instead of assuming a single
           // long pump completes the animation on a slower Android emulator.
           for (var frame = 0; frame < 20; frame++) {
@@ -509,6 +472,70 @@ void main() {
             findsNothing,
             reason: '$tab must build without an Android page error',
           );
+        }
+
+        // The most common pages are directly available in the bottom bar.
+        for (final tab in const <String>[
+          'Radio',
+          'Comms',
+          'Audio',
+          'APRS',
+          'Map',
+        ]) {
+          final entry = find.byKey(ValueKey<String>('main_tab_$tab'));
+          expect(
+            entry,
+            findsOneWidget,
+            reason: '$tab should be visible in phone navigation',
+          );
+          expect(
+            entry.hitTestable(),
+            findsOneWidget,
+            reason: '$tab should be tappable on a phone-sized screen',
+          );
+          await tester.tap(entry);
+          await verifySelectedTab(tab);
+        }
+
+        // Less frequently used pages are collected in the More sheet. Open it
+        // for each item because selecting a page closes the sheet.
+        for (final tab in const <String>[
+          'Satellite',
+          'Mail',
+          'Terminal',
+          'Contacts',
+          'BBS',
+          'Torrent',
+          'Packets',
+          'Debug',
+        ]) {
+          await tester.tap(find.byKey(const ValueKey<String>('main_tab_more')));
+          await tester.pump(const Duration(milliseconds: 250));
+          final entry = find.byKey(ValueKey<String>('compact_more_$tab'));
+          final moreMenu = find.byKey(
+            const ValueKey<String>('compact_more_list'),
+          );
+          final moreMenuScrollable = find.descendant(
+            of: moreMenu,
+            matching: find.byType(Scrollable),
+          );
+          await tester.scrollUntilVisible(
+            entry,
+            160,
+            scrollable: moreMenuScrollable,
+          );
+          expect(
+            entry,
+            findsOneWidget,
+            reason: '$tab should be available from the phone More menu',
+          );
+          expect(
+            entry.hitTestable(),
+            findsOneWidget,
+            reason: '$tab should be visible and tappable in the More menu',
+          );
+          await tester.tap(entry);
+          await verifySelectedTab(tab);
         }
 
         // Restore the receive-first profile before starting the server test.

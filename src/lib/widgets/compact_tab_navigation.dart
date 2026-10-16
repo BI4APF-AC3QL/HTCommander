@@ -45,6 +45,7 @@ class CompactTabNavigation extends StatelessWidget {
 
     return NavigationBar(
       key: const ValueKey('main_tab_navigation'),
+      height: 72,
       selectedIndex: selectedIndex,
       onDestinationSelected: (index) {
         if (index == primaryDestinations.length) {
@@ -101,6 +102,7 @@ class CompactTabNavigation extends StatelessWidget {
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxHeight),
             child: ListView(
+              key: const ValueKey('compact_more_list'),
               shrinkWrap: true,
               padding: const EdgeInsets.only(bottom: 12),
               children: [
