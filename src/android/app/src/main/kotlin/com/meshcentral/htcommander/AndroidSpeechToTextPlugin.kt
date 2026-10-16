@@ -103,6 +103,11 @@ class AndroidSpeechToTextPlugin(
             "isSupported" -> {
                 result.success(isDeviceSupported())
             }
+            "isSherpaFallbackSupported" -> {
+                result.success(
+                    Build.SUPPORTED_ABIS.any { it == "arm64-v8a" || it == "x86_64" },
+                )
+            }
             "initialize" -> {
                 localeId = call.argument<String>("localeId") ?: ""
                 result.success(initialize())
@@ -166,6 +171,9 @@ class AndroidSpeechToTextPlugin(
     }
 
     private fun startSegment() {
+        // Keep this guard local to the method that uses API 33 intent extras;
+        // the Flutter method channel can invoke it even if initialization failed.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val rec = recognizer ?: return
         // A length-limit split completes the previous session and immediately
         // starts a new one, so the recognizer's own end-of-session final may

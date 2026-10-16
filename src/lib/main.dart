@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'dialogs/about_dialog.dart';
@@ -34,9 +35,17 @@ import 'handlers/software_beacon_handler.dart';
 import 'handlers/airplane_handler.dart';
 import 'handlers/satellite_handler.dart';
 import 'handlers/comms_handler.dart';
+import 'handlers/rolling_voice_handler_stub.dart'
+    if (dart.library.io) 'handlers/rolling_voice_handler.dart';
 import 'handlers/morse_key_handler.dart';
 import 'handlers/bbs_handler.dart';
 import 'handlers/agwpe_handler.dart';
+import 'handlers/android_network_services_handler.dart';
+import 'handlers/android_phone_gps_handler.dart';
+import 'services/android_server_lifecycle.dart';
+import 'services/android_bluetooth_permissions.dart';
+import 'services/retrying_service_lease.dart';
+import 'services/radio_reconnect_controller.dart';
 import 'handlers/web_server_handler.dart';
 import 'handlers/home_assistant_handler.dart';
 import 'handlers/debug_log_handler.dart';
@@ -104,6 +113,7 @@ import 'echolink/echolink_client.dart' show echoLinkDeviceId;
 import 'allstar/allstar_client.dart' show allStarDeviceId;
 import 'widgets/comms_tab.dart';
 import 'widgets/audio_tab.dart';
+import 'widgets/compact_tab_navigation.dart';
 import 'widgets/aprs_tab.dart';
 import 'widgets/tab_visibility.dart';
 import 'widgets/map_tab.dart';
@@ -127,7 +137,11 @@ void main(List<String> args) {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       runApp(const _StartupApp());
-      await _startApp(args);
+      final androidServiceRecovery =
+          !kIsWeb &&
+          Platform.isAndroid &&
+          await AndroidServerLifecycle().consumeServiceRecoveryMode();
+      await _startApp(args, androidServiceRecovery: androidServiceRecovery);
       startupComplete = true;
     },
     (Object error, StackTrace stack) {
@@ -287,10 +301,120 @@ class _ReadableErrorWidget extends StatelessWidget {
   }
 }
 
-/// Application entry point, executed inside the guarded zone set up by [main].
-Future<void> _startApp(List<String> args) async {
-  WidgetsFlutterBinding.ensureInitialized();
+/// Draws a responsive Android startup screen while services finish preparing.
+/// The real app is inserted only after its handlers and stores are ready, so
+/// the splash cannot send controls to an uninitialized radio service.
+class _AndroidStartupGate extends StatelessWidget {
+  const _AndroidStartupGate({required this.initialization});
 
+  final Future<Widget> initialization;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: initialization,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            home: _ReadableErrorWidget(
+              details: FlutterErrorDetails(
+                exception: snapshot.error!,
+                stack: snapshot.stackTrace,
+              ),
+            ),
+          );
+        }
+        final app = snapshot.data;
+        if (app != null) return app;
+
+        final isChinese =
+            WidgetsBinding.instance.platformDispatcher.locale.languageCode ==
+            'zh';
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: Brightness.dark,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF4F83FF),
+              brightness: Brightness.dark,
+            ),
+          ),
+          home: Scaffold(
+            backgroundColor: const Color(0xFF10141A),
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.settings_input_antenna_rounded,
+                    size: 48,
+                    color: Color(0xFF8BAAFF),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'HTCommander',
+                    style: TextStyle(fontSize: 21, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 20),
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    isChinese ? '正在准备电台服务…' : 'Preparing radio services…',
+                    style: const TextStyle(
+                      color: Color(0xFFBEC6D4),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Application entry point, executed inside the guarded zone set up by [main].
+Future<void> _startApp(
+  List<String> args, {
+  bool androidServiceRecovery = false,
+}) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && Platform.isAndroid) {
+    final initialization =
+        _initializeApplication(
+          args,
+          androidServiceRecovery: androidServiceRecovery,
+        ).catchError((Object error, StackTrace stack) {
+          CrashLogger.instance.logError(
+            'Application startup failed',
+            error,
+            stack,
+          );
+          Error.throwWithStackTrace(error, stack);
+        });
+    runApp(_AndroidStartupGate(initialization: initialization));
+    return;
+  }
+
+  runApp(
+    await _initializeApplication(
+      args,
+      androidServiceRecovery: androidServiceRecovery,
+    ),
+  );
+}
+
+Future<Widget> _initializeApplication(
+  List<String> args, {
+  bool androidServiceRecovery = false,
+}) async {
   // Recover settings/data orphaned by the Windows CompanyName rename
   // (com.example -> com.meshcentral). Must run before anything reads or writes
   // the (new) application-support folder, i.e. before the crash log and the
@@ -301,7 +425,10 @@ Future<void> _startApp(List<String> args) async {
   // Resolve the on-disk crash log as early as possible so any failure during
   // the initialization below is still recorded. Works on every non-web
   // platform (Windows, macOS, Linux, Android, iOS); a no-op on web.
-  await CrashLogger.instance.init();
+  // CrashLogger buffers early records until its path resolves, so starting it
+  // here preserves diagnostics without making the first app frame wait on the
+  // platform path-provider call and log rotation.
+  unawaited(CrashLogger.instance.init());
 
   // Some widgets (e.g. dropdowns showing long serial port names) can
   // legitimately overflow their available width. In those cases it's acceptable
@@ -332,9 +459,22 @@ Future<void> _startApp(List<String> args) async {
   // Initialize the DataBroker for cross-component communication
   await DataBroker.initialize();
 
-  // Load encrypted secrets (e.g. the RepeaterBook token) into the broker and
-  // migrate any legacy plaintext copies. Must run before settings are read.
-  await DataBroker.loadSecrets();
+  // A recovered network service may bootstrap Flutter while the Activity is
+  // still absent. Do not silently resume local audio capture in that context;
+  // the user can enable rolling recording again after returning to the app.
+  if (androidServiceRecovery &&
+      DataBroker.getValue<bool>(0, 'RollingVoiceEnabled', false) == true) {
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'RollingVoiceEnabled',
+      data: false,
+      store: true,
+    );
+    DataBrokerClient().logInfo(
+      '[Android] Local rolling recording was paused after service recovery; '
+      'enable it again in the app if needed.',
+    );
+  }
 
   // When this is the web build served by the desktop app, device-0 settings are
   // read from and written to the host over the bridge instead of being saved in
@@ -357,6 +497,9 @@ Future<void> _startApp(List<String> args) async {
       if (controller.arguments.isNotEmpty) {
         final argument =
             jsonDecode(controller.arguments) as Map<String, dynamic>;
+        // Detached windows still load secrets before they read the broker-backed
+        // settings snapshot, but do not wait for this on the main-window path.
+        await DataBroker.loadSecrets();
         // Mark this as a child window so tabs don't show "Detach..." option.
         windowService.isChildWindow = true;
         // Become a data-broker client bound to the host (main) window and pull
@@ -369,8 +512,7 @@ Future<void> _startApp(List<String> args) async {
         LocaleController.instance.load();
         // Apply the persisted theme so detached windows match the main window.
         ThemeController.instance.load();
-        runApp(SubWindowApp(windowController: controller, argument: argument));
-        return;
+        return SubWindowApp(windowController: controller, argument: argument);
       }
     } catch (e) {
       // Not a sub-window, continue to main app
@@ -385,10 +527,24 @@ Future<void> _startApp(List<String> args) async {
   // to windows whose engines have been destroyed.
   windowService.initHost();
 
+  // These local stores do not depend on one another. Start them together so
+  // secure-storage and SQLite platform calls overlap instead of serializing the
+  // main-window startup path. The torrent handler still waits for its store
+  // before it is registered below.
+  final secretsInitialization = DataBroker.loadSecrets();
+  final databaseInitialization = AppDatabase.open();
+  final torrentStore = HostBridge.isHosted ? null : TorrentStore();
+  final torrentStoreInitialization = torrentStore == null
+      ? Future<void>.value()
+      : torrentStore.init();
+
   // Apply the persisted application language (falls back to the OS locale).
   LocaleController.instance.load();
   // Apply the persisted theme mode (falls back to the OS setting).
   ThemeController.instance.load();
+
+  // Secrets must be in memory before handlers read settings or credentials.
+  await secretsInitialization;
 
   // Ensure the built-in protected APRS routes ("Standard" and "None") always
   // exist before any component reads the APRS route configuration.
@@ -397,7 +553,7 @@ Future<void> _startApp(List<String> args) async {
   // Open the shared SQLite database (host/main process only) and migrate any
   // legacy flat-file history into it before the stores below load. No-op on web
   // and on detached sub-windows (they returned above as broker clients).
-  await AppDatabase.open();
+  await databaseInitialization;
 
   // Register the frame deduplicator so that duplicate DataFrame events received
   // by multiple radios are collapsed into single UniqueDataFrame events.
@@ -428,8 +584,9 @@ Future<void> _startApp(List<String> args) async {
   }
 
   // Register the software beacon handler so that, when an interval is set, the
-  // app periodically transmits its own APRS position/status beacon over the
-  // selected radio's "APRS" channel and gates it to the Internet (APRS-IS).
+  // host can explicitly approve a periodic APRS position/status task on the
+  // selected radio's APRS channel or a verified Internet-only destination.
+  // Startup and configuration edits leave the task paused.
   // Skipped on the hosted web build: the desktop host emits the beacon, so a
   // second timer here would double-beacon over the shared radio.
   if (!HostBridge.isHosted) {
@@ -482,6 +639,8 @@ Future<void> _startApp(List<String> args) async {
   final commsHandler = CommsHandler();
   commsHandler.init();
   DataBroker.addDataHandler('CommsHandler', commsHandler);
+  final rollingVoiceHandler = RollingVoiceHandler()..init();
+  DataBroker.addDataHandler('RollingVoiceHandler', rollingVoiceHandler);
 
   // Register the morse-key handler so a USB morse key (straight or paddle) can
   // be keyed in real time, rendered to a 700 Hz tone, and sent locally (test)
@@ -542,6 +701,13 @@ Future<void> _startApp(List<String> args) async {
   locationHandler.init();
   DataBroker.addDataHandler('LocationHandler', locationHandler);
 
+  // Android can provide live phone GPS fixes through the same persisted
+  // location source used by the radio, APRS-IS and satellite tracker.
+  if (!kIsWeb && Platform.isAndroid) {
+    final phoneGpsHandler = AndroidPhoneGpsHandler()..init();
+    DataBroker.addDataHandler('AndroidPhoneGpsHandler', phoneGpsHandler);
+  }
+
   // Register the BBS handler so that the BBS tab can activate a bulletin-board /
   // Winlink server on a radio. It creates per-radio BBS instances on CreateBbs,
   // locks the radio for "BBS" usage, and aggregates station statistics.
@@ -566,9 +732,8 @@ Future<void> _startApp(List<String> args) async {
   // Skipped on the hosted web build: the desktop host serves torrent requests,
   // so a second instance here would answer them twice over the shared radio.
   if (!HostBridge.isHosted) {
-    final torrentStore = TorrentStore();
-    await torrentStore.init();
-    final torrentHandler = TorrentHandler(store: torrentStore);
+    await torrentStoreInitialization;
+    final torrentHandler = TorrentHandler(store: torrentStore!);
     torrentHandler.init();
     DataBroker.addDataHandler('TorrentHandler', torrentHandler);
   }
@@ -589,32 +754,60 @@ Future<void> _startApp(List<String> args) async {
     DataBroker.addDataHandler('WinlinkClient', winlinkClient);
   }
 
-  // Register the AGWPE server handler (desktop only) so that, when enabled in
+  // Register the AGWPE server handler on desktop and Android so that, when enabled in
   // settings, an AGW Packet Engine (AGWPE) TCP server is exposed for external
   // packet applications. It bridges monitoring, UNPROTO and connected-mode
-  // sessions to the radio. Not available on web/iOS/Android.
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // sessions to the radio. Not available on web/iOS.
+  if (!kIsWeb &&
+      (Platform.isWindows ||
+          Platform.isLinux ||
+          Platform.isMacOS ||
+          Platform.isAndroid)) {
     final agwpeHandler = AgwpeHandler();
     agwpeHandler.init();
     DataBroker.addDataHandler('AgwpeHandler', agwpeHandler);
   }
 
-  // Register the web server handler (desktop only) so that, when enabled in
-  // settings, the Flutter web UI is served over HTTP. Not available on
-  // web/iOS/Android.
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-    final webServerHandler = WebServerHandler();
+  // Register the radio web server on desktop and Android. Android can host
+  // the built-in remote page on the LAN while this same app controls its local
+  // Bluetooth radio; an Android foreground service keeps the opted-in server
+  // alive when the activity is backgrounded.
+  if (!kIsWeb &&
+      (Platform.isWindows ||
+          Platform.isLinux ||
+          Platform.isMacOS ||
+          Platform.isAndroid)) {
+    final webServerHandler = WebServerHandler(
+      reconcileAndroidServiceRecovery: androidServiceRecovery,
+    );
     webServerHandler.init();
     DataBroker.addDataHandler('WebServerHandler', webServerHandler);
   }
 
-  // Register the Home Assistant handler (desktop only) so that, when enabled in
+  // Register the Home Assistant handler on desktop and Android so that, when enabled in
   // settings, each connected radio is exposed to Home Assistant over MQTT using
-  // auto-discovery for monitoring and control. Not available on web/iOS/Android.
-  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+  // auto-discovery for monitoring and control. Not available on web/iOS.
+  if (!kIsWeb &&
+      (Platform.isWindows ||
+          Platform.isLinux ||
+          Platform.isMacOS ||
+          Platform.isAndroid)) {
     final homeAssistantHandler = HomeAssistantHandler();
     homeAssistantHandler.init();
     DataBroker.addDataHandler('HomeAssistantHandler', homeAssistantHandler);
+  }
+
+  // Android radio connections and network servers need a foreground service
+  // when the activity is backgrounded.
+  if (!kIsWeb && Platform.isAndroid) {
+    final networkServicesHandler = AndroidNetworkServicesHandler(
+      reconcileAndroidServiceRecovery: androidServiceRecovery,
+    );
+    networkServicesHandler.init();
+    DataBroker.addDataHandler(
+      'AndroidNetworkServicesHandler',
+      networkServicesHandler,
+    );
   }
 
   // Mirror the preferred radio's channel list and incoming APRS messages to the
@@ -656,8 +849,7 @@ Future<void> _startApp(List<String> args) async {
   // messages addressed to this station pop up when the app is backgrounded or
   // its window is unfocused.
   await NotificationService.instance.init();
-
-  runApp(const HTCommanderApp());
+  return const HTCommanderApp();
 }
 
 /// Best-effort forward of an error string into the Debug tab log. The broker may
@@ -703,11 +895,7 @@ Future<void> _restoreMainWindowSize() async {
   await windowManager.waitUntilReadyToShow(windowOptions);
 }
 
-bool get _serialGpsSupported =>
-    !kIsWeb &&
-    (defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.macOS ||
-        defaultTargetPlatform == TargetPlatform.linux);
+bool get _serialGpsSupported => GpsSerialHandler.isSupported;
 
 const double _narrowDialogBreakpoint = 700;
 
@@ -1011,8 +1199,9 @@ class _MainFormState extends State<MainForm>
   late List<_TabInfo> _currentTabs;
   bool _radioVisible = true;
   bool _showTabNames = true;
-  // Whether the vertical tab list on the right is shown. Only togglable while
-  // in compact mode; always shown when not in compact mode.
+  // Whether compact-mode tab navigation is shown. It is a bottom strip on
+  // Android phones and a side list on other compact layouts; always shown in
+  // non-compact mode.
   bool _tabsVisible = true;
   bool _showAllChannels = false;
   // Whether channel tiles show the frequency under the name. Toggled from the
@@ -1083,6 +1272,51 @@ class _MainFormState extends State<MainForm>
 
   // Connected radios tracking (list of device IDs)
   List<int> _connectedRadioIds = [];
+
+  // A radio that drops out of Bluetooth is retried a few times with increasing
+  // delays. Explicit disconnect removes it from PreviouslyConnectedRadios and
+  // cancels this timer, so reconnect never overrides the user's choice.
+  final AndroidServerLifecycle _androidServerLifecycle =
+      AndroidServerLifecycle();
+  late final RetryingServiceLease _androidReconnectServiceLease =
+      RetryingServiceLease(
+        start: () => _androidServerLifecycle.start(reason: 'radioReconnect'),
+        stop: () => _androidServerLifecycle.stop(reason: 'radioReconnect'),
+        onError: (error) => _broker.logError(
+          'Android Bluetooth reconnect foreground service update failed: '
+          '$error',
+        ),
+      );
+  // Android keeps trying to restore a remembered radio after temporary range
+  // or adapter outages. The delay grows to five minutes to limit battery and
+  // service churn, and an explicit disconnect still cancels the retry loop.
+  bool get _continueAndroidRadioReconnect => !kIsWeb && Platform.isAndroid;
+  bool _autoReconnectInProgress = false;
+  bool _autoReconnectPending = false;
+  late final RadioReconnectController _radioReconnectController =
+      RadioReconnectController(
+        delays: _continueAndroidRadioReconnect
+            ? RadioReconnectPolicy.androidDelays
+            : RadioReconnectPolicy.desktopDelays,
+        continueWhileRemembered: _continueAndroidRadioReconnect,
+        isRemembered: (mac) =>
+            BluetoothService().previouslyConnectedRadioMacs().contains(mac),
+        isConnected: _isRadioConnected,
+        attempt: _attemptRadioReconnect,
+        onChanged: _syncAndroidReconnectForegroundService,
+        onScheduled: (mac, delay, attempt) => _broker.logInfo(
+          '[Android] Retrying remembered radio $mac in '
+          '${delay.inSeconds}s (attempt $attempt).',
+        ),
+        onExhausted: (mac, attempts) => _broker.logInfo(
+          '[Android] Automatic Bluetooth reconnect for $mac stopped after '
+          '$attempts attempts. Use Connect to retry.',
+        ),
+        onError: (mac, error) => _broker.logError(
+          '[Android] Automatic Bluetooth reconnect to $mac failed: $error',
+        ),
+      );
+  RadioAdapterReconnectWatcher? _androidAdapterReconnectWatcher;
 
   // Hosted web build: the host's radios (each {deviceId, name}) and which one is
   // bridged, so the browser can show the current radio and offer a switcher.
@@ -1166,6 +1400,16 @@ class _MainFormState extends State<MainForm>
     _TabInfo('Packets', 'assets/images/tabs/packets.png', Icons.search),
     _TabInfo('Debug', 'assets/images/tabs/debug.png', Icons.info),
   ];
+
+  /// Keep the five highest-use phone pages in the bottom bar. Every other
+  /// enabled page remains available from the More sheet.
+  static const Set<String> _compactPrimaryTabLabels = {
+    'Radio',
+    'Comms',
+    'Audio',
+    'APRS',
+    'Map',
+  };
 
   // Radio tab shown only in compact mode
   static const _TabInfo _radioTab = _TabInfo(
@@ -1255,6 +1499,29 @@ class _MainFormState extends State<MainForm>
       name: 'ConnectedRadios',
       callback: _onConnectedRadiosChanged,
     );
+
+    // A Bluetooth transport can disappear after startup (for example, when a
+    // handheld radio briefly loses power or moves out of range). Retry only
+    // radios the user previously connected and has not explicitly forgotten.
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'State',
+      callback: _onRadioStateChanged,
+    );
+
+    // A failed reconnect can otherwise wait for the full backoff interval
+    // after Bluetooth is switched back on. Startup already checks the initial
+    // adapter state; only a later off-to-on transition requests a fresh scan.
+    if (!kIsWeb && Platform.isAndroid) {
+      _androidAdapterReconnectWatcher = RadioAdapterReconnectWatcher(
+        adapterEnabledChanges:
+            BluetoothService().bluetoothAdapterEnabledChanges,
+        reconnect: _autoReconnectRadios,
+        onError: (error) => _broker.logError(
+          '[Android] Bluetooth adapter state monitoring failed: $error',
+        ),
+      );
+    }
 
     // Hosted web build: the host's radio list (name + selection) drives the
     // current radio name and the radio switcher.
@@ -1563,6 +1830,25 @@ class _MainFormState extends State<MainForm>
   /// dialogs. The stored list is only changed by explicit connect/disconnect,
   /// so closing the app (or a radio going out of range) leaves it intact.
   Future<void> _autoReconnectRadios() async {
+    if (!mounted) return;
+    if (_autoReconnectInProgress) {
+      _autoReconnectPending = true;
+      return;
+    }
+
+    _autoReconnectInProgress = true;
+    try {
+      do {
+        _autoReconnectPending = false;
+        await _scanAndReconnectRadios();
+      } while (_autoReconnectPending && mounted);
+    } finally {
+      _autoReconnectInProgress = false;
+    }
+  }
+
+  Future<void> _scanAndReconnectRadios() async {
+    if (!mounted) return;
     final bluetoothService = BluetoothService();
     final knownMacs = bluetoothService.previouslyConnectedRadioMacs().toSet();
     if (knownMacs.isEmpty) return;
@@ -1574,7 +1860,12 @@ class _MainFormState extends State<MainForm>
     } catch (_) {
       return;
     }
-    if (!bluetoothAvailable) return;
+    if (!bluetoothAvailable) {
+      for (final mac in knownMacs) {
+        _scheduleRadioReconnect(mac);
+      }
+      return;
+    }
 
     List<DiscoveredDevice> allDevices;
     try {
@@ -1583,9 +1874,17 @@ class _MainFormState extends State<MainForm>
       );
     } catch (e) {
       _broker.logError('Auto-reconnect scan failed: $e');
+      for (final mac in knownMacs) {
+        _scheduleRadioReconnect(mac);
+      }
       return;
     }
-    if (allDevices.isEmpty) return;
+    if (allDevices.isEmpty) {
+      for (final mac in knownMacs) {
+        _scheduleRadioReconnect(mac);
+      }
+      return;
+    }
 
     // Skip radios that are already connected.
     final connectedMacs = <String>{};
@@ -1598,18 +1897,179 @@ class _MainFormState extends State<MainForm>
       final mac = d.id.toUpperCase();
       return knownMacs.contains(mac) && !connectedMacs.contains(mac);
     }).toList();
+    final foundMacs = devicesToReconnect.map((d) => d.id.toUpperCase()).toSet();
+    for (final mac
+        in knownMacs.difference(foundMacs).difference(connectedMacs)) {
+      _scheduleRadioReconnect(mac);
+    }
     if (devicesToReconnect.isEmpty) return;
 
     // Reuse the stored friendly names so reconnected radios keep their labels.
     final compatibleDevices = _applyStoredFriendlyNames(devicesToReconnect);
     for (final device in compatibleDevices) {
+      if (Platform.isAndroid) {
+        await _radioReconnectController.attemptNow(
+          device.mac,
+          operation: (_) => _connectRememberedRadio(device),
+        );
+        continue;
+      }
+
       _broker.logInfo('Auto-reconnecting to ${device.name}...');
       try {
-        await bluetoothService.connectToRadio(device.mac, device.name);
+        final connectedId = await bluetoothService.connectToRadio(
+          device.mac,
+          device.name,
+          bluetoothType: device.bluetoothType,
+        );
+        if (!bluetoothService.previouslyConnectedRadioMacs().contains(
+          device.mac.toUpperCase(),
+        )) {
+          if (connectedId != null) {
+            await bluetoothService.disconnectRadio(connectedId);
+          }
+          _cancelRadioReconnect(device.mac);
+          continue;
+        }
+        if (connectedId == null) {
+          _scheduleRadioReconnect(device.mac);
+        } else {
+          _cancelRadioReconnect(device.mac);
+        }
       } catch (e) {
         _broker.logError('Auto-reconnect to ${device.name} failed: $e');
+        _scheduleRadioReconnect(device.mac);
       }
     }
+  }
+
+  void _onRadioStateChanged(int deviceId, String name, Object? data) {
+    if (!mounted) return;
+    final mac = DataBroker.getValue<String>(deviceId, 'MacAddress', '') ?? '';
+    if (mac.isEmpty) return;
+    if (data == 'Connected') {
+      _cancelRadioReconnect(mac);
+    } else if (data == 'Connecting') {
+      // A manual or scheduled connection is already in progress. Preserve the
+      // retry count, but do not let another timer start a parallel connection.
+      _radioReconnectController.pause(mac);
+    } else if (data == 'Disconnected' || data == 'UnableToConnect') {
+      if (!BluetoothService().previouslyConnectedRadioMacs().contains(
+        mac.toUpperCase(),
+      )) {
+        _cancelRadioReconnect(mac);
+        return;
+      }
+      _scheduleRadioReconnect(mac);
+    }
+  }
+
+  void _scheduleRadioReconnect(String macAddress) {
+    if (kIsWeb || !Platform.isAndroid || !mounted) return;
+    _radioReconnectController.schedule(macAddress);
+  }
+
+  bool _isRadioConnected(String mac) {
+    for (final id in BluetoothService().connectedRadioIds) {
+      final connectedMac = DataBroker.getValue<String>(
+        id,
+        'MacAddress',
+        '',
+      )?.toUpperCase();
+      if (connectedMac == mac) return true;
+    }
+    return false;
+  }
+
+  Future<bool> _attemptRadioReconnect(String mac) async {
+    try {
+      if (!mounted ||
+          !BluetoothService().previouslyConnectedRadioMacs().contains(mac)) {
+        _cancelRadioReconnect(mac);
+        return false;
+      }
+      final bluetoothService = BluetoothService();
+      if (_isRadioConnected(mac)) {
+        _cancelRadioReconnect(mac);
+        return true;
+      }
+      final devices = await bluetoothService.findCompatibleDevices(
+        timeout: const Duration(seconds: 5),
+      );
+      if (!mounted ||
+          !bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+        _cancelRadioReconnect(mac);
+        return false;
+      }
+      DiscoveredDevice? match;
+      for (final device in devices) {
+        if (device.id.toUpperCase() == mac) {
+          match = device;
+          break;
+        }
+      }
+      if (match == null) return false;
+      final device = _applyStoredFriendlyNames([match]).first;
+      final result = await bluetoothService.connectToRadio(
+        device.mac,
+        device.name,
+        bluetoothType: device.bluetoothType,
+      );
+      if (!bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+        if (result != null) {
+          await bluetoothService.disconnectRadio(result);
+        }
+        _cancelRadioReconnect(mac);
+        return false;
+      }
+      if (result == null) return false;
+      _cancelRadioReconnect(mac);
+      return true;
+    } catch (error) {
+      _broker.logError(
+        '[Android] Automatic Bluetooth reconnect failed: $error',
+      );
+      return false;
+    }
+  }
+
+  Future<bool> _connectRememberedRadio(CompatibleDevice device) async {
+    final mac = device.mac.toUpperCase();
+    final bluetoothService = BluetoothService();
+    if (!mounted ||
+        !bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+      _cancelRadioReconnect(mac);
+      return false;
+    }
+    _broker.logInfo('Auto-reconnecting to ${device.name}...');
+    try {
+      final connectedId = await bluetoothService.connectToRadio(
+        device.mac,
+        device.name,
+        bluetoothType: device.bluetoothType,
+      );
+      if (!bluetoothService.previouslyConnectedRadioMacs().contains(mac)) {
+        if (connectedId != null) {
+          await bluetoothService.disconnectRadio(connectedId);
+        }
+        _cancelRadioReconnect(mac);
+        return false;
+      }
+      return connectedId != null;
+    } catch (error) {
+      _broker.logError('Auto-reconnect to ${device.name} failed: $error');
+      return false;
+    }
+  }
+
+  void _cancelRadioReconnect(String macAddress) {
+    _radioReconnectController.cancel(macAddress);
+  }
+
+  void _syncAndroidReconnectForegroundService() {
+    if (kIsWeb || !Platform.isAndroid) return;
+    final shouldRun = _radioReconnectController.hasWork;
+    _androidReconnectServiceLease.setDesired(shouldRun);
   }
 
   /// Handle settings changes from DataBroker.
@@ -1669,6 +2129,14 @@ class _MainFormState extends State<MainForm>
         if (radio is Map && radio['DeviceId'] != null) {
           final id = radio['DeviceId'] as int;
           if (!ids.contains(id)) ids.add(id);
+          final mac = radio['MacAddress'];
+          if (mac is String && mac.isNotEmpty) {
+            if (radio['State'] == 'Connected') {
+              _cancelRadioReconnect(mac);
+            } else if (radio['State'] == 'Connecting') {
+              _radioReconnectController.pause(mac);
+            }
+          }
         }
       }
       final previousPreferred = _currentRadioDeviceId;
@@ -2268,10 +2736,12 @@ class _MainFormState extends State<MainForm>
       _regionCount = (info is Map ? info['regionCount'] as int? : null) ?? 0;
       _supportRadio =
           (info is Map ? info['supportRadio'] as bool? : null) ?? false;
-      _allChannelsLoaded = (DataBroker.getValueDynamic(
+      _allChannelsLoaded =
+          (DataBroker.getValueDynamic(
                 _currentRadioDeviceId,
                 'AllChannelsLoaded',
-              ) as bool?) ??
+              )
+              as bool?) ??
           false;
       final htStatus = DataBroker.getValueDynamic(
         _currentRadioDeviceId,
@@ -3116,6 +3586,13 @@ class _MainFormState extends State<MainForm>
   @override
   void dispose() {
     _tabController.removeListener(_onTabChanged);
+    final adapterWatcher = _androidAdapterReconnectWatcher;
+    _androidAdapterReconnectWatcher = null;
+    if (adapterWatcher != null) unawaited(adapterWatcher.dispose());
+    _radioReconnectController.dispose();
+    if (!kIsWeb && Platform.isAndroid) {
+      unawaited(_androidReconnectServiceLease.dispose());
+    }
     _broker.dispose();
     if (isDesktop) {
       windowManager.removeListener(this);
@@ -4149,10 +4626,13 @@ class _MainFormState extends State<MainForm>
 
   Widget _buildTabPanel() {
     // Use a key based on compact mode to force clean rebuild when mode changes
+    final useBottomNavigation = _isCompactMode && !kIsWeb && Platform.isAndroid;
     return Column(
       key: ValueKey('tab_panel_${_isCompactMode}_${_currentTabs.length}'),
       children: [
-        // Tabs on the right side (vertical)
+        // Keep the tab content full-width on Android phones. The horizontal
+        // navigation below uses vertical space instead of reducing the map,
+        // APRS, and radio controls to a narrow column.
         Expanded(
           child: Row(
             children: [
@@ -4177,11 +4657,77 @@ class _MainFormState extends State<MainForm>
                 ),
               ),
               // Hide the tab list only in compact mode when the user toggles it off
-              if (!_isCompactMode || _tabsVisible) _buildVerticalTabList(),
+              if (!useBottomNavigation && (!_isCompactMode || _tabsVisible))
+                _buildVerticalTabList(),
             ],
           ),
         ),
+        if (useBottomNavigation && _tabsVisible) _buildHorizontalTabList(),
       ],
+    );
+  }
+
+  void _selectTab(int index) {
+    final tab = _currentTabs[index];
+    // Re-tapping the already-selected APRS tab returns it to the conversation
+    // list.
+    if (_tabController.index == index && tab.label == 'APRS') {
+      _broker.dispatch(
+        deviceId: 1,
+        name: 'AprsShowContactList',
+        data: null,
+        store: false,
+      );
+    }
+    // Re-tapping Mail returns to the mailbox list, saving a draft when needed.
+    if (_tabController.index == index && tab.label == 'Mail') {
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'MailShowList',
+        data: null,
+        store: false,
+      );
+    }
+    _tabController.animateTo(index);
+  }
+
+  Widget _buildHorizontalTabList() {
+    return AnimatedBuilder(
+      animation: _tabController,
+      builder: (context, child) {
+        final currentIndex = _tabController.index;
+        final currentId =
+            currentIndex >= 0 && currentIndex < _currentTabs.length
+            ? _currentTabs[currentIndex].label
+            : _currentTabs.first.label;
+        final primaryTabs = _currentTabs
+            .where((tab) => _compactPrimaryTabLabels.contains(tab.label))
+            .toList(growable: false);
+        final moreTabs = _currentTabs
+            .where((tab) => !_compactPrimaryTabLabels.contains(tab.label))
+            .toList(growable: false);
+
+        CompactTabDestination destination(_TabInfo tab) =>
+            CompactTabDestination(
+              id: tab.label,
+              title: _tabDisplayName(tab.label),
+              assetPath: tab.assetPath,
+              fallbackIcon: tab.fallbackIcon,
+            );
+
+        return CompactTabNavigation(
+          primaryDestinations: primaryTabs
+              .map(destination)
+              .toList(growable: false),
+          moreDestinations: moreTabs.map(destination).toList(growable: false),
+          currentId: currentId,
+          moreTitle: AppLocalizations.of(context).chMore,
+          onSelect: (id) {
+            final index = _currentTabs.indexWhere((tab) => tab.label == id);
+            if (index >= 0) _selectTab(index);
+          },
+        );
+      },
     );
   }
 
@@ -4198,6 +4744,7 @@ class _MainFormState extends State<MainForm>
             controller: _tabListScrollController,
             thumbVisibility: true,
             child: ListView.builder(
+              key: const ValueKey('main_tab_navigation'),
               controller: _tabListScrollController,
               padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
               itemCount: _currentTabs.length,
@@ -4225,31 +4772,8 @@ class _MainFormState extends State<MainForm>
                         );
                       },
                       child: InkWell(
-                        onTap: () {
-                          // Re-tapping the already-selected APRS tab returns it
-                          // to the conversation list.
-                          if (_tabController.index == index &&
-                              tab.label == 'APRS') {
-                            _broker.dispatch(
-                              deviceId: 1,
-                              name: 'AprsShowContactList',
-                              data: null,
-                              store: false,
-                            );
-                          }
-                          // Re-tapping the already-selected Mail tab returns it
-                          // to the mailbox list (saving a draft when composing).
-                          if (_tabController.index == index &&
-                              tab.label == 'Mail') {
-                            _broker.dispatch(
-                              deviceId: 0,
-                              name: 'MailShowList',
-                              data: null,
-                              store: false,
-                            );
-                          }
-                          _tabController.animateTo(index);
-                        },
+                        key: ValueKey('main_tab_${tab.label}'),
+                        onTap: () => _selectTab(index),
                         child: Stack(
                           children: [
                             // Selection marker on the leading edge, matching the
@@ -4631,10 +5155,16 @@ class _MainFormState extends State<MainForm>
       setState(() {
         _statusText = AppLocalizations.of(context).statusNoCompatibleRadios;
       });
-      _showInfoDialog(
-        AppLocalizations.of(context).connectNoRadiosTitle,
-        AppLocalizations.of(context).connectNoRadiosBody,
-      );
+      final l10n = AppLocalizations.of(context);
+      final title = l10n.connectNoRadiosTitle;
+      final message = (!kIsWeb && Platform.isAndroid)
+          ? l10n.connectNoRadiosAndroidBody
+          : l10n.connectNoRadiosBody;
+      if (!kIsWeb && Platform.isAndroid) {
+        _showAndroidNoRadiosDialog(title, message);
+      } else {
+        _showInfoDialog(title, message);
+      }
       return;
     }
 
@@ -4687,6 +5217,7 @@ class _MainFormState extends State<MainForm>
         final deviceId = await bluetoothService.connectToRadio(
           device.mac,
           device.name,
+          bluetoothType: device.bluetoothType,
         );
 
         if (!mounted) return;
@@ -4775,6 +5306,7 @@ class _MainFormState extends State<MainForm>
           name: customName.isNotEmpty ? customName : device.name,
           mac: device.id,
           bluetoothName: device.name,
+          bluetoothType: device.type,
         ),
       );
     }
@@ -4790,6 +5322,19 @@ class _MainFormState extends State<MainForm>
         title: Text(l10n.connectBluetoothOffTitle),
         content: Text(l10n.connectBluetoothOffBody),
         actions: [
+          if (!kIsWeb && Platform.isAndroid)
+            TextButton(
+              onPressed: _openAndroidBluetoothSettings,
+              child: Text(l10n.connectOpenBluetoothSettings),
+            ),
+          if (!kIsWeb && Platform.isAndroid)
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await openAppSettings();
+              },
+              child: Text(l10n.connectOpenAppSettings),
+            ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: Text(l10n.commonOk),
@@ -4797,6 +5342,49 @@ class _MainFormState extends State<MainForm>
         ],
       ),
     );
+  }
+
+  void _showAndroidNoRadiosDialog(String title, String message) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final l10n = AppLocalizations.of(dialogContext);
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: _openAndroidBluetoothSettings,
+              child: Text(l10n.connectOpenBluetoothSettings),
+            ),
+            TextButton(
+              onPressed: () async {
+                await openAppSettings();
+              },
+              child: Text(l10n.connectOpenAppSettings),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _onConnect();
+              },
+              child: Text(l10n.connectScanAgain),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.commonOk),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openAndroidBluetoothSettings() async {
+    final opened = await AndroidBluetoothPermissions.openBluetoothSettings();
+    if (!opened) {
+      _broker.logError('[Android] Could not open Bluetooth settings');
+    }
   }
 
   void _showInfoDialog(String title, String message) {

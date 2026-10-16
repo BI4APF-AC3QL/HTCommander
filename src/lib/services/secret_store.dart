@@ -39,6 +39,26 @@ class SecretStore {
     }
   }
 
+  /// Reads several secrets in one native call. The secure-storage plugin's
+  /// per-key method-channel round trips can dominate Android startup even when
+  /// most keys are empty, so callers should prefer this path and fall back to
+  /// [read] only when the bulk operation is unavailable.
+  Future<Map<String, String>?> readAll(Iterable<String> names) async {
+    if (!isSupported) return const {};
+    try {
+      final stored = await _storage.readAll();
+      final values = <String, String>{};
+      for (final name in names) {
+        final value = stored[_key(name)];
+        if (value != null) values[name] = value;
+      }
+      return values;
+    } catch (e) {
+      debugPrint('SecretStore.readAll failed: $e');
+      return null;
+    }
+  }
+
   /// Writes a secret. A null or empty value deletes the entry.
   Future<void> write(String name, String? value) async {
     if (!isSupported) return;

@@ -63,7 +63,12 @@ class WinlinkDebugEntry {
 /// The Winlink B2F protocol client. Supports both TCP (telnet to a CMS server)
 /// and X25 (AX.25 session over radio) transports.
 class WinlinkClient {
-  WinlinkClient() {
+  factory WinlinkClient({
+    Duration tcpRetryDelay = const Duration(seconds: 2),
+    int maxTcpRetries = 3,
+  }) => WinlinkClient._(tcpRetryDelay, maxTcpRetries);
+
+  WinlinkClient._(this._tcpRetryDelay, this._maxTcpRetries) {
     _broker = DataBrokerClient();
 
     // Subscribe to broker events to start syncing
@@ -115,8 +120,11 @@ class WinlinkClient {
   bool _sessionDataReceived = false;
   bool _userDisconnect = false;
   int _tcpRetryCount = 0;
-  static const int _maxTcpRetries = 3;
-  static const Duration _tcpRetryDelay = Duration(seconds: 2);
+  final int _maxTcpRetries;
+  final Duration _tcpRetryDelay;
+  Timer? _tcpRetryTimer;
+  bool _tcpRetryPending = false;
+  bool? _lastPublishedBusy;
 
   // Radio lock fields for X25 transport
   int _lockedRadioId = -1;
@@ -693,20 +701,30 @@ class WinlinkClient {
         store: false,
       );
 
-      final isBusy = state != WinlinkConnectionState.disconnected;
-      _broker.dispatch(
-        deviceId: 1,
-        name: 'WinlinkBusy',
-        data: isBusy,
-        store: false,
-      );
-
       if (state == WinlinkConnectionState.disconnected) {
         _sessionState.clear();
         _remoteAddress = '';
         _unlockRadio();
       }
     }
+    _publishBusyState();
+  }
+
+  /// Publishes whether a Winlink operation is still active. A scheduled TCP
+  /// retry counts as busy so Android's foreground service stays alive during
+  /// the delay between socket attempts.
+  void _publishBusyState() {
+    final isBusy =
+        _currentState != WinlinkConnectionState.disconnected ||
+        _tcpRetryPending;
+    if (_lastPublishedBusy == isBusy) return;
+    _lastPublishedBusy = isBusy;
+    _broker.dispatch(
+      deviceId: 1,
+      name: 'WinlinkBusy',
+      data: isBusy,
+      store: false,
+    );
   }
 
   /// Connects to a Winlink CMS server over TCP (optionally TLS).
@@ -781,10 +799,11 @@ class WinlinkClient {
       return true;
     } catch (ex) {
       _broker.logError('[WinlinkClient] TCP connection failed: $ex');
-      _setConnectionState(WinlinkConnectionState.disconnected);
       _cleanupTcp();
       // A failure to even connect can also be a transient pool issue; retry.
-      if (_maybeRetryTcp()) return false;
+      final retryScheduled = _maybeRetryTcp();
+      _setConnectionState(WinlinkConnectionState.disconnected);
+      if (retryScheduled) return false;
       _errorMessage('TCP Connection failed: $ex');
       return false;
     }
@@ -798,9 +817,9 @@ class WinlinkClient {
     if (!_tcpRunning) return;
     _tcpRunning = false;
     _cleanupTcp();
+    final retryScheduled = _maybeRetryTcp();
     _setConnectionState(WinlinkConnectionState.disconnected);
-
-    if (_maybeRetryTcp()) return;
+    if (retryScheduled) return;
 
     if (!_userDisconnect && !_sessionDataReceived) {
       // Exhausted retries without ever establishing a session.
@@ -829,18 +848,36 @@ class WinlinkClient {
     _stateMessage(
       'Connection dropped, retrying ($_tcpRetryCount/$_maxTcpRetries)...',
     );
+    _tcpRetryPending = true;
 
     final server = _tcpServer;
     final port = _tcpPort;
     final useTls = _tcpUseTls;
-    Future.delayed(_tcpRetryDelay, () {
-      if (_disposed) return;
-      if (_userDisconnect) return;
-      if (_currentState != WinlinkConnectionState.disconnected) return;
+    _tcpRetryTimer?.cancel();
+    _tcpRetryTimer = Timer(_tcpRetryDelay, () {
+      _tcpRetryTimer = null;
+      if (_disposed ||
+          _userDisconnect ||
+          _currentState != WinlinkConnectionState.disconnected) {
+        _tcpRetryPending = false;
+        _publishBusyState();
+        return;
+      }
+      // connectTcp synchronously enters CONNECTING before its first await, so
+      // clearing the retry flag here does not publish a false idle interval.
+      _tcpRetryPending = false;
       _transportType = WinlinkTransportType.tcp;
       unawaited(connectTcp(server, port, useTls: useTls));
     });
     return true;
+  }
+
+  void _cancelTcpRetry() {
+    _tcpRetryTimer?.cancel();
+    _tcpRetryTimer = null;
+    if (!_tcpRetryPending) return;
+    _tcpRetryPending = false;
+    _publishBusyState();
   }
 
   /// Disconnects the TCP connection.
@@ -848,6 +885,12 @@ class WinlinkClient {
     if (_transportType != WinlinkTransportType.tcp) return;
 
     _broker.logInfo('[WinlinkClient] Disconnecting TCP');
+    if (_currentState == WinlinkConnectionState.disconnected) {
+      _cancelTcpRetry();
+      _cleanupTcp();
+      return;
+    }
+    _cancelTcpRetry();
     _setConnectionState(WinlinkConnectionState.disconnecting);
     _tcpRunning = false;
     _cleanupTcp();
@@ -1367,6 +1410,7 @@ class WinlinkClient {
   void dispose() {
     if (!_disposed) {
       _broker.logInfo('[WinlinkClient] Disposing');
+      _cancelTcpRetry();
 
       if (_currentState != WinlinkConnectionState.disconnected) {
         if (_transportType == WinlinkTransportType.tcp) {

@@ -1216,6 +1216,42 @@ abstract class AppLocalizations {
   /// **'Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.'**
   String get settingsLocationInfo;
 
+  /// No description provided for @settingsLocationUsePhoneGps.
+  ///
+  /// In en, this message translates to:
+  /// **'Use this phone\'s GPS'**
+  String get settingsLocationUsePhoneGps;
+
+  /// No description provided for @settingsLocationUsePhoneGpsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Gets one current fix and saves it as your manual location for the radio, APRS-IS and satellite tracking.'**
+  String get settingsLocationUsePhoneGpsHint;
+
+  /// No description provided for @settingsLocationPhoneGpsTracking.
+  ///
+  /// In en, this message translates to:
+  /// **'Continuously track this phone\'s GPS'**
+  String get settingsLocationPhoneGpsTracking;
+
+  /// No description provided for @settingsLocationPhoneGpsTrackingHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Keeps updating your saved location while HTCommander runs, including in the background. This uses battery and may update radio or APRS position beacons when their send permissions are enabled.'**
+  String get settingsLocationPhoneGpsTrackingHint;
+
+  /// No description provided for @settingsLocationPhoneGpsSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Phone location saved.'**
+  String get settingsLocationPhoneGpsSuccess;
+
+  /// No description provided for @settingsLocationPhoneGpsFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not get phone location. Check location permission and turn on location services.'**
+  String get settingsLocationPhoneGpsFailure;
+
   /// No description provided for @settingsLocationSourceGps.
   ///
   /// In en, this message translates to:
@@ -1539,6 +1575,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Transcribes received radio audio to text. Runs fully offline on this device; audio is never written to disk.'**
   String get settingsSpeechToTextInfo;
+
+  /// No description provided for @settingsAndroidSttFallbackInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'On Android 12 and earlier, download an offline model below. Android 13+ uses the system recognizer when available; the downloadable model fallback requires a 64-bit ARM or x86_64 device.'**
+  String get settingsAndroidSttFallbackInfo;
+
+  /// No description provided for @settingsAndroidSttUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Offline speech recognition is unavailable: this device needs Android 13+ system support or a 64-bit ARM/x86_64 processor for the downloadable model fallback.'**
+  String get settingsAndroidSttUnsupported;
 
   /// No description provided for @settingsModel.
   ///
@@ -1996,6 +2044,18 @@ abstract class AppLocalizations {
   /// **'Enable AGWPE Server'**
   String get settingsEnableAgwpeServer;
 
+  /// No description provided for @settingsAgwpeLanAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow AGWPE clients on the LAN'**
+  String get settingsAgwpeLanAccess;
+
+  /// No description provided for @settingsAgwpeLanAccessDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'AGWPE has no password protection. Use only on a trusted LAN or VPN.'**
+  String get settingsAgwpeLanAccessDescription;
+
   /// Section title for the Home Assistant MQTT integration in Settings > Servers
   ///
   /// In en, this message translates to:
@@ -2332,6 +2392,12 @@ abstract class AppLocalizations {
   /// **'No compatible radio devices were found.\n\nMake sure your radio is powered on and Bluetooth is enabled.'**
   String get connectNoRadiosBody;
 
+  /// No description provided for @connectNoRadiosAndroidBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Android scans for supported BLE radios. Pair Classic radios in Android Bluetooth settings. Allow Nearby devices on Android 12 or later; BLE scanning on older versions may also require location permission.'**
+  String get connectNoRadiosAndroidBody;
+
   /// No description provided for @connectAllConnectedTitle.
   ///
   /// In en, this message translates to:
@@ -2353,8 +2419,26 @@ abstract class AppLocalizations {
   /// No description provided for @connectBluetoothOffBody.
   ///
   /// In en, this message translates to:
-  /// **'Bluetooth is not available or is turned off.\n\nPlease enable Bluetooth in your device settings and try again.'**
+  /// **'Bluetooth is not available or is turned off.\n\nPlease turn on Bluetooth in your device settings. On Android 12 or later, also allow HTCommander access to Nearby devices in app permissions, then try again.'**
   String get connectBluetoothOffBody;
+
+  /// No description provided for @connectOpenAppSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'App settings'**
+  String get connectOpenAppSettings;
+
+  /// No description provided for @connectOpenBluetoothSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth settings'**
+  String get connectOpenBluetoothSettings;
+
+  /// No description provided for @connectScanAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan again'**
+  String get connectScanAgain;
 
   /// No description provided for @radioConnectionTitle.
   ///

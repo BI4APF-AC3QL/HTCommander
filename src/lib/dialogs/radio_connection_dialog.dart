@@ -19,6 +19,7 @@ import '../radio/radio_transport.dart';
 class CompatibleDevice {
   String name;
   final String mac;
+  final BluetoothType bluetoothType;
 
   /// The original Bluetooth (discovered) name of the device, used as the
   /// default name placeholder when renaming.
@@ -36,6 +37,7 @@ class CompatibleDevice {
   CompatibleDevice({
     required this.name,
     required this.mac,
+    this.bluetoothType = BluetoothType.classic,
     this.bluetoothName = '',
     this.isEchoLink = false,
     this.isAllStar = false,
@@ -105,7 +107,12 @@ class RadioConnectionDialog extends StatefulWidget {
         .where((d) => d.isCompatibleRadio)
         .map(
           (d) =>
-              CompatibleDevice(name: d.name, mac: d.id, bluetoothName: d.name),
+              CompatibleDevice(
+                name: d.name,
+                mac: d.id,
+                bluetoothName: d.name,
+                bluetoothType: d.type,
+              ),
         )
         .toList();
   }
@@ -275,11 +282,21 @@ class _RadioConnectionDialogState extends State<RadioConnectionDialog> {
     return '';
   }
 
+  BluetoothType _bluetoothTypeForMac(String mac) {
+    for (final device in widget.devices) {
+      if (device.mac.toUpperCase() == mac.toUpperCase()) {
+        return device.bluetoothType;
+      }
+    }
+    return BluetoothType.classic;
+  }
+
   Future<void> _connectMac(String mac) async {
     final bluetoothService = BluetoothService();
     final deviceId = await bluetoothService.connectToRadio(
       mac,
       _friendlyNameForMac(mac),
+      bluetoothType: _bluetoothTypeForMac(mac),
     );
     if (deviceId == null &&
         mounted &&

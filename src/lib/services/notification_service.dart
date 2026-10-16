@@ -81,18 +81,26 @@ class NotificationService with WidgetsBindingObserver {
           .initialize(settings: settings)
           .timeout(const Duration(seconds: 8));
 
-      // Android 13+ requires a runtime permission to post notifications.
-      if (!kIsWeb && Platform.isAndroid) {
-        await _plugin
-            .resolvePlatformSpecificImplementation<
-                AndroidFlutterLocalNotificationsPlugin>()
-            ?.requestNotificationsPermission();
-      }
-
       WidgetsBinding.instance.addObserver(this);
       _available = true;
     } catch (_) {
       _available = false;
+    }
+  }
+
+  /// Requests Android notification access after the user enables message
+  /// notifications in Settings. Permission prompts must not interrupt startup.
+  Future<bool> requestAndroidPermission() async {
+    if (kIsWeb || !Platform.isAndroid) return true;
+    final android = _plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin
+    >();
+    if (android == null) return false;
+    try {
+      if (await android.areNotificationsEnabled() ?? false) return true;
+      return await android.requestNotificationsPermission() ?? false;
+    } catch (_) {
+      return false;
     }
   }
 

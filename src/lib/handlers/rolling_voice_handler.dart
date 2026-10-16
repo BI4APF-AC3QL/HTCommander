@@ -1,0 +1,266 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+import 'dart:typed_data';
+import 'package:path_provider/path_provider.dart';
+import '../services/android_server_lifecycle.dart';
+import '../services/data_broker.dart';
+import '../services/data_broker_client.dart';
+import '../services/recording/rolling_voice_recorder.dart';
+
+/// Local-only, opt-in received voice capture for the selected physical radio.
+class RollingVoiceHandler {
+  factory RollingVoiceHandler({
+    Future<String> Function()? folderProvider,
+    bool? isAndroid,
+    Future<void> Function()? startAndroidService,
+    Future<void> Function()? stopAndroidService,
+    Duration retryDelay = const Duration(seconds: 2),
+  }) => RollingVoiceHandler._(
+    folderProvider,
+    isAndroid ?? Platform.isAndroid,
+    startAndroidService,
+    stopAndroidService,
+    retryDelay,
+  );
+
+  RollingVoiceHandler._(
+    this.folderProvider,
+    this._isAndroid,
+    this._startAndroidService,
+    this._stopAndroidServiceOverride,
+    this.retryDelay,
+  ) : _androidServiceRetryDelay = retryDelay {
+    assert(
+      retryDelay > Duration.zero && retryDelay <= const Duration(minutes: 1),
+    );
+  }
+
+  final Future<String> Function()? folderProvider;
+  final bool _isAndroid;
+  final Future<void> Function()? _startAndroidService;
+  final Future<void> Function()? _stopAndroidServiceOverride;
+  final Duration retryDelay;
+  final _broker = DataBrokerClient();
+  final _androidLifecycle = AndroidServerLifecycle();
+  late final RollingVoiceRecorder _recorder = RollingVoiceRecorder(
+    onState: _state,
+  );
+  bool _disposed = false;
+  bool _androidServiceRequested = false;
+  Timer? _androidServiceRetryTimer;
+  Duration _androidServiceRetryDelay;
+  int _revision = 0;
+  Future<void> _transition = Future<void>.value();
+  String? _folder;
+  Map<String, Object?> _last = {};
+  void init() {
+    _broker.subscribeMultiple(
+      deviceId: 0,
+      names: ['RollingVoiceEnabled', 'RollingVoiceHours'],
+      callback: (_, _, _) => unawaited(_apply()),
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RollingVoicePreserve',
+      callback: (_, _, _) => _recorder.preserveLatest(),
+    );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'AudioDataAvailable',
+      callback: _audio,
+    );
+    unawaited(_apply());
+  }
+
+  int get _hours {
+    final h = _broker.getValue<int>(0, 'RollingVoiceHours', 24) ?? 24;
+    return h.clamp(1, 168);
+  }
+
+  void _state(Map<String, Object?> value) {
+    _last = {
+      ..._last,
+      ...value,
+      'starting': value['starting'] == true && value['running'] != true,
+    };
+    if (!_disposed) {
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'RollingVoiceStatus',
+        data: {
+          ..._last,
+          'enabled':
+              _broker.getValue<bool>(0, 'RollingVoiceEnabled', false) == true,
+          'retentionHours': _hours,
+        },
+        store: true,
+      );
+    }
+  }
+
+  Future<void> _apply() {
+    final revision = ++_revision;
+    _transition = _transition.catchError((Object _) {}).then((_) async {
+      await _applyRevision(revision);
+    });
+    return _transition;
+  }
+
+  Future<void> _applyRevision(int revision) async {
+    if (_disposed || revision != _revision) return;
+    final enabled =
+        _broker.getValue<bool>(0, 'RollingVoiceEnabled', false) == true;
+    if (!enabled) {
+      await _stopRecorder();
+      await _stopAndroidService();
+      if (revision == _revision) {
+        _state({'running': false, 'folder': _folder, 'retentionHours': _hours});
+      }
+      return;
+    }
+    _androidServiceRetryTimer?.cancel();
+    _androidServiceRetryTimer = null;
+    if (_recorder.ready) {
+      _recorder.setHours(_hours);
+      return;
+    }
+    _state({'running': false, 'starting': true});
+    if (_isAndroid && !_androidServiceRequested) {
+      // Mark the request before awaiting the platform call. Android may accept
+      // the start command even if the channel reports an error afterwards.
+      _androidServiceRequested = true;
+      try {
+        await (_startAndroidService?.call() ??
+            _androidLifecycle.start(reason: 'recording'));
+        _androidServiceRetryDelay = retryDelay;
+      } catch (_) {
+        if (revision == _revision) {
+          _state({'running': false, 'error': 'android_service_failed'});
+        }
+        await _stopAndroidService();
+        return;
+      }
+      // A newer disable or close request may have arrived while Android was
+      // bringing up the foreground service. The queued transition will stop it
+      // after this start finishes; do not continue into recorder setup here.
+      if (_disposed || revision != _revision) return;
+    }
+    try {
+      _folder ??= folderProvider != null
+          ? await folderProvider!()
+          : '${(await getApplicationSupportDirectory()).path}/rolling-voice';
+      if (_disposed || revision != _revision) return;
+      await _recorder.start(_folder!, _hours);
+    } catch (_) {
+      await _stopAndroidService();
+      if (revision == _revision) {
+        _state({'running': false, 'error': 'storage_open_failed'});
+      }
+    }
+  }
+
+  Future<void> _stopAndroidService() async {
+    if (!_isAndroid || !_androidServiceRequested) return;
+    try {
+      await (_stopAndroidServiceOverride?.call() ??
+          _androidLifecycle.stop(reason: 'recording'));
+      _androidServiceRequested = false;
+      _androidServiceRetryDelay = retryDelay;
+      _androidServiceRetryTimer?.cancel();
+      _androidServiceRetryTimer = null;
+    } on Object catch (error) {
+      _broker.logError('Android recording service could not stop: $error');
+      _scheduleAndroidServiceStopRetry();
+    }
+  }
+
+  Future<void> _stopRecorder() async {
+    try {
+      await _recorder.stop();
+    } on Object catch (error) {
+      // Still release Android's foreground-service request if recorder cleanup
+      // fails, for example after an isolate or platform-channel error.
+      _broker.logError('Rolling voice recorder could not stop: $error');
+    }
+  }
+
+  void _scheduleAndroidServiceStopRetry() {
+    if (_androidServiceRetryTimer != null || !_androidServiceRequested) return;
+    final delay = _androidServiceRetryDelay;
+    _androidServiceRetryDelay = Duration(
+      milliseconds: (_androidServiceRetryDelay.inMilliseconds * 2)
+          .clamp(
+            retryDelay.inMilliseconds,
+            const Duration(minutes: 1).inMilliseconds,
+          )
+          .toInt(),
+    );
+    _androidServiceRetryTimer = Timer(delay, () {
+      _androidServiceRetryTimer = null;
+      unawaited(_stopAndroidService());
+    });
+  }
+
+  void _audio(int id, String name, Object? value) {
+    if (_disposed ||
+        !_recorder.ready ||
+        id <= 1 ||
+        id >= 200 ||
+        value is! Map) {
+      return;
+    }
+    var target = _broker.getValue<int>(1, 'SelectedRadioDeviceId', -1) ?? -1;
+    if (target < 2) {
+      final radios = _broker.getValueDynamic(1, 'ConnectedRadios');
+      if (radios is List) {
+        for (final radio in radios.whereType<Map>()) {
+          final candidate = radio['DeviceId'] ?? radio['deviceId'];
+          if (candidate is int && candidate > 1 && candidate < 200) {
+            target = candidate;
+            break;
+          }
+        }
+      }
+    }
+    if (id != target ||
+        value['transmit'] == true ||
+        value['muted'] == true ||
+        value['channelName'] == 'APRS') {
+      return;
+    }
+    final usage = value['usage'];
+    if (usage != null && usage != 'Satellite') return;
+    final bytes = value['data'],
+        offset = value['offset'] ?? 0,
+        length = value['length'];
+    if (bytes is! Uint8List ||
+        offset is! int ||
+        length is! int ||
+        offset < 0 ||
+        length <= 0 ||
+        length.isOdd ||
+        offset + length > bytes.length) {
+      return;
+    }
+    _recorder.append(
+      id,
+      '${value['channelName'] ?? ''}',
+      Uint8List.sublistView(bytes, offset, offset + length),
+    );
+  }
+
+  Future<void> close() {
+    if (!_disposed) {
+      _disposed = true;
+      _revision++;
+      _broker.dispose();
+      _transition = _transition.catchError((Object _) {}).then((_) async {
+        await _stopRecorder();
+        await _stopAndroidService();
+      });
+    }
+    return _transition;
+  }
+
+  void dispose() => unawaited(close());
+}

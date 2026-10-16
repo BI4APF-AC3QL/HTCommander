@@ -1,6 +1,7 @@
 package com.meshcentral.htcommander
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -11,6 +12,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
@@ -31,9 +33,9 @@ import java.util.concurrent.ConcurrentHashMap
  *   - EventChannel  `com.htcommander/bluetooth_classic_audio`  (BS AOC audio)
  *
  * The control channel (SPP, 0x1101) carries GAIA framed commands. The audio
- * channel uses the vendor "BS AOC" 128-bit UUID. RFCOMM channel numbers are
- * resolved by UUID via SDP (Android's createRfcommSocketToServiceRecord), never
- * by a hardcoded channel number. See docs/radio-bluetooth.md.
+ * channel uses the vendor "BS AOC" 128-bit UUID. Connections try a previously
+ * successful RFCOMM channel, then UUID/SDP, then a bounded channel scan for
+ * radios whose firmware advertises an unusable SDP channel.
  */
 class BluetoothClassicPlugin(
     private val context: Context,
@@ -45,6 +47,19 @@ class BluetoothClassicPlugin(
         private const val METHOD_CHANNEL = "com.htcommander/bluetooth_classic"
         private const val DATA_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_data"
         private const val AUDIO_EVENT_CHANNEL = "com.htcommander/bluetooth_classic_audio"
+        private const val MAX_WRITE_BYTES = 64 * 1024
+        private const val CONNECT_ATTEMPT_TIMEOUT_MS = 8_000L
+        private const val CONNECT_TOTAL_TIMEOUT_MS = 45_000L
+        private const val WRITE_TIMEOUT_MS = 5_000L
+        private const val DISCONNECT_REQUESTED = "user_requested"
+        private const val DISCONNECT_REMOTE_CLOSED = "remote_closed"
+        private const val DISCONNECT_READ_FAILED = "read_failed"
+        private const val DISCONNECT_WRITE_FAILED = "write_failed"
+        private const val DISCONNECT_WRITE_TIMEOUT = "write_timeout"
+        private const val DISCONNECT_WRITE_QUEUE_OVERFLOW = "write_queue_overflow"
+        private const val DISCONNECT_CONTROL_QUEUE_OVERFLOW =
+            "control_queue_overflow"
+        private const val AUDIO_OVERRUN_REPORT_INTERVAL_MS = 5_000L
 
         // Standard Serial Port Profile (control / GAIA).
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
@@ -52,22 +67,21 @@ class BluetoothClassicPlugin(
         private val AUDIO_UUID: UUID = UUID.fromString("39144315-32FA-40DB-85ED-FBFEBA2D86E6")
 
         // Stable vendor SDP service UUIDs that uniquely identify a compatible
-        // radio. Devices are matched by these identifiers instead of by name,
-        // because names change across rebrands and can be truncated by the OS
-        // Bluetooth stack (e.g. "UV-P" instead of "UV-PRO"). Only the vendor
-        // "BS AOC" service is unique to these radios; generic services (SPP
-        // 0x1101, Generic Audio 0x1203) are intentionally excluded.
+        // radio. Generic services (SPP 0x1101, Generic Audio 0x1203) are
+        // intentionally excluded. Android sometimes has no cached SDP UUIDs
+        // for a bonded VR-N7500, so that exact model also has a narrow name
+        // fallback in listDevices() below.
         private val RADIO_SERVICE_UUIDS: Set<UUID> = setOf(AUDIO_UUID)
 
-        // Remembers the RFCOMM channel that last connected for a given radio
-        // address so reconnects can skip the channel scan. The radio's SDP
-        // record advertises an unstable channel, so the working channel is
-        // discovered by probing; caching it makes later connects near-instant.
-        private val lastGoodChannel = ConcurrentHashMap<String, Int>()
     }
 
-    /** Set by [MainActivity] so we can request runtime permissions. */
+    /** Updated by [MainActivity] so runtime permission prompts use the visible Activity. */
+    @Volatile
     var activity: Activity? = null
+
+    fun detachActivity(activity: Activity) {
+        if (this.activity === activity) this.activity = null
+    }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val methodChannel = MethodChannel(messenger, METHOD_CHANNEL)
@@ -79,6 +93,40 @@ class BluetoothClassicPlugin(
 
     private val controlConnections = ConcurrentHashMap<String, RfcommConnection>()
     private val audioConnections = ConcurrentHashMap<String, RfcommConnection>()
+    private val lifecycleLock = Any()
+    private val connectingSockets = ConcurrentHashMap.newKeySet<BluetoothSocket>()
+    private val connectionAttempts = RfcommConnectionAttempts()
+    // Persist successful channels privately so app/process restarts retain the
+    // fast reconnect path for radios whose SDP service channel is unstable.
+    private val rfcommChannelCache = RfcommChannelCache(
+        SharedPreferencesRfcommChannelStore(
+            context.getSharedPreferences(
+                "htcommander_rfcomm_channels",
+                Context.MODE_PRIVATE,
+            ),
+        ),
+    )
+    private val deviceQueryExecutor = BoundedSerialExecutor(
+        capacity = 2,
+        threadName = "HTCommander-BT-discovery",
+    )
+    // BluetoothSocket.close() can wait on the Android Bluetooth service. Keep
+    // disconnect cleanup away from Flutter's platform thread so a slow OEM
+    // Bluetooth stack cannot make the whole app appear unresponsive.
+    private val disconnectExecutor = BoundedSerialExecutor(
+        capacity = 16,
+        threadName = "HTCommander-BT-disconnect",
+    )
+    // Engine teardown can happen on the platform thread. Keep bulk socket
+    // closure and connection-attempt cancellation away from it because some
+    // OEM Bluetooth stacks block while servicing BluetoothSocket.close().
+    private val disposeExecutor = BoundedSerialExecutor(
+        capacity = 1,
+        threadName = "HTCommander-BT-dispose",
+    )
+
+    @Volatile
+    private var disposed = false
 
     init {
         methodChannel.setMethodCallHandler(this)
@@ -131,29 +179,93 @@ class BluetoothClassicPlugin(
         address.uppercase().replace('-', ':')
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (disposed) {
+            result.error("PLUGIN_DISPOSED", "Bluetooth bridge is shutting down", null)
+            return
+        }
         when (call.method) {
             "isAvailable" -> result.success(isAvailable())
-            "getPairedDevices" -> result.success(listDevices(filterCompatible = false))
-            "findCompatibleDevices" -> result.success(listDevices(filterCompatible = true))
-            "getDeviceNames" -> result.success(deviceNames())
+            "getPairedDevices" -> queryDevices(result, filterCompatible = false)
+            "findCompatibleDevices" -> queryDevices(result, filterCompatible = true)
+            "getDeviceNames" -> queryDevices(
+                result,
+                filterCompatible = false,
+                namesOnly = true,
+            )
             "connect" -> openRfcomm(call.argument<String>("address"), SPP_UUID, audio = false, result)
             "disconnect" -> {
-                disconnect(call.argument<String>("address"), audio = false)
-                result.success(true)
+                disconnect(
+                    call.argument<String>("address"),
+                    audio = false,
+                    result = result,
+                )
             }
-            "send" -> result.success(
-                send(call.argument<String>("address"), call.argument("data"), audio = false),
+            "send" -> send(
+                call.argument<String>("address"),
+                call.argument("data"),
+                audio = false,
+                result = result,
             )
             "connectAudio" -> connectAudio(call.argument<String>("address"), result)
             "disconnectAudio" -> {
-                disconnect(call.argument<String>("address"), audio = true)
-                result.success(true)
+                disconnect(
+                    call.argument<String>("address"),
+                    audio = true,
+                    result = result,
+                )
             }
-            "sendAudio" -> result.success(
-                send(call.argument<String>("address"), call.argument("data"), audio = true),
+            "sendAudio" -> send(
+                call.argument<String>("address"),
+                call.argument("data"),
+                audio = true,
+                result = result,
             )
             else -> result.notImplemented()
         }
+    }
+
+    /** Releases RFCOMM sockets and channel handlers when Flutter detaches. */
+    fun dispose() {
+        val controlsToClose: List<RfcommConnection>
+        val audioToClose: List<RfcommConnection>
+        val socketsToClose: List<BluetoothSocket>
+        synchronized(lifecycleLock) {
+            if (disposed) return
+            disposed = true
+            methodChannel.setMethodCallHandler(null)
+            dataEventChannel.setStreamHandler(null)
+            audioEventChannel.setStreamHandler(null)
+            dataSink = null
+            audioSink = null
+
+            controlsToClose = controlConnections.values.toList()
+            controlConnections.clear()
+            audioToClose = audioConnections.values.toList()
+            audioConnections.clear()
+
+            socketsToClose = connectingSockets.toList()
+            connectingSockets.clear()
+            deviceQueryExecutor.close()
+            disconnectExecutor.close()
+        }
+
+        val cleanup = {
+            runCatching { connectionAttempts.cancelAll() }
+            controlsToClose.forEach { runCatching { it.close(DISCONNECT_REQUESTED) } }
+            audioToClose.forEach { runCatching { it.close(DISCONNECT_REQUESTED) } }
+            socketsToClose.forEach { runCatching { it.close() } }
+        }
+        if (!disposeExecutor.execute(cleanup)) {
+            // There is only one dispose submission per plugin instance, but
+            // retain a last-resort path if the executor was unexpectedly shut.
+            Thread(cleanup, "HTCommander-BT-dispose-fallback").apply {
+                isDaemon = true
+                start()
+            }
+        }
+        // shutdown() drains the queued cleanup task without waiting for OEM
+        // socket close calls to return on the platform thread.
+        disposeExecutor.close()
     }
 
     private fun isAvailable(): Boolean {
@@ -161,40 +273,89 @@ class BluetoothClassicPlugin(
         return adapter.isEnabled
     }
 
-    private fun listDevices(filterCompatible: Boolean): List<Map<String, Any>> {
-        val adapter = bluetoothAdapter ?: return emptyList()
-        if (!hasConnectPermission()) {
-            requestConnectPermission()
-            return emptyList()
-        }
-        val devices = mutableListOf<Map<String, Any>>()
-        val seen = mutableSetOf<String>()
-        try {
-            for (device in adapter.bondedDevices ?: emptySet()) {
-                val name = device.name ?: continue
-                val address = normalizeAddress(device.address ?: continue)
-                if (seen.contains(address)) continue
-                val radioUuids = radioServiceUuids(device)
-                if (filterCompatible && radioUuids.isEmpty()) continue
-                seen.add(address)
-                devices.add(
-                    mapOf(
-                        "name" to name,
-                        "address" to address,
-                        "isPaired" to true,
-                        "isConnected" to controlConnections.containsKey(address),
-                        "serviceUuids" to radioUuids,
-                    ),
-                )
+    /**
+     * BluetoothManager queries may block on the Android Bluetooth service.
+     * Keep bonded-device and SDP enumeration off Flutter's UI thread, bound
+     * queued refreshes, then deliver MethodChannel results on the main thread.
+     */
+    private fun queryDevices(
+        result: MethodChannel.Result,
+        filterCompatible: Boolean,
+        namesOnly: Boolean = false,
+    ) {
+        val accepted = deviceQueryExecutor.execute {
+            if (disposed) return@execute
+            if (!hasConnectPermission()) {
+                mainHandler.post {
+                    if (disposed) return@post
+                    requestConnectPermission()
+                    result.success(emptyList<Any>())
+                }
+                return@execute
             }
-        } catch (e: SecurityException) {
-            requestConnectPermission()
+
+            try {
+                val devices = listDevices(filterCompatible)
+                val value: Any = if (namesOnly) {
+                    devices.mapNotNull { it["name"] as? String }
+                } else {
+                    devices
+                }
+                mainHandler.post {
+                    if (!disposed) result.success(value)
+                }
+            } catch (error: SecurityException) {
+                mainHandler.post {
+                    if (disposed) return@post
+                    requestConnectPermission()
+                    result.success(emptyList<Any>())
+                }
+            } catch (error: Exception) {
+                mainHandler.post {
+                    if (!disposed) {
+                        result.error(
+                            "DEVICE_QUERY_FAILED",
+                            error.message ?: "Could not enumerate Bluetooth devices",
+                            null,
+                        )
+                    }
+                }
+            }
         }
-        return devices
+        if (!accepted) {
+            result.error("BUSY", "Bluetooth device discovery is already busy", null)
+        }
     }
 
-    private fun deviceNames(): List<String> {
-        return listDevices(filterCompatible = false).mapNotNull { it["name"] as? String }
+    // queryDevices checks BLUETOOTH_CONNECT on the discovery worker immediately
+    // before reaching this code and converts a permission revocation race into
+    // an empty result. Android's lint does not follow that guard across the
+    // bounded-executor callback, so keep the suppression local to this helper.
+    @SuppressLint("MissingPermission")
+    private fun listDevices(filterCompatible: Boolean): List<Map<String, Any>> {
+        val adapter = bluetoothAdapter ?: return emptyList()
+        val devices = mutableListOf<Map<String, Any>>()
+        val seen = mutableSetOf<String>()
+        for (device in adapter.bondedDevices ?: emptySet()) {
+            val name = device.name ?: continue
+            val address = normalizeAddress(device.address ?: continue)
+            if (seen.contains(address)) continue
+            val radioUuids = radioServiceUuids(device)
+            if (filterCompatible && radioUuids.isEmpty() &&
+                !AndroidClassicRadioIdentity.isKnownN7500Name(name)
+            ) continue
+            seen.add(address)
+            devices.add(
+                mapOf(
+                    "name" to name,
+                    "address" to address,
+                    "isPaired" to true,
+                    "isConnected" to controlConnections.containsKey(address),
+                    "serviceUuids" to radioUuids,
+                ),
+            )
+        }
+        return devices
     }
 
     /**
@@ -204,13 +365,11 @@ class BluetoothClassicPlugin(
      * [BluetoothDevice.getUuids] uses the pairing-time SDP cache and does not
      * trigger a new SDP query. Returns an empty list when none match.
      */
+    // Called only from listDevices after its BLUETOOTH_CONNECT check; the
+    // caller catches SecurityException if the permission is revoked mid-query.
+    @SuppressLint("MissingPermission")
     private fun radioServiceUuids(device: BluetoothDevice): List<String> {
-        val uuids = try {
-            device.uuids
-        } catch (e: SecurityException) {
-            requestConnectPermission()
-            null
-        } ?: return emptyList()
+        val uuids = device.uuids ?: return emptyList()
         return uuids
             .map { it.uuid }
             .filter { it in RADIO_SERVICE_UUIDS }
@@ -250,8 +409,25 @@ class BluetoothClassicPlugin(
             return
         }
 
-        Thread {
+        val connectionAttempt = synchronized(lifecycleLock) {
+            if (disposed) null else connectionAttempts.begin(normalized, uuid)
+        }
+        if (connectionAttempt == null) {
+            if (disposed) {
+                result.error("PLUGIN_DISPOSED", "Bluetooth bridge is shutting down", null)
+                return
+            }
+            result.error(
+                "CONNECT_IN_PROGRESS",
+                "A connection attempt for this device and Bluetooth service is already running",
+                null,
+            )
+            return
+        }
+
+        Thread({
             var socket: BluetoothSocket? = null
+            var connection: RfcommConnection? = null
             try {
                 // Cancelling discovery speeds up RFCOMM connects, but it needs
                 // BLUETOOTH_SCAN on Android 12+. It is only an optimization, so
@@ -263,24 +439,72 @@ class BluetoothClassicPlugin(
                     }
                 }
                 val device = adapter.getRemoteDevice(normalized)
-                socket = connectSocket(device, uuid)
+                socket = connectSocket(device, uuid, connectionAttempt)
 
-                val connection = RfcommConnection(normalized, socket, audio)
-                map[normalized] = connection
-                connection.startReading()
-
-                postEvent(audio, "connected", normalized, null)
-                mainHandler.post { result.success(true) }
-            } catch (e: Exception) {
-                try {
-                    socket?.close()
-                } catch (_: IOException) {
+                val createdConnection = RfcommConnection(normalized, socket, audio)
+                connection = createdConnection
+                val existing = synchronized(lifecycleLock) {
+                    connectingSockets.remove(socket)
+                    connectionAttempt.release(socket)
+                    if (disposed || connectionAttempt.isCancelled) {
+                        null
+                    } else {
+                        map.putIfAbsent(normalized, createdConnection).also { previous ->
+                            if (previous == null) {
+                                // Serialize publication and reader startup with
+                                // disconnect so a cancelled attempt cannot emit
+                                // a late connected event or leave an orphan.
+                                postEvent(audio, "connected", normalized, null)
+                                createdConnection.startReading()
+                            }
+                        }
+                    }
                 }
+                if (connectionAttempt.isCancelled) {
+                    closeSocketInBackground(socket, normalized)
+                    mainHandler.post { if (!disposed) result.success(false) }
+                    return@Thread
+                }
+                if (disposed) {
+                    closeSocketInBackground(socket, normalized)
+                    return@Thread
+                }
+                if (existing != null) {
+                    closeSocketInBackground(socket, normalized)
+                    mainHandler.post { if (!disposed) result.success(true) }
+                    return@Thread
+                }
+                mainHandler.post { if (!disposed) result.success(true) }
+            } catch (e: Exception) {
+                connection?.let { created ->
+                    synchronized(lifecycleLock) {
+                        if (map.remove(normalized, created)) {
+                            created.closeInBackground(DISCONNECT_WRITE_FAILED)
+                        }
+                    }
+                }
+                socket?.let { candidate ->
+                    synchronized(lifecycleLock) {
+                        connectingSockets.remove(candidate)
+                        connectionAttempt.release(candidate)
+                    }
+                }
+                socket?.let { closeSocketInBackground(it, normalized) }
                 val message = "${e.javaClass.simpleName}: ${e.message ?: "RFCOMM connect failed"}"
                 mainHandler.post {
-                    result.error("CONNECT_FAILED", message, null)
+                    if (!disposed) {
+                        if (connectionAttempt.isCancelled) {
+                            result.success(false)
+                        } else {
+                            result.error("CONNECT_FAILED", message, null)
+                        }
+                    }
                 }
+            } finally {
+                connectionAttempts.finish(normalized, uuid, connectionAttempt)
             }
+        }, "HTCommander-BT-rfcomm-${normalized.takeLast(5)}").apply {
+            isDaemon = true
         }.start()
     }
 
@@ -302,47 +526,104 @@ class BluetoothClassicPlugin(
     private fun connectSocket(
         device: android.bluetooth.BluetoothDevice,
         uuid: UUID,
+        connectionAttempt: RfcommConnectionAttempts.Attempt,
     ): BluetoothSocket {
         var lastError: Exception? = null
         val address = device.address
+        val deadline = SystemClock.elapsedRealtime() + CONNECT_TOTAL_TIMEOUT_MS
 
         fun attempt(label: String, factory: () -> BluetoothSocket): BluetoothSocket? {
             var candidate: BluetoothSocket? = null
+            var timedConnectStarted = false
+            var timedConnectReturned = false
             return try {
+                if (disposed || connectionAttempt.isCancelled) {
+                    throw IOException("Bluetooth connection attempt was cancelled")
+                }
+                val remainingMs = deadline - SystemClock.elapsedRealtime()
+                if (remainingMs <= 0) {
+                    throw java.net.SocketTimeoutException(
+                        "RFCOMM connection attempts exceeded ${CONNECT_TOTAL_TIMEOUT_MS}ms",
+                    )
+                }
                 candidate = factory()
-                candidate.connect()
+                synchronized(lifecycleLock) {
+                    if (disposed || !connectionAttempt.track(candidate)) {
+                        throw IOException("Bluetooth connection attempt was cancelled")
+                    }
+                    connectingSockets.add(candidate)
+                }
+                timedConnectStarted = true
+                TimedSocketConnect.connect(
+                    socket = candidate,
+                    timeoutMs = minOf(CONNECT_ATTEMPT_TIMEOUT_MS, remainingMs),
+                    threadName = "HTCommander-BT-connect-${address.takeLast(5)}",
+                    connect = { it.connect() },
+                    close = { it.close() },
+                )
+                timedConnectReturned = true
+                if (connectionAttempt.isCancelled) {
+                    throw IOException("Bluetooth connection attempt was cancelled")
+                }
                 Log.i(TAG, "RFCOMM connected via $label")
                 candidate
             } catch (e: Exception) {
                 lastError = e
-                Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
-                try {
-                    candidate?.close()
-                } catch (_: IOException) {
+                if (!disposed && !connectionAttempt.isCancelled) {
+                    Log.w(TAG, "RFCOMM attempt $label failed: ${e.javaClass.simpleName}: ${e.message}")
                 }
-                try {
-                    Thread.sleep(250)
-                } catch (_: InterruptedException) {
+                candidate?.let { failedSocket ->
+                    synchronized(lifecycleLock) {
+                        connectingSockets.remove(failedSocket)
+                        connectionAttempt.release(failedSocket)
+                    }
+                    // TimedSocketConnect schedules cleanup for failures from
+                    // the blocking connect call. Handle sockets rejected before
+                    // connect, and ones cancelled just after connect, here.
+                    if (!timedConnectStarted || timedConnectReturned) {
+                        closeSocketInBackground(failedSocket, address)
+                    }
+                }
+                if (!disposed && !connectionAttempt.isCancelled &&
+                    SystemClock.elapsedRealtime() < deadline &&
+                    e !is java.net.SocketTimeoutException
+                ) {
+                    try {
+                        Thread.sleep(250)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return null
+                    }
                 }
                 null
             }
         }
 
-        val insecureByChannel = device.javaClass.getMethod(
-            "createInsecureRfcommSocket",
-            Int::class.javaPrimitiveType,
-        )
+        // This is a hidden Android API and may be absent or blocked by an OEM.
+        // It is only a compatibility fallback: failure to resolve it must not
+        // prevent the public UUID/SDP socket APIs below from being attempted.
+        val insecureByChannel = RfcommChannelMethod.find(device.javaClass)
+        if (insecureByChannel == null) {
+            Log.w(TAG, "Insecure RFCOMM channel fallback unavailable; trying SDP")
+        }
 
-        fun tryChannel(channel: Int): BluetoothSocket? =
-            attempt("insecure-ch$channel") {
-                insecureByChannel.invoke(device, channel) as BluetoothSocket
-            }?.also { lastGoodChannel[address] = channel }
+        fun tryChannel(channel: Int): BluetoothSocket? {
+            if (disposed || connectionAttempt.isCancelled) return null
+            val channelFactory = insecureByChannel ?: return null
+            return attempt("insecure-ch$channel") {
+                channelFactory.invoke(device, channel) as BluetoothSocket
+            }?.also { rfcommChannelCache.remember(address, uuid, channel) }
+        }
 
-        // 0. Fast path: reuse the channel that last worked for this radio so we
-        //    skip the full scan on reconnect.
-        val cachedChannel = lastGoodChannel[address]
+        // 0. Fast path: reuse the last working channel for this radio and
+        //    service so reconnects skip the full scan without mixing control
+        //    and audio service channels.
+        val cachedChannel = rfcommChannelCache.get(address, uuid)
         if (cachedChannel != null) {
             tryChannel(cachedChannel)?.let { return it }
+            if (insecureByChannel != null && !disposed && !connectionAttempt.isCancelled) {
+                rfcommChannelCache.forget(address, uuid, cachedChannel)
+            }
         }
 
         // 1. UUID/SDP-resolved sockets (channel comes from the radio's SDP
@@ -355,10 +636,13 @@ class BluetoothClassicPlugin(
         }?.let { return it }
 
         // 2. Probe fixed RFCOMM channels with an insecure socket. The radio's
-        //    SPP channel has been observed on 1 and 4; scan a small range and
-        //    take the first the radio accepts.
-        for (channel in 1..12) {
-            if (channel == cachedChannel) continue // already tried above
+        //    SPP channel has been observed on 1 and 4; try those before the
+        //    exhaustive fallback so channel 4 devices do not wait on 2 and 3.
+        for (channel in RfcommChannelCandidates.scanOrder(
+            cachedChannel = cachedChannel,
+            prioritizeControlChannels = uuid == SPP_UUID,
+        )) {
+            if (disposed || connectionAttempt.isCancelled) break
             tryChannel(channel)?.let { return it }
         }
 
@@ -374,28 +658,87 @@ class BluetoothClassicPlugin(
         throw lastError ?: IOException("RFCOMM connect failed")
     }
 
-    private fun disconnect(address: String?, audio: Boolean) {
-        if (address == null) return
-        val normalized = normalizeAddress(address)
-        val map = if (audio) audioConnections else controlConnections
-        map.remove(normalized)?.close()
+    private fun closeSocketInBackground(socket: BluetoothSocket, label: String) {
+        TimedSocketConnect.closeInBackground(
+            socket = socket,
+            threadName = "HTCommander-BT-close-${label.takeLast(5)}",
+            close = { it.close() },
+        )
     }
 
-    private fun send(address: String?, data: ByteArray?, audio: Boolean): Boolean {
-        if (address == null || data == null) return false
+    private fun disconnect(
+        address: String?,
+        audio: Boolean,
+        result: MethodChannel.Result,
+    ) {
+        if (address == null) {
+            result.success(true)
+            return
+        }
         val normalized = normalizeAddress(address)
+        val uuid = if (audio) AUDIO_UUID else SPP_UUID
         val map = if (audio) audioConnections else controlConnections
-        val connection = map[normalized] ?: return false
-        return connection.write(data)
+        val accepted = disconnectExecutor.execute {
+            // Socket close can block inside some OEM Bluetooth services. Do
+            // not hold lifecycleLock while cancelling a probe or closing an
+            // established socket: a new connect request is dispatched on the
+            // Android main thread and must be able to acquire that lock.
+            connectionAttempts.cancel(normalized, uuid)
+            removeAndCloseOutsideLock(
+                lock = lifecycleLock,
+                remove = { map.remove(normalized) },
+                close = { it.close(DISCONNECT_REQUESTED) },
+            )
+            mainHandler.post { result.success(true) }
+        }
+        if (!accepted) {
+            result.error(
+                "DISCONNECT_BUSY",
+                "Bluetooth cleanup queue is full; retry disconnect",
+                null,
+            )
+        }
     }
 
-    private fun postEvent(audio: Boolean, event: String, address: String, data: ByteArray?) {
+    private fun send(
+        address: String?,
+        data: ByteArray?,
+        audio: Boolean,
+        result: MethodChannel.Result,
+    ) {
+        if (address == null || data == null || data.size > MAX_WRITE_BYTES) {
+            result.success(false)
+            return
+        }
+        val normalized = normalizeAddress(address)
+        val map = if (audio) audioConnections else controlConnections
+        val connection = map[normalized]
+        if (connection == null) {
+            result.success(false)
+            return
+        }
+        val accepted = connection.enqueueWrite(data) { written ->
+            mainHandler.post { result.success(written) }
+        }
+        if (!accepted) result.success(false)
+    }
+
+    private fun postEvent(
+        audio: Boolean,
+        event: String,
+        address: String,
+        data: ByteArray? = null,
+        reason: String? = null,
+    ) {
+        if (disposed) return
         mainHandler.post {
+            if (disposed) return@post
             val sink = if (audio) audioSink else dataSink
             val payload = HashMap<String, Any>()
             payload["event"] = event
             payload["address"] = address
             if (data != null) payload["data"] = data
+            if (reason != null) payload["reason"] = reason
             sink?.success(payload)
         }
     }
@@ -406,9 +749,20 @@ class BluetoothClassicPlugin(
         private val socket: BluetoothSocket,
         private val audio: Boolean,
     ) {
+        private val writer = BoundedSerialExecutor(
+            capacity = 32,
+            threadName = "HTCommander-BT-${address.takeLast(5)}",
+        )
+        private val pendingData = BoundedBluetoothEventQueue(dropOldest = audio)
+
         @Volatile
         private var closed = false
         private var readThread: Thread? = null
+        private var dataDeliveryScheduled = false
+        private var audioOverrunReportPending = false
+        private var lastAudioOverrunReportAtMs = 0L
+        private var audioDropsReportedChunks = 0L
+        private var audioDropsReportedBytes = 0L
 
         fun startReading() {
             readThread = Thread {
@@ -416,56 +770,226 @@ class BluetoothClassicPlugin(
                 val input = try {
                     socket.inputStream
                 } catch (e: IOException) {
-                    handleClosed()
+                    handleClosed(DISCONNECT_READ_FAILED)
                     return@Thread
                 }
+                var closeReason = DISCONNECT_REMOTE_CLOSED
                 while (!closed) {
                     val count = try {
                         input.read(buffer)
                     } catch (e: IOException) {
+                        closeReason = DISCONNECT_READ_FAILED
                         break
                     }
                     if (count < 0) break
                     if (count > 0) {
-                        postEvent(audio, "data", address, buffer.copyOf(count))
+                        enqueueData(buffer.copyOf(count))
                     }
                 }
-                handleClosed()
+                handleClosed(closeReason)
             }.apply { isDaemon = true; start() }
         }
 
-        fun write(data: ByteArray): Boolean {
+        /**
+         * Keep the Android main-handler queue bounded while Flutter consumes
+         * RFCOMM events. Control data is lossless and disconnects on overflow;
+         * for audio, stale queued chunks are discarded to favor live playback.
+         */
+        private fun enqueueData(data: ByteArray) {
+            if (closed) return
+            when (pendingData.offer(data)) {
+                BoundedBluetoothEventQueue.OfferResult.REJECTED -> {
+                    if (!audio) {
+                        Log.w(TAG, "Control event queue overflow; closing RFCOMM connection")
+                        handleClosed(DISCONNECT_CONTROL_QUEUE_OVERFLOW)
+                    }
+                }
+                BoundedBluetoothEventQueue.OfferResult.ACCEPTED,
+                BoundedBluetoothEventQueue.OfferResult.DROPPED_OLDEST -> synchronized(this) {
+                    if (closed) {
+                        // close() may have cleared the queue between the read
+                        // loop's initial check and offer().
+                        pendingData.clear()
+                        return
+                    }
+                    if (audio &&
+                        pendingData.droppedChunkCount() > audioDropsReportedChunks
+                    ) {
+                        reportAudioOverrunIfNeeded()
+                    }
+                    if (dataDeliveryScheduled) return
+                    dataDeliveryScheduled = true
+                    mainHandler.post { deliverNextData() }
+                }
+            }
+        }
+
+        /** Reports intentionally discarded playback backlog to the Dart log. */
+        private fun reportAudioOverrunIfNeeded() {
+            if (audioOverrunReportPending) return
+            val now = SystemClock.elapsedRealtime()
+            val delayMs = if (lastAudioOverrunReportAtMs == 0L) {
+                0L
+            } else {
+                (AUDIO_OVERRUN_REPORT_INTERVAL_MS -
+                    (now - lastAudioOverrunReportAtMs)).coerceAtLeast(0L)
+            }
+            audioOverrunReportPending = true
+            mainHandler.postDelayed(
+                {
+                    val payload = synchronized(this) {
+                        audioOverrunReportPending = false
+                        if (closed) return@synchronized null
+                        val nowAtReport = SystemClock.elapsedRealtime()
+                        val sink = audioSink
+                        if (sink == null) {
+                            // Keep the throttle active but retain the counts so
+                            // a later listener can see the accumulated loss.
+                            lastAudioOverrunReportAtMs = nowAtReport
+                            return@synchronized null
+                        }
+                        val totalChunks = pendingData.droppedChunkCount()
+                        val totalBytes = pendingData.droppedByteCount()
+                        val droppedChunks = totalChunks - audioDropsReportedChunks
+                        val droppedBytes = totalBytes - audioDropsReportedBytes
+                        if (droppedChunks <= 0) return@synchronized null
+                        audioDropsReportedChunks = totalChunks
+                        audioDropsReportedBytes = totalBytes
+                        lastAudioOverrunReportAtMs = nowAtReport
+                        Pair(
+                            sink,
+                            mapOf(
+                                "event" to "buffer_overrun",
+                                "address" to address,
+                                "droppedChunks" to droppedChunks,
+                                "droppedBytes" to droppedBytes,
+                            ),
+                        )
+                    }
+                    if (payload != null) payload.first.success(payload.second)
+                },
+                delayMs,
+            )
+        }
+
+        private fun deliverNextData() {
+            if (closed) {
+                pendingData.clear()
+                synchronized(this) { dataDeliveryScheduled = false }
+                return
+            }
+            val data = pendingData.poll()
+            if (data == null) {
+                synchronized(this) {
+                    dataDeliveryScheduled = false
+                    // A reader may have enqueued between poll() and this lock.
+                    if (!closed && !pendingData.isEmpty()) {
+                        dataDeliveryScheduled = true
+                        mainHandler.post { deliverNextData() }
+                    }
+                }
+                return
+            }
+
+            val sink = if (audio) audioSink else dataSink
+            sink?.success(mapOf("event" to "data", "address" to address, "data" to data))
+
+            synchronized(this) {
+                if (closed) {
+                    pendingData.clear()
+                    dataDeliveryScheduled = false
+                } else if (pendingData.isEmpty()) {
+                    dataDeliveryScheduled = false
+                } else {
+                    // Drain one chunk per main-loop turn so a burst cannot hold
+                    // up Android input, notifications, or Flutter frame work.
+                    mainHandler.post { deliverNextData() }
+                }
+            }
+        }
+
+        fun enqueueWrite(data: ByteArray, completion: (Boolean) -> Unit): Boolean {
+            if (closed) return false
+            val payload = data.copyOf()
+            return writer.execute(
+                task = {
+                    val written = writeNow(payload)
+                    mainHandler.post { completion(written) }
+                },
+                onRejected = {
+                    // Dropping an ordered RFCOMM write while keeping the stream
+                    // connected leaves the protocol out of sync. Report a loss
+                    // so the transport can reconnect from a clean session.
+                    closeInBackground(DISCONNECT_WRITE_QUEUE_OVERFLOW)
+                },
+            )
+        }
+
+        private fun writeNow(data: ByteArray): Boolean {
             if (closed) return false
             return try {
-                val output = socket.outputStream
-                output.write(data)
-                output.flush()
-                true
-            } catch (e: IOException) {
+                TimedSocketConnect.run(
+                    socket = socket,
+                    timeoutMs = WRITE_TIMEOUT_MS,
+                    threadName = "HTCommander-BT-write-${address.takeLast(5)}",
+                    operation = { candidate ->
+                        candidate.outputStream.write(data)
+                        candidate.outputStream.flush()
+                    },
+                    close = { it.close() },
+                )
+                !closed
+            } catch (_: java.net.SocketTimeoutException) {
+                closeInBackground(DISCONNECT_WRITE_TIMEOUT)
+                false
+            } catch (_: IOException) {
+                // Do not let a slow OEM Bluetooth service block this writer
+                // while closing the socket. A failed/timed-out write invalidates
+                // the byte stream, so publish a disconnect and let the existing
+                // remembered-radio recovery path establish a clean session.
+                closeInBackground(DISCONNECT_WRITE_FAILED)
                 false
             }
         }
 
-        private fun handleClosed() {
-            if (closed) return
-            closed = true
-            val map = if (audio) audioConnections else controlConnections
-            map.remove(address)
-            try {
-                socket.close()
-            } catch (_: IOException) {
-            }
-            postEvent(audio, "disconnected", address, null)
+        @Synchronized
+        private fun handleClosed(reason: String) {
+            markClosed(reason, closeSocketInBackground = false, removeFromMap = true)
         }
 
-        fun close() {
+        @Synchronized
+        fun closeInBackground(reason: String = DISCONNECT_REQUESTED) {
+            markClosed(reason, closeSocketInBackground = true, removeFromMap = false)
+        }
+
+        @Synchronized
+        fun close(reason: String = DISCONNECT_REQUESTED) {
+            markClosed(reason, closeSocketInBackground = false, removeFromMap = false)
+        }
+
+        private fun markClosed(
+            reason: String,
+            closeSocketInBackground: Boolean,
+            removeFromMap: Boolean,
+        ) {
             if (closed) return
             closed = true
-            try {
-                socket.close()
-            } catch (_: IOException) {
+            pendingData.clear()
+            synchronized(this) { dataDeliveryScheduled = false }
+            if (removeFromMap) {
+                val map = if (audio) audioConnections else controlConnections
+                map.remove(address)
             }
-            postEvent(audio, "disconnected", address, null)
+            if (closeSocketInBackground) {
+                this@BluetoothClassicPlugin.closeSocketInBackground(socket, address)
+            } else {
+                try {
+                    socket.close()
+                } catch (_: IOException) {
+                }
+            }
+            writer.close()
+            postEvent(audio, "disconnected", address, reason = reason)
         }
     }
 }

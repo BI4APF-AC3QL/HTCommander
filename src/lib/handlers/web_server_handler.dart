@@ -12,19 +12,21 @@ build, it bridges the browser to the radio over a WebSocket:
     code via `WebSocketRadioTransport`.
   * Binary messages from a browser are the raw GATT command frames the radio
     expects; they are dispatched to the radio as `SendRawCommand`.
-  * Text control messages (`connect` / `disconnect`) drive the desktop radio
+  * Text control messages (`connect` / `disconnect`) drive the host radio
     connection, and the radio state is reported back as `wasconnected` /
     `connecting` / `disconnected`.
 
-The web server feature is desktop-only; on the web the [WebServer] facade
-resolves to an inert stub.
+Native desktop and Android builds can host remote clients; Android keeps the
+Flutter engine alive through its foreground service. On web, the [WebServer]
+facade resolves to an inert stub because a browser cannot host the listener.
 */
 
 import 'dart:convert';
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 import '../aprs/aprs_packet.dart';
 import '../models/aircraft.dart';
@@ -37,20 +39,31 @@ import '../services/host_bridge.dart';
 import '../services/web/web_server.dart';
 import '../services/web/remote_access_config.dart';
 import '../services/web/remote_radio_controller.dart';
+import '../services/web/remote_media.dart';
+import '../services/android_server_lifecycle.dart';
 import '../winlink/winlink_mail.dart';
 
 /// Manages the lifecycle of the [WebServer] and bridges WebSocket clients to the
 /// radio, based on app settings.
 class WebServerHandler {
-  WebServerHandler() : _broker = DataBrokerClient() {
-    _remote = RemoteRadioController(target: () => _targetRadioDeviceId);
+  WebServerHandler({this.reconcileAndroidServiceRecovery = false})
+    : _broker = DataBrokerClient() {
+    _remote = RemoteRadioController(
+      target: () => _targetRadioDeviceId,
+      clientCanControl: (id) => _server?.clientById(id)?.readOnly == false,
+      onControlChanged: _publishClients,
+    );
   }
   late final RemoteRadioController _remote;
   Timer? _rebindTimer;
 
   final DataBrokerClient _broker;
+  final bool reconcileAndroidServiceRecovery;
+  final AndroidServerLifecycle _androidServerLifecycle =
+      AndroidServerLifecycle();
 
   WebServer? _server;
+  int? get boundPort => _server?.boundPort;
   bool _enabled = false;
   int _port = 8080;
   bool _disposed = false;
@@ -82,10 +95,20 @@ class WebServerHandler {
   /// Browsers that opted in to receive the host's played audio, keyed by client
   /// id. Populated by `audioon` / cleared by `audiooff` / disconnect.
   final Map<int, WebSocketClient> _audioClients = <int, WebSocketClient>{};
+  final Map<int, RemoteMediaProfile> _mediaClients = {};
+  final RemoteReceiveEncoder _receiveEncoder = RemoteReceiveEncoder();
 
   /// Initializes the handler: loads settings, subscribes to changes, and starts
   /// the server if enabled.
   void init() {
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'SatelliteSupport',
+      callback: (_, _, value) {
+        if (value != 1) _remote.stopSatelliteTracking();
+      },
+    );
+    _publishClients();
     _enabled = (_broker.getValue<int>(0, 'webServerEnabled', 0) ?? 0) == 1;
     _port = _broker.getValue<int>(0, 'webServerPort', 8080) ?? 8080;
 
@@ -102,8 +125,72 @@ class WebServerHandler {
         'webServerPassword',
         'webServerPublicOrigin',
         'webServerAllowTransmit',
+        'webServerAllowAprs',
+        'webServerAllowPosition',
+        'webServerDefaultReadOnly',
+        'webServerRequireControlApproval',
       ],
       callback: _onSettingChanged,
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'webServerEmergencyStopped',
+      callback: (_, _, value) {
+        if (value == 1) {
+          _remote.recallControl();
+          _broker.dispatch(
+            deviceId: 0,
+            name: 'CancelRemoteAprs',
+            data: null,
+            store: false,
+          );
+        }
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteClientRevoke',
+      callback: (_, _, value) {
+        if (value is int && _server?.clientById(value) != null) {
+          _remote.audit(0, 'revokeLogin', 'accepted', affectedClient: value);
+          _server?.revokeClient(value);
+        }
+        _publishClients();
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteClientRole',
+      callback: (_, _, value) {
+        if (value is Map && value['id'] is int && value['readOnly'] is bool) {
+          _remote.audit(
+            0,
+            'readOnlyRole',
+            'accepted',
+            affectedClient: value['id'],
+          );
+          _server?.setClientReadOnly(value['id'], value['readOnly']);
+        }
+        _publishClients();
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteControlGrant',
+      callback: (_, _, value) {
+        if (value is! int ||
+            _server?.clientById(value) == null ||
+            _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
+          return;
+        }
+        _server!.setClientReadOnly(value, false);
+        _remote.grantControl(value);
+      },
+    );
+    _broker.subscribe(
+      deviceId: 0,
+      name: 'RemoteControlRecall',
+      callback: (_, _, _) => _remote.recallControl(),
     );
     _broker.subscribe(
       deviceId: 1,
@@ -146,7 +233,7 @@ class WebServerHandler {
       callback: _onWinlinkError,
     );
     // Mirror device-0 setting changes to connected browsers so the hosted web
-    // UI stays in sync with the desktop app's settings.
+    // UI stays in sync with the host app's settings.
     _broker.subscribe(
       deviceId: 0,
       name: DataBroker.allNames,
@@ -158,6 +245,13 @@ class WebServerHandler {
       name: 'State',
       callback: _onRadioState,
     );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'HtStatus',
+      callback: (id, _, value) {
+        if (!_disposed) _remote.observeRadioReport(id, value);
+      },
+    );
     // Raw radio response frames are relayed to browsers as binary messages.
     _broker.subscribe(
       deviceId: DataBroker.allDevices,
@@ -165,7 +259,13 @@ class WebServerHandler {
       callback: _onRawCommandRx,
     );
 
-    if (_enabled) _startServer();
+    if (_enabled) {
+      _startServer();
+    } else if (reconcileAndroidServiceRecovery &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(_androidServerLifecycle.stop());
+    }
   }
 
   /// The radio device bridged to WebSocket clients, or `-1` if none. Follows the
@@ -187,7 +287,21 @@ class WebServerHandler {
     if (_disposed) return;
     if (name == 'webServerEnabled') _enabled = data == 1;
     if (name == 'webServerPort' && data is int) _port = data;
-    _remote.release();
+    _remote.recallControl();
+    // Permission changes are read dynamically by RemoteRadioController and
+    // apply to the next command/state snapshot. Rebinding for them would drop
+    // every authenticated phone session even though the listener is unchanged.
+    if (!const {
+      'webServerEnabled',
+      'webServerPort',
+      'webServerRemoteEnabled',
+      'webServerPassword',
+      'webServerPublicOrigin',
+      'webServerDefaultReadOnly',
+      'webServerRequireControlApproval',
+    }.contains(name)) {
+      return;
+    }
     _rebindTimer?.cancel();
     _rebindTimer = Timer(const Duration(milliseconds: 200), () async {
       await _stopServer();
@@ -221,9 +335,15 @@ class WebServerHandler {
   /// disconnect/reconnect cycle makes the client re-fetch the radio's device
   /// info, channels, settings and status.
   void _repointBrowsers() {
+    _remote.recallControl();
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: null,
+      store: false,
+    );
     final server = _server;
     if (server == null || server.clientCount == 0) return;
-    _remote.release();
     server.broadcastText('disconnected');
     server.broadcastText(_stateMessageFor(_currentRadioState));
   }
@@ -293,8 +413,10 @@ class WebServerHandler {
 
   void _onRadioState(int deviceId, String name, Object? data) {
     if (_disposed) return;
+    if (data != 'Connected') _remote.observeRadioReport(deviceId, null);
     if (deviceId != _targetRadioDeviceId) return;
     final state = data is String ? data : 'Disconnected';
+    if (state != 'Connected') _remote.recallControl();
     _server?.broadcastText(_stateMessageFor(state));
   }
 
@@ -312,18 +434,20 @@ class WebServerHandler {
   // ---------------------------------------------------------------------------
 
   void _onClientConnected(WebSocketClient client) {
+    _mediaClients[client.id] = RemoteMediaProfile();
+    _publishClients();
     if (_disposed) return;
     // Report the current radio status to the freshly connected browser.
     client.sendText(_stateMessageFor(_currentRadioState));
     // Send the host's radio list so the browser shows the current radio name
     // and can offer a radio switcher.
     client.sendText(_encodeRadioList());
-    // Sync the host's device-0 settings so the web UI matches the desktop app.
+    // Sync the host's device-0 settings so the web UI matches the host app.
     _sendSettingsTo(client);
     // Seed the browser's Comms/APRS tabs with the host's stored history.
     _sendHistoryTo(client);
     // Send the host's authoritative Winlink mail so the browser's mail tab
-    // mirrors the desktop app rather than keeping its own (empty) store.
+    // mirrors the host app rather than keeping its own (empty) store.
     _sendMailTo(client);
     // Send the host's latest airplanes so the browser's map shows them.
     _sendAirplanesTo(client);
@@ -400,7 +524,7 @@ class WebServerHandler {
   }
 
   /// Broadcasts a device-0 setting change to every connected browser so the web
-  /// UI tracks the desktop app's settings live. Transient UI selection state is
+  /// UI tracks the host app's settings live. Transient UI selection state is
   /// excluded (see [HostBridge.isSyncedSetting]).
   void _onHostSettingChanged(int deviceId, String name, Object? data) {
     if (_disposed) return;
@@ -642,9 +766,28 @@ class WebServerHandler {
       try {
         final command = jsonDecode(message.substring(7));
         if (command is! Map) return;
-        final error = _remote.command(client.id, command);
+        String? error;
+        if (command['op'] == 'media') {
+          if (!RemoteMediaProfile.validCommand(command)) {
+            error = 'Invalid receive media preference.';
+          } else {
+            _mediaClients[client.id]!.lowBandwidth = command['lowBandwidth'];
+            _resetUnusedReceiveEncoder();
+          }
+        } else {
+          error = _remote.command(client.id, command);
+        }
+        _autoGrantNext();
         client.sendText(
-          'remote:${jsonEncode({'clientId': client.id, 'state': _remote.snapshot(), 'error': error})}',
+          'remote:${jsonEncode({
+            'clientId': client.id,
+            'state': {
+              ..._remote.snapshot(client.id),
+              'readOnly': client.readOnly,
+              'media': {...?_mediaClients[client.id]?.snapshot, 'hostOutput': client.outputSnapshot},
+            },
+            'error': error,
+          })}',
         );
       } catch (_) {
         client.sendText('remote:{"error":"Invalid remote control message."}');
@@ -657,7 +800,8 @@ class WebServerHandler {
             message.startsWith('winlinksync:') ||
             message == 'disconnect')) {
       client.sendText(
-        'log:Use the mobile remote page for radio controls; host settings stay on Windows.',
+        'log:Use the mobile remote page for radio controls; change host settings '
+        'in the HTCommander app running the radio.',
       );
       return;
     }
@@ -666,6 +810,12 @@ class WebServerHandler {
       return;
     }
     if (message.startsWith('selectradio:')) {
+      if (_remote.controlOwner != client.id) {
+        client.sendText(
+          'remote:{"error":"Request exclusive control before selecting a radio."}',
+        );
+        return;
+      }
       _applyClientSelectRadio(message.substring('selectradio:'.length));
       return;
     }
@@ -674,8 +824,9 @@ class WebServerHandler {
       return;
     }
     if (message == 'audiooff') {
-      _remote.disconnected(client.id);
+      _remote.command(client.id, {'op': 'pttStop'});
       _audioClients.remove(client.id);
+      _resetUnusedReceiveEncoder();
       return;
     }
     if (message.startsWith('mailop:')) {
@@ -700,8 +851,8 @@ class WebServerHandler {
       case 'connect':
         if (target < 0) {
           client.sendText(
-            'log:No radio connected. Connect a radio from the desktop '
-            'HTCommander application.',
+            'log:No radio connected. Connect a radio in the HTCommander app '
+            'running on the host device.',
           );
         } else {
           // Already connected; resend status so the browser fetches state.
@@ -724,8 +875,8 @@ class WebServerHandler {
       _remote.microphone(client.id, data);
       return;
     }
-    if (RemoteAccessConfig.current.enabled &&
-        !RemoteRadioController.safeRawCommand(data)) {
+    if (!RemoteRadioController.safeRawCommand(data)) {
+      _remote.audit(client.id, 'rawWrite', 'denied');
       client.sendText(
         'log:Raw write/TX commands are disabled; use the mobile remote page.',
       );
@@ -751,10 +902,50 @@ class WebServerHandler {
     final server = WebServer(_port, remoteConfig: RemoteAccessConfig.current);
     server.onClientConnected = _onClientConnected;
     server.onClientDisconnected = _onClientDisconnected;
+    server.onClientRoleChanged = (client) {
+      if (client.readOnly) {
+        _remote.disconnected(client.id);
+        _broker.dispatch(
+          deviceId: 0,
+          name: 'CancelRemoteAprs',
+          data: client.id,
+          store: false,
+        );
+      }
+      _publishClients();
+    };
     server.onTextMessage = _onTextMessage;
+    server.onWriteDenied = (client) =>
+        _remote.audit(client.id, 'writeDenied', 'denied');
     server.onBinaryMessage = _onBinaryMessage;
     _server = server;
-    server.start().then((ok) {
+    () async {
+      if (_disposed || !_enabled || _server != server) {
+        server.dispose();
+        return;
+      }
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          await _androidServerLifecycle.start();
+        } catch (error) {
+          await _androidServerLifecycle.stop();
+          if (_server == server) _server = null;
+          server.dispose();
+          _broker.dispatch(
+            deviceId: 0,
+            name: 'webServerStatus',
+            data: 'Android foreground service failed: $error',
+            store: false,
+          );
+          return;
+        }
+        if (_disposed || !_enabled || _server != server) {
+          await _androidServerLifecycle.stop();
+          server.dispose();
+          return;
+        }
+      }
+      final ok = await server.start();
       if (_disposed || _server != server) {
         server.dispose();
         return;
@@ -770,55 +961,140 @@ class WebServerHandler {
       if (!ok) {
         _server = null;
         server.dispose();
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+          await _androidServerLifecycle.stop();
+        }
       }
-    });
+    }();
     // Mirror all host PCM playback (radio, transmit, EchoLink, AllStarLink) to
-    // opted-in browsers. Desktop only; the web build never plays local audio.
+    // opted-in browsers. Native Android and desktop builds can play local audio.
     if (!kIsWeb) PcmPlayer.playbackTap = _onHostPcm;
   }
 
   Future<void> _stopServer() async {
     final server = _server;
-    if (server == null) return;
-    if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
-    _remote.release();
-    _audioClients.clear();
-    _server = null;
-    await server.stop();
-    server.dispose();
+    if (server != null) {
+      if (PcmPlayer.playbackTap == _onHostPcm) PcmPlayer.playbackTap = null;
+      _remote.recallControl();
+      _audioClients.clear();
+      _mediaClients.clear();
+      _receiveEncoder.reset();
+      _broker.dispatch(
+        deviceId: 0,
+        name: 'CancelRemoteAprs',
+        data: null,
+        store: false,
+      );
+      _server = null;
+      await server.stop();
+      server.dispose();
+    }
+    if ((!_enabled || _disposed) &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      await _androidServerLifecycle.stop();
+    }
   }
 
   void _onClientDisconnected(WebSocketClient client) {
+    _remote.audit(client.id, 'disconnect', 'released');
     if (_disposed) return;
     _remote.disconnected(client.id);
     _audioClients.remove(client.id);
+    _mediaClients.remove(client.id);
+    _resetUnusedReceiveEncoder();
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'CancelRemoteAprs',
+      data: client.id,
+      store: false,
+    );
+    _publishClients();
+  }
+
+  void _autoGrantNext() {
+    if (_remote.controlOwner != null ||
+        RemoteAccessConfig.current.requireControlApproval ||
+        _broker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1) {
+      return;
+    }
+    for (final id in _remote.controlRequests) {
+      if (_server?.clientById(id)?.readOnly == false) {
+        _remote.grantControl(id);
+        break;
+      }
+    }
+  }
+
+  void _publishClients() {
+    final requests = _remote.controlRequests;
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'RemoteClients',
+      data: [
+        for (final client
+            in _server?.clientSummaries ?? <Map<String, Object>>[])
+          {
+            ...client,
+            'ownsControl': _remote.controlOwner == client['id'],
+            'controlRequested': requests.contains(client['id']),
+            'queuePosition': requests.indexOf(client['id'] as int) + 1,
+          },
+      ],
+      store: true,
+    );
   }
 
   /// Mirrors a buffer of host playback audio to every opted-in browser as a
   /// tagged binary frame (`[magic, channels, rateLo, rateHi]` + PCM).
   void _onHostPcm(Int16List pcm, int sampleRate, int channels) {
     if (_disposed || _audioClients.isEmpty) return;
-    final pcmBytes = pcm.buffer.asUint8List(
-      pcm.offsetInBytes,
-      pcm.lengthInBytes,
-    );
-    final msg = Uint8List(4 + pcmBytes.length);
-    msg[0] = HostBridge.audioFrameMagic;
-    msg[1] = channels & 0xFF;
-    msg[2] = sampleRate & 0xFF;
-    msg[3] = (sampleRate >> 8) & 0xFF;
-    msg.setRange(4, msg.length, pcmBytes);
+    if (!RemoteReceiveEncoder.valid(pcm, sampleRate, channels)) {
+      _receiveEncoder.reset();
+      for (final id in _audioClients.keys) {
+        _mediaClients[id]?.skippedBlocks++;
+      }
+      return;
+    }
+    Uint8List? normal, low;
+    var lowEncoded = false;
     for (final client in _audioClients.values) {
-      client.sendBinary(msg);
+      final profile = _mediaClients[client.id]!;
+      Uint8List? packet;
+      if (profile.lowBandwidth) {
+        if (!lowEncoded) {
+          low = _receiveEncoder.low(pcm, sampleRate, channels);
+          lowEncoded = true;
+        }
+        packet = low;
+      } else {
+        normal ??= RemoteReceiveEncoder.normal(pcm, sampleRate, channels);
+        packet = normal;
+      }
+      if (packet != null) {
+        if (client.sendBinary(packet)) profile.submitted(packet.length);
+      }
+    }
+  }
+
+  void _resetUnusedReceiveEncoder() {
+    if (!_audioClients.keys.any(
+      (id) => _mediaClients[id]?.lowBandwidth == true,
+    )) {
+      _receiveEncoder.reset();
     }
   }
 
   /// Stops the server and releases all resources.
   void dispose() {
+    unawaited(close());
+  }
+
+  Future<void> close() async {
     if (_disposed) return;
     _disposed = true;
     _rebindTimer?.cancel();
-    _stopServer();
+    await _stopServer();
     _broker.dispose();
   }
 }

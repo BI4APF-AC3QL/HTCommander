@@ -19,15 +19,18 @@ typedef AgwpeFrameCallback = void Function(int clientId, AgwpeFrame frame);
 
 /// Inert web stub of the AGWPE TCP server.
 class AgwpeServer {
-  AgwpeServer(this.port);
+  AgwpeServer(this.port, {this.allowLanClients = false});
 
   final int port;
+  final bool allowLanClients;
 
   AgwpeClientCallback? onClientConnected;
   AgwpeClientCallback? onClientDisconnected;
   AgwpeFrameCallback? onFrameReceived;
 
   bool get isRunning => false;
+  String? get boundAddress => null;
+  int? get boundPort => null;
 
   Future<bool> start() async => false;
 

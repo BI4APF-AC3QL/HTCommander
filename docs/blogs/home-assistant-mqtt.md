@@ -25,9 +25,9 @@ Assistant expects, and turn inbound MQTT commands back into radio actions.
 
 This post explains how that bridge works and how to turn it on.
 
-> **Desktop only.** The Home Assistant bridge runs on the desktop builds of
-> HTCommander — **Windows, Linux, and macOS**. It is intentionally left out of
-> the iOS and Android builds, which don't run a background MQTT client.
+> **Supported on Windows, Linux, macOS, and Android.** Android keeps the MQTT
+> bridge running with its foreground radio/network service while it is enabled
+> and has a broker address configured. iOS and the browser build do not host the MQTT client.
 
 ---
 
@@ -75,7 +75,7 @@ each other directly — the broker sits in the middle.
 
 ```mermaid
 flowchart LR
-  Radio["Benshi radio\n(Bluetooth)"] <--> HTC["HTCommander\n(desktop)"]
+  Radio["Benshi radio\n(Bluetooth)"] <--> HTC["HTCommander\n(desktop / Android)"]
   HTC <-->|MQTT| Broker["MQTT broker\n(Mosquitto)"]
   Broker <-->|MQTT| HA["Home Assistant"]
   HA --> Dash["Dashboards &\nAutomations"]
@@ -176,15 +176,19 @@ Assistant and the HTCommander window stay in sync automatically: change the
 volume in the app and the dashboard follows; change it on the dashboard and the
 app follows.
 
-### Staying off mobile
+### Android background operation
 
-The bridge relies on a background MQTT client that opens a plain TCP socket
-(`dart:io`). That's fine on desktop but undesirable on phones, so the MQTT
-client is wired behind a small platform facade — the real socket-backed
-implementation on desktop, an inert stub elsewhere — and the bridge itself is
-only ever started on Windows, Linux, and macOS. The mobile builds compile
-cleanly and simply never carry the feature. It's the same pattern HTCommander
-already uses for its desktop-only Web and AGWPE servers.
+The MQTT client opens a TCP connection to the broker. On Android, enabling the
+Home Assistant bridge also keeps HTCommander's foreground radio/network service
+active, so the connection and radio state updates can continue while the app is
+in the background. Android shows an ongoing notification for active background
+work. This uses additional battery; turn off **Enable Home Assistant** when you
+no longer need the bridge. Android's battery-optimization policies can still
+vary by manufacturer.
+
+The bridge is not started in the iOS or browser builds. The web build cannot
+open the required raw MQTT socket, and iOS background execution is not provided
+by this integration.
 
 ---
 
@@ -212,7 +216,9 @@ The broker listens on TCP port **1883** by default.
 
 ### 2. Point HTCommander at the broker
 
-1. Open HTCommander on a desktop machine.
+1. Open HTCommander on a Windows, Linux, macOS, or Android device that is
+   connected to the radio. On Android, keep HTCommander installed on the phone
+   that is paired with the radio.
 2. Open **Settings** and select the **Servers** tab.
 3. In the **Home Assistant** section:
    - Tick **Enable Home Assistant**.
@@ -253,7 +259,9 @@ Connect a second radio and a second device appears alongside it.
 
 ## Status & caveats
 
-- The bridge is **desktop-only** (Windows / Linux / macOS) by design.
+- The bridge runs on **Windows, Linux, macOS, and Android**. Android keeps its
+  foreground service active while the bridge is enabled; iOS and web are not
+  supported.
 - Credentials are stored with the rest of HTCommander's settings; treat the
   machine running it as trusted, and prefer a dedicated, least-privilege MQTT
   user.
@@ -268,6 +276,7 @@ Connect a second radio and a second device appears alongside it.
 
 *This post describes the Home Assistant integration as it's being built. The
 NodeJS proof-of-concept it grew out of lives in
-[`reference/HtStation`](../../reference/HtStation); the HTCommander version folds
+[`reference/HtStation`](https://github.com/BI4APF-AC3QL/HTCommander/tree/main/reference/HtStation);
+the HTCommander version folds
 the same discovery-and-bridge idea into the app's DataBroker and multi-radio
 model.*
