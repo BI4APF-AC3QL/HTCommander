@@ -1,8 +1,39 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:htcommander/services/android_bluetooth_permissions.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const deviceChannel = MethodChannel('com.htcommander/android_device');
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, null);
+  });
+
+  test('opens Android Bluetooth settings through the native bridge', () async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+          calls.add(call);
+          return true;
+        });
+
+    expect(await AndroidBluetoothPermissions.openBluetoothSettings(), isTrue);
+    expect(calls, hasLength(1));
+    expect(calls.single.method, 'openBluetoothSettings');
+  });
+
+  test('reports Bluetooth settings launch failure without throwing', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(deviceChannel, (call) async {
+          throw PlatformException(code: 'ANDROID_BLUETOOTH_SETTINGS');
+        });
+
+    expect(await AndroidBluetoothPermissions.openBluetoothSettings(), isFalse);
+  });
+
   group('Android Bluetooth Connect permission', () {
     test(
       'does not start a radio connection until permission is granted',

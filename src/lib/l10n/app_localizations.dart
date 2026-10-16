@@ -2428,6 +2428,12 @@ abstract class AppLocalizations {
   /// **'App settings'**
   String get connectOpenAppSettings;
 
+  /// No description provided for @connectOpenBluetoothSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Bluetooth settings'**
+  String get connectOpenBluetoothSettings;
+
   /// No description provided for @radioConnectionTitle.
   ///
   /// In en, this message translates to:

@@ -429,6 +429,7 @@
   "connectBluetoothOffTitle": "ब्लूटूथ उपलब्ध नहीं है",
   "connectBluetoothOffBody": "ब्लूटूथ उपलब्ध नहीं है या बंद है।\n\nडिवाइस सेटिंग में ब्लूटूथ चालू करें। Android 12 या उसके बाद के संस्करण में ऐप अनुमतियों में HTCommander को आस-पास के डिवाइस देखने की अनुमति भी दें, फिर पुनः प्रयास करें।",
   "connectOpenAppSettings": "ऐप सेटिंग खोलें",
+  "connectOpenBluetoothSettings": "ब्लूटूथ सेटिंग",
 
   "radioConnectionTitle": "रेडियो कनेक्शन",
   "radioConnectionEmpty": "कोई संगत रेडियो नहीं मिला।\nसुनिश्चित करें कि आपका रेडियो चालू है और ब्लूटूथ सक्षम है।",

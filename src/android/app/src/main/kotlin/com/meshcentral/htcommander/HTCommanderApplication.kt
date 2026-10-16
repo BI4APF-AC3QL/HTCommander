@@ -1,6 +1,8 @@
 package com.meshcentral.htcommander
 
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.util.Log
 import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.embedding.engine.FlutterEngine
@@ -56,6 +58,21 @@ class HTCommanderApplication : android.app.Application() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getSdkInt" -> result.success(android.os.Build.VERSION.SDK_INT)
+                    "openBluetoothSettings" -> {
+                        try {
+                            appContext.startActivity(
+                                Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                            result.success(true)
+                        } catch (error: Exception) {
+                            result.error(
+                                "ANDROID_BLUETOOTH_SETTINGS",
+                                error.message ?: "Could not open Bluetooth settings",
+                                null,
+                            )
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }

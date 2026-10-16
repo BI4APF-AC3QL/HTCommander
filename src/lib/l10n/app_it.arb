@@ -421,6 +421,7 @@
   "connectBluetoothOffTitle": "Bluetooth non disponibile",
   "connectBluetoothOffBody": "Il Bluetooth non è disponibile o è disattivato.\n\nAttiva il Bluetooth nelle impostazioni del dispositivo. Su Android 12 o versioni successive, consenti anche a HTCommander di accedere ai dispositivi nelle vicinanze nelle autorizzazioni dell'app, quindi riprova.",
   "connectOpenAppSettings": "Apri le impostazioni dell’app",
+  "connectOpenBluetoothSettings": "Impostazioni Bluetooth",
 
   "radioConnectionTitle": "Connessione radio",
   "radioConnectionEmpty": "Nessuna radio compatibile trovata.\nAssicurati che la tua radio sia accesa e che il Bluetooth sia abilitato.",

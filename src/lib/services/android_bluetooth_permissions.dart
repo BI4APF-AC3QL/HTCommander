@@ -15,6 +15,17 @@ abstract final class AndroidBluetoothPermissions {
     }
   }
 
+  /// Opens Android's system Bluetooth settings so Classic radios can be paired.
+  /// Returns false when the Android bridge is unavailable or cannot launch it.
+  static Future<bool> openBluetoothSettings() async {
+    try {
+      return await _deviceChannel.invokeMethod<bool>('openBluetoothSettings') ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<bool> ensureConnect({
     required Future<PermissionStatus> Function() status,
     required Future<PermissionStatus> Function() request,

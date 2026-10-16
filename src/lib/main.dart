@@ -43,6 +43,7 @@ import 'handlers/agwpe_handler.dart';
 import 'handlers/android_network_services_handler.dart';
 import 'handlers/android_phone_gps_handler.dart';
 import 'services/android_server_lifecycle.dart';
+import 'services/android_bluetooth_permissions.dart';
 import 'services/retrying_service_lease.dart';
 import 'services/radio_reconnect_controller.dart';
 import 'handlers/web_server_handler.dart';
@@ -5154,12 +5155,16 @@ class _MainFormState extends State<MainForm>
       setState(() {
         _statusText = AppLocalizations.of(context).statusNoCompatibleRadios;
       });
-      _showInfoDialog(
-        AppLocalizations.of(context).connectNoRadiosTitle,
-        (!kIsWeb && Platform.isAndroid)
-            ? AppLocalizations.of(context).connectNoRadiosAndroidBody
-            : AppLocalizations.of(context).connectNoRadiosBody,
-      );
+      final l10n = AppLocalizations.of(context);
+      final title = l10n.connectNoRadiosTitle;
+      final message = (!kIsWeb && Platform.isAndroid)
+          ? l10n.connectNoRadiosAndroidBody
+          : l10n.connectNoRadiosBody;
+      if (!kIsWeb && Platform.isAndroid) {
+        _showAndroidNoRadiosDialog(title, message);
+      } else {
+        _showInfoDialog(title, message);
+      }
       return;
     }
 
@@ -5319,6 +5324,11 @@ class _MainFormState extends State<MainForm>
         actions: [
           if (!kIsWeb && Platform.isAndroid)
             TextButton(
+              onPressed: _openAndroidBluetoothSettings,
+              child: Text(l10n.connectOpenBluetoothSettings),
+            ),
+          if (!kIsWeb && Platform.isAndroid)
+            TextButton(
               onPressed: () async {
                 Navigator.of(context).pop();
                 await openAppSettings();
@@ -5332,6 +5342,36 @@ class _MainFormState extends State<MainForm>
         ],
       ),
     );
+  }
+
+  void _showAndroidNoRadiosDialog(String title, String message) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final l10n = AppLocalizations.of(dialogContext);
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: _openAndroidBluetoothSettings,
+              child: Text(l10n.connectOpenBluetoothSettings),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.commonOk),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openAndroidBluetoothSettings() async {
+    final opened = await AndroidBluetoothPermissions.openBluetoothSettings();
+    if (!opened) {
+      _broker.logError('[Android] Could not open Bluetooth settings');
+    }
   }
 
   void _showInfoDialog(String title, String message) {

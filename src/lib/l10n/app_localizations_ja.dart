@@ -1280,6 +1280,9 @@ class AppLocalizationsJa extends AppLocalizations {
   String get connectOpenAppSettings => 'アプリの設定を開く';
 
   @override
+  String get connectOpenBluetoothSettings => 'Bluetooth 設定';
+
+  @override
   String get radioConnectionTitle => '無線機の接続';
 
   @override
