@@ -15,6 +15,10 @@ internal class RadioServiceReasonState {
     val shouldKeepWifiActive: Boolean
         get() = REASON_SERVER in activeReasons
 
+    /** Bluetooth radio sessions and retries use Android's connected-device FGS type. */
+    val hasActiveBluetoothSession: Boolean
+        get() = REASON_RADIO in activeReasons || REASON_RADIO_RECONNECT in activeReasons
+
     companion object {
         const val REASON_RADIO = "radio"
         const val REASON_RADIO_RECONNECT = "radioReconnect"

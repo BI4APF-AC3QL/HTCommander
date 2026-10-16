@@ -282,6 +282,7 @@ class RadioWebServerService : Service() {
         val types = RadioServiceForegroundTypes.forSdk(
             Build.VERSION.SDK_INT,
             reasonState.isActive(RadioServiceReasonState.REASON_MICROPHONE),
+            reasonState.hasActiveBluetoothSession,
         )
         if (types != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(), types)

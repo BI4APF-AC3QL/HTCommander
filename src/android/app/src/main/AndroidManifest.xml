@@ -21,6 +21,9 @@
     <!-- Keep connected radios and explicitly enabled server tasks available
          while the Android app is in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Use the platform's connected-device service type while a Bluetooth
+         radio is connected or an explicit reconnect attempt is active. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
@@ -69,7 +72,7 @@
             android:name=".RadioWebServerService"
             android:description="@string/radio_web_server_service_description"
             android:exported="false"
-            android:foregroundServiceType="specialUse|microphone"
+            android:foregroundServiceType="connectedDevice|specialUse|microphone"
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
