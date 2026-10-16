@@ -51,10 +51,14 @@ class _LinkDiagnosticsDialogState extends State<LinkDiagnosticsDialog> {
   @override
   Widget build(BuildContext context) {
     final data = RemoteLinkStatus.snapshot(_radioId);
+    final contentWidth = (MediaQuery.sizeOf(context).width - 40)
+        .clamp(0.0, 540.0)
+        .toDouble();
     return AlertDialog(
       title: const Text('链路诊断 / Link diagnostics'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       content: SizedBox(
-        width: 540,
+        width: contentWidth,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
