@@ -295,10 +295,104 @@ class _ReadableErrorWidget extends StatelessWidget {
   }
 }
 
+/// Draws a responsive Android startup screen while services finish preparing.
+/// The real app is inserted only after its handlers and stores are ready, so
+/// the splash cannot send controls to an uninitialized radio service.
+class _AndroidStartupGate extends StatelessWidget {
+  const _AndroidStartupGate({required this.initialization});
+
+  final Future<Widget> initialization;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Widget>(
+      future: initialization,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            home: _ReadableErrorWidget(
+              details: FlutterErrorDetails(
+                exception: snapshot.error!,
+                stack: snapshot.stackTrace,
+              ),
+            ),
+          );
+        }
+        final app = snapshot.data;
+        if (app != null) return app;
+
+        final isChinese =
+            WidgetsBinding.instance.platformDispatcher.locale.languageCode ==
+            'zh';
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            brightness: Brightness.dark,
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF4F83FF),
+              brightness: Brightness.dark,
+            ),
+          ),
+          home: Scaffold(
+            backgroundColor: const Color(0xFF10141A),
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.settings_input_antenna_rounded,
+                    size: 48,
+                    color: Color(0xFF8BAAFF),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'HTCommander',
+                    style: TextStyle(fontSize: 21, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 20),
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    isChinese ? '正在准备电台服务…' : 'Preparing radio services…',
+                    style: const TextStyle(
+                      color: Color(0xFFBEC6D4),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 /// Application entry point, executed inside the guarded zone set up by [main].
 Future<void> _startApp(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && Platform.isAndroid) {
+    final initialization = _initializeApplication(args).catchError((
+      Object error,
+      StackTrace stack,
+    ) {
+      CrashLogger.instance.logError('Application startup failed', error, stack);
+      Error.throwWithStackTrace(error, stack);
+    });
+    runApp(_AndroidStartupGate(initialization: initialization));
+    return;
+  }
 
+  runApp(await _initializeApplication(args));
+}
+
+Future<Widget> _initializeApplication(List<String> args) async {
   // Recover settings/data orphaned by the Windows CompanyName rename
   // (com.example -> com.meshcentral). Must run before anything reads or writes
   // the (new) application-support folder, i.e. before the crash log and the
@@ -309,7 +403,10 @@ Future<void> _startApp(List<String> args) async {
   // Resolve the on-disk crash log as early as possible so any failure during
   // the initialization below is still recorded. Works on every non-web
   // platform (Windows, macOS, Linux, Android, iOS); a no-op on web.
-  await CrashLogger.instance.init();
+  // CrashLogger buffers early records until its path resolves, so starting it
+  // here preserves diagnostics without making the first app frame wait on the
+  // platform path-provider call and log rotation.
+  unawaited(CrashLogger.instance.init());
 
   // Some widgets (e.g. dropdowns showing long serial port names) can
   // legitimately overflow their available width. In those cases it's acceptable
@@ -340,10 +437,6 @@ Future<void> _startApp(List<String> args) async {
   // Initialize the DataBroker for cross-component communication
   await DataBroker.initialize();
 
-  // Load encrypted secrets (e.g. the RepeaterBook token) into the broker and
-  // migrate any legacy plaintext copies. Must run before settings are read.
-  await DataBroker.loadSecrets();
-
   // When this is the web build served by the desktop app, device-0 settings are
   // read from and written to the host over the bridge instead of being saved in
   // the browser. Enable this before handlers read any settings.
@@ -365,6 +458,9 @@ Future<void> _startApp(List<String> args) async {
       if (controller.arguments.isNotEmpty) {
         final argument =
             jsonDecode(controller.arguments) as Map<String, dynamic>;
+        // Detached windows still load secrets before they read the broker-backed
+        // settings snapshot, but do not wait for this on the main-window path.
+        await DataBroker.loadSecrets();
         // Mark this as a child window so tabs don't show "Detach..." option.
         windowService.isChildWindow = true;
         // Become a data-broker client bound to the host (main) window and pull
@@ -377,8 +473,7 @@ Future<void> _startApp(List<String> args) async {
         LocaleController.instance.load();
         // Apply the persisted theme so detached windows match the main window.
         ThemeController.instance.load();
-        runApp(SubWindowApp(windowController: controller, argument: argument));
-        return;
+        return SubWindowApp(windowController: controller, argument: argument);
       }
     } catch (e) {
       // Not a sub-window, continue to main app
@@ -393,10 +488,24 @@ Future<void> _startApp(List<String> args) async {
   // to windows whose engines have been destroyed.
   windowService.initHost();
 
+  // These local stores do not depend on one another. Start them together so
+  // secure-storage and SQLite platform calls overlap instead of serializing the
+  // main-window startup path. The torrent handler still waits for its store
+  // before it is registered below.
+  final secretsInitialization = DataBroker.loadSecrets();
+  final databaseInitialization = AppDatabase.open();
+  final torrentStore = HostBridge.isHosted ? null : TorrentStore();
+  final torrentStoreInitialization = torrentStore == null
+      ? Future<void>.value()
+      : torrentStore.init();
+
   // Apply the persisted application language (falls back to the OS locale).
   LocaleController.instance.load();
   // Apply the persisted theme mode (falls back to the OS setting).
   ThemeController.instance.load();
+
+  // Secrets must be in memory before handlers read settings or credentials.
+  await secretsInitialization;
 
   // Ensure the built-in protected APRS routes ("Standard" and "None") always
   // exist before any component reads the APRS route configuration.
@@ -405,7 +514,7 @@ Future<void> _startApp(List<String> args) async {
   // Open the shared SQLite database (host/main process only) and migrate any
   // legacy flat-file history into it before the stores below load. No-op on web
   // and on detached sub-windows (they returned above as broker clients).
-  await AppDatabase.open();
+  await databaseInitialization;
 
   // Register the frame deduplicator so that duplicate DataFrame events received
   // by multiple radios are collapsed into single UniqueDataFrame events.
@@ -584,9 +693,8 @@ Future<void> _startApp(List<String> args) async {
   // Skipped on the hosted web build: the desktop host serves torrent requests,
   // so a second instance here would answer them twice over the shared radio.
   if (!HostBridge.isHosted) {
-    final torrentStore = TorrentStore();
-    await torrentStore.init();
-    final torrentHandler = TorrentHandler(store: torrentStore);
+    await torrentStoreInitialization;
+    final torrentHandler = TorrentHandler(store: torrentStore!);
     torrentHandler.init();
     DataBroker.addDataHandler('TorrentHandler', torrentHandler);
   }
@@ -698,8 +806,7 @@ Future<void> _startApp(List<String> args) async {
   // messages addressed to this station pop up when the app is backgrounded or
   // its window is unfocused.
   await NotificationService.instance.init();
-
-  runApp(const HTCommanderApp());
+  return const HTCommanderApp();
 }
 
 /// Best-effort forward of an error string into the Debug tab log. The broker may
