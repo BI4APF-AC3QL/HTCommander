@@ -49,6 +49,15 @@ typedef WebSocketTextCallback =
 typedef WebSocketBinaryCallback =
     void Function(WebSocketClient client, Uint8List data);
 
+typedef NetworkAddressProvider = Future<Iterable<String>> Function();
+
+Future<Iterable<String>> _networkInterfaceAddresses() async {
+  final interfaces = await NetworkInterface.list();
+  return interfaces
+      .expand((interface) => interface.addresses)
+      .map((address) => address.address);
+}
+
 /// A single connected WebSocket client.
 class WebSocketClient {
   WebSocketClient(
@@ -112,16 +121,22 @@ class WebServer {
     this.port, {
     RemoteAccessConfig? remoteConfig,
     AssetBundle? assetBundle,
+    NetworkAddressProvider? networkAddressProvider,
   }) : remoteConfig = remoteConfig ?? const RemoteAccessConfig(),
        _assetBundle = assetBundle ?? rootBundle,
+       _networkAddressProvider =
+           networkAddressProvider ?? _networkInterfaceAddresses,
        _broker = DataBrokerClient() {
     _auth = RemoteWebAuth(this.remoteConfig.password);
   }
 
   final RemoteAccessConfig remoteConfig;
   final AssetBundle _assetBundle;
+  final NetworkAddressProvider _networkAddressProvider;
   late final RemoteWebAuth _auth;
   final Set<String> _allowedHosts = {'localhost', '127.0.0.1', '::1'};
+  Future<void>? _allowedHostsRefresh;
+  DateTime? _lastUnknownHostRefresh;
   final Map<int, Timer> _sessionChecks = {};
   final Map<int, String?> _clientSessions = {};
 
@@ -231,11 +246,7 @@ class WebServer {
         throw StateError(remoteConfig.validationError!);
       }
       if (remoteConfig.enabled) {
-        for (final interface in await NetworkInterface.list()) {
-          _allowedHosts.addAll(interface.addresses.map((a) => a.address));
-        }
-        final external = remoteConfig.externalOrigin;
-        if (external != null) _allowedHosts.add(Uri.parse(external).host);
+        await _refreshAllowedHosts();
       }
       final listener = await _bindListener();
       if (generation != _generation) {
@@ -275,6 +286,42 @@ class WebServer {
       );
     } on SocketException {
       return HttpServer.bind(InternetAddress.anyIPv4, port);
+    }
+  }
+
+  Future<void> _refreshAllowedHosts({bool forUnknownHost = false}) async {
+    if (!remoteConfig.enabled) return;
+    final currentRefresh = _allowedHostsRefresh;
+    if (currentRefresh != null) {
+      await currentRefresh;
+      return;
+    }
+    if (forUnknownHost) {
+      final now = DateTime.now();
+      final lastRefresh = _lastUnknownHostRefresh;
+      if (lastRefresh != null &&
+          now.difference(lastRefresh) < const Duration(seconds: 1)) {
+        return;
+      }
+      // An unknown Host header must never trigger an unbounded interface scan.
+      // Coalesce concurrent probes and cap refreshes from arbitrary hosts.
+      _lastUnknownHostRefresh = now;
+    }
+
+    final refresh = Completer<void>();
+    _allowedHostsRefresh = refresh.future;
+    try {
+      final addresses = await _networkAddressProvider();
+      final refreshed = <String>{'localhost', '127.0.0.1', '::1'}
+        ..addAll(addresses.map((address) => address.toLowerCase()));
+      final external = remoteConfig.externalOrigin;
+      if (external != null) refreshed.add(Uri.parse(external).host);
+      _allowedHosts
+        ..clear()
+        ..addAll(refreshed);
+    } finally {
+      refresh.complete();
+      _allowedHostsRefresh = null;
     }
   }
 
@@ -330,7 +377,21 @@ class WebServer {
     // conflicts with the same-origin check below. Keep same-site origins
     // available without disclosing referrers to other sites.
     request.response.headers.set('Referrer-Policy', 'same-origin');
-    if (!_allowedHosts.contains(host) ||
+    var hostAllowed = _allowedHosts.contains(host);
+    if (!hostAllowed &&
+        remoteConfig.enabled &&
+        InternetAddress.tryParse(host) != null) {
+      try {
+        // Android can move between Wi-Fi/VPN interfaces without restarting the
+        // server. Refresh only for an IP-literal Host that is not already
+        // trusted, then accept it only if the OS currently assigns it locally.
+        await _refreshAllowedHosts(forUnknownHost: true);
+      } catch (_) {
+        // A failed refresh leaves the previous, narrower allowlist in place.
+      }
+      hostAllowed = _allowedHosts.contains(host);
+    }
+    if (!hostAllowed ||
         (origin != null && origin != expectedOrigin)) {
       request.response.statusCode = HttpStatus.forbidden;
       await request.response.close();

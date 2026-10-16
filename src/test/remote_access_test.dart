@@ -104,6 +104,65 @@ void main() {
       server.dispose();
     }
   });
+  test(
+    'remote server refreshes its host allowlist after an IP change',
+    () async {
+      var localAddresses = <String>{'192.0.2.10'};
+      var addressRefreshes = 0;
+      final server = WebServer(
+        0,
+        remoteConfig: const RemoteAccessConfig(
+          enabled: true,
+          password: 'a-long-test-password',
+        ),
+        networkAddressProvider: () async {
+          addressRefreshes++;
+          return localAddresses;
+        },
+      );
+      expect(await server.start(), true);
+      expect(addressRefreshes, 1);
+
+      final http = HttpClient();
+      Future<int> getLoginStatus(String host) async {
+        final request = await http.getUrl(
+          Uri(
+            scheme: 'http',
+            host: '127.0.0.1',
+            port: server.boundPort!,
+            path: '/login',
+          ),
+        );
+        request.headers.set(
+          HttpHeaders.hostHeader,
+          '$host:${server.boundPort}',
+        );
+        final response = await request.close();
+        await response.drain<void>();
+        return response.statusCode;
+      }
+
+      try {
+        expect(await getLoginStatus('192.0.2.10'), HttpStatus.ok);
+
+        // Simulate Android moving to another Wi-Fi network while its server
+        // process stays alive. The first request to the new local address
+        // forces an interface refresh without restarting the server.
+        localAddresses = {'192.0.2.11'};
+        expect(await getLoginStatus('192.0.2.11'), HttpStatus.ok);
+        expect(addressRefreshes, 2);
+
+        // The old address is removed as part of the refresh, so stale DNS/IP
+        // entries cannot continue to access the listener after the move.
+        expect(await getLoginStatus('192.0.2.10'), HttpStatus.forbidden);
+        expect(addressRefreshes, 2);
+      } finally {
+        http.close(force: true);
+        await server.stop();
+        server.dispose();
+      }
+    },
+  );
   test('real HTTP login protects static files, websocket and logout', () async {
     final server = WebServer(
       0,
