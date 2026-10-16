@@ -69,6 +69,7 @@ class BoundedSerialExecutorTest {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         val completed = CountDownLatch(2)
+        val overflowReported = CountDownLatch(1)
         val order = Collections.synchronizedList(mutableListOf<Int>())
 
         try {
@@ -84,7 +85,13 @@ class BoundedSerialExecutorTest {
                 order.add(2)
                 completed.countDown()
             })
-            assertFalse(executor.execute { order.add(3) })
+            assertFalse(
+                executor.execute(
+                    task = { order.add(3) },
+                    onRejected = { overflowReported.countDown() },
+                ),
+            )
+            assertTrue(overflowReported.await(1, TimeUnit.SECONDS))
 
             release.countDown()
             assertTrue(completed.await(2, TimeUnit.SECONDS))

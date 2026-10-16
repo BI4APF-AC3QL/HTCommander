@@ -22,10 +22,20 @@ internal class BoundedSerialExecutor(
         },
     )
 
-    fun execute(task: () -> Unit): Boolean = try {
+    fun execute(task: () -> Unit): Boolean = submit(task, onRejected = null)
+
+    /** Submits [task], running [onRejected] if the bounded queue cannot accept it. */
+    fun execute(task: () -> Unit, onRejected: () -> Unit): Boolean =
+        submit(task, onRejected)
+
+    private fun submit(
+        task: () -> Unit,
+        onRejected: (() -> Unit)?,
+    ): Boolean = try {
         executor.execute { task() }
         true
     } catch (_: RejectedExecutionException) {
+        runCatching { onRejected?.invoke() }
         false
     }
 

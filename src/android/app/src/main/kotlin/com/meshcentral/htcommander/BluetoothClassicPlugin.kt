@@ -50,10 +50,13 @@ class BluetoothClassicPlugin(
         private const val MAX_WRITE_BYTES = 64 * 1024
         private const val CONNECT_ATTEMPT_TIMEOUT_MS = 8_000L
         private const val CONNECT_TOTAL_TIMEOUT_MS = 45_000L
+        private const val WRITE_TIMEOUT_MS = 5_000L
         private const val DISCONNECT_REQUESTED = "user_requested"
         private const val DISCONNECT_REMOTE_CLOSED = "remote_closed"
         private const val DISCONNECT_READ_FAILED = "read_failed"
         private const val DISCONNECT_WRITE_FAILED = "write_failed"
+        private const val DISCONNECT_WRITE_TIMEOUT = "write_timeout"
+        private const val DISCONNECT_WRITE_QUEUE_OVERFLOW = "write_queue_overflow"
         private const val DISCONNECT_CONTROL_QUEUE_OVERFLOW =
             "control_queue_overflow"
         private const val AUDIO_OVERRUN_REPORT_INTERVAL_MS = 5_000L
@@ -908,20 +911,43 @@ class BluetoothClassicPlugin(
         fun enqueueWrite(data: ByteArray, completion: (Boolean) -> Unit): Boolean {
             if (closed) return false
             val payload = data.copyOf()
-            return writer.execute {
-                val written = writeNow(payload)
-                mainHandler.post { completion(written) }
-            }
+            return writer.execute(
+                task = {
+                    val written = writeNow(payload)
+                    mainHandler.post { completion(written) }
+                },
+                onRejected = {
+                    // Dropping an ordered RFCOMM write while keeping the stream
+                    // connected leaves the protocol out of sync. Report a loss
+                    // so the transport can reconnect from a clean session.
+                    closeInBackground(DISCONNECT_WRITE_QUEUE_OVERFLOW)
+                },
+            )
         }
 
         private fun writeNow(data: ByteArray): Boolean {
             if (closed) return false
             return try {
-                socket.outputStream.write(data)
-                socket.outputStream.flush()
-                true
+                TimedSocketConnect.run(
+                    socket = socket,
+                    timeoutMs = WRITE_TIMEOUT_MS,
+                    threadName = "HTCommander-BT-write-${address.takeLast(5)}",
+                    operation = { candidate ->
+                        candidate.outputStream.write(data)
+                        candidate.outputStream.flush()
+                    },
+                    close = { it.close() },
+                )
+                !closed
+            } catch (_: java.net.SocketTimeoutException) {
+                closeInBackground(DISCONNECT_WRITE_TIMEOUT)
+                false
             } catch (_: IOException) {
-                handleClosed(DISCONNECT_WRITE_FAILED)
+                // Do not let a slow OEM Bluetooth service block this writer
+                // while closing the socket. A failed/timed-out write invalidates
+                // the byte stream, so publish a disconnect and let the existing
+                // remembered-radio recovery path establish a clean session.
+                closeInBackground(DISCONNECT_WRITE_FAILED)
                 false
             }
         }

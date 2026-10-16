@@ -81,6 +81,8 @@ class BluetoothClassicMacOS {
     }
     if (reason == 'receive_queue_overflow' ||
         reason == 'control_queue_overflow' ||
+        reason == 'write_queue_overflow' ||
+        reason == 'write_timeout' ||
         reason == 'read_failed' ||
         reason == 'write_failed') {
       _logError('$channel link ended; reason=$reason');

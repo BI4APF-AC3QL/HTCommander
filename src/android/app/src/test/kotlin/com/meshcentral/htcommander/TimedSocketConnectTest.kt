@@ -70,6 +70,42 @@ class TimedSocketConnectTest {
     }
 
     @Test
+    fun `timed out socket write closes socket and interrupts worker`() {
+        val socket = FakeSocket()
+        val workerExited = CountDownLatch(1)
+        val started = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+
+        try {
+            TimedSocketConnect.run(
+                socket = socket,
+                timeoutMs = 50,
+                threadName = "write-timeout-test",
+                operation = {
+                    started.countDown()
+                    try {
+                        CountDownLatch(1).await()
+                    } finally {
+                        workerExited.countDown()
+                    }
+                },
+                close = {
+                    it.closed.set(true)
+                    closed.countDown()
+                },
+            )
+            throw AssertionError("Expected a socket write timeout")
+        } catch (_: SocketTimeoutException) {
+            // Expected.
+        }
+
+        assertTrue(started.await(1, TimeUnit.SECONDS))
+        assertTrue(closed.await(1, TimeUnit.SECONDS))
+        assertTrue(socket.closed.get())
+        assertTrue(workerExited.await(1, TimeUnit.SECONDS))
+    }
+
+    @Test
     fun `timeout does not wait for a vendor socket close that blocks`() {
         val socket = FakeSocket()
         val closeStarted = CountDownLatch(1)
