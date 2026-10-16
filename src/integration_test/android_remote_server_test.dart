@@ -472,6 +472,9 @@ void main() {
             findsNothing,
             reason: '$tab must build without an Android page error',
           );
+          // Let the TabBarView finish its page transition before opening the
+          // next bottom-sheet menu on slower Android emulators.
+          await tester.pump(const Duration(milliseconds: 350));
         }
 
         // The most common pages are directly available in the bottom bar.
@@ -510,7 +513,7 @@ void main() {
           'Debug',
         ]) {
           await tester.tap(find.byKey(const ValueKey<String>('main_tab_more')));
-          await tester.pump(const Duration(milliseconds: 250));
+          await tester.pump(const Duration(milliseconds: 400));
           final entry = find.byKey(ValueKey<String>('compact_more_$tab'));
           final moreMenu = find.byKey(
             const ValueKey<String>('compact_more_list'),
@@ -524,6 +527,7 @@ void main() {
             160,
             scrollable: moreMenuScrollable,
           );
+          await tester.pump(const Duration(milliseconds: 100));
           expect(
             entry,
             findsOneWidget,
@@ -1205,6 +1209,10 @@ void main() {
         FlutterError.onError = originalFlutterErrorHandler;
       }
     },
-    timeout: const Timeout(Duration(minutes: 7)),
+    // This test keeps the Android server alive during a four-minute host-side
+    // browser pass, then verifies radio-only, rolling-recording, and MQTT
+    // foreground-service checkpoints. Keep the test timeout below the
+    // acceptance script's 16-minute process limit but long enough for them all.
+    timeout: const Timeout(Duration(minutes: 13)),
   );
 }

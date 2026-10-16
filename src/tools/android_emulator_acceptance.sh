@@ -115,7 +115,10 @@ restore_android_package_manifest() {
 # Verify Android's permission and Classic method-channel path independently so
 # failures are easy to diagnose before the longer remote-server/browser run.
 bt_drive_log="$(mktemp)"
-timeout --signal=TERM --kill-after=30s 4m flutter drive \
+# The timeout includes Gradle assembly and APK installation before the test
+# begins. Keep enough headroom for the test's 120-second service startup wait,
+# 60-second UI handoff, and reconnect exercise on slower local emulators.
+timeout --signal=TERM --kill-after=30s 7m flutter drive \
   --no-pub \
   --driver=test_driver/integration_test.dart \
   --target=integration_test/android_bluetooth_connection_test.dart \
@@ -133,7 +136,7 @@ bt_drive_cleanup() {
 trap 'bt_drive_cleanup; restore_android_package_manifest' EXIT
 
 bt_ready_line=''
-for attempt in {1..240}; do
+for attempt in {1..420}; do
   bt_ready_line="$(adb_cmd logcat -d -s flutter:I | grep -F 'HTC_ANDROID_BT_REMOTE_BG_ACCEPTANCE_READY:' | tail -n 1 || true)"
   if [[ -n "$bt_ready_line" ]]; then
     break
@@ -157,6 +160,18 @@ if [[ ! "$bt_remote_port" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+# Verify the IPv4 ADB forward while the app is still foregrounded. This
+# separates a dual-stack/forwarding problem from a service lifecycle failure.
+adb_cmd forward --remove tcp:18736 >/dev/null 2>&1 || true
+adb_cmd forward tcp:18736 "tcp:$bt_remote_port"
+bt_foreground_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18736/login || true)"
+if [[ "$bt_foreground_status" != '200' ]]; then
+  cat "$bt_drive_log"
+  echo "::error::Android remote server was not reachable through ADB forwarding before backgrounding (HTTP ${bt_foreground_status:-no response})."
+  exit 1
+fi
+echo 'Android remote server is reachable through ADB forwarding while foregrounded.'
+
 adb_cmd shell input keyevent KEYCODE_HOME
 sleep 2
 service_dump="$(adb_cmd shell dumpsys activity services)"
@@ -165,8 +180,6 @@ if ! grep -Fq 'RadioWebServerService' <<< "$service_dump"; then
   echo '::error::Android foreground service stopped with both Bluetooth and remote server active.'
   exit 1
 fi
-adb_cmd forward --remove tcp:18736 >/dev/null 2>&1 || true
-adb_cmd forward tcp:18736 "tcp:$bt_remote_port"
 bt_background_status=''
 for attempt in {1..8}; do
   bt_background_status="$(curl --connect-timeout 2 --max-time 4 --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18736/login || true)"

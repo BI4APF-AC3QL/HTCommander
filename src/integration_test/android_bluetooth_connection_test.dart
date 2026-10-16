@@ -306,16 +306,37 @@ Future<void> _verifyHttpsProxySession(int port, int expectedRadioId) async {
       },
     );
     final response = Completer<Map<String, Object?>>();
-    final subscription = socket.listen((event) {
-      if (event is! String || !event.startsWith('remote:')) return;
-      final decoded = jsonDecode(event.substring(7));
-      if (decoded is Map && decoded['state'] is Map && !response.isCompleted) {
-        response.complete(Map<String, Object?>.from(decoded['state'] as Map));
-      }
-    });
+    final subscription = socket.listen(
+      (event) {
+        if (event is! String || !event.startsWith('remote:')) return;
+        final decoded = jsonDecode(event.substring(7));
+        if (decoded is Map && !response.isCompleted) {
+          response.complete(Map<String, Object?>.from(decoded));
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!response.isCompleted) response.completeError(error, stack);
+      },
+      onDone: () {
+        if (!response.isCompleted) {
+          response.completeError(
+            StateError('WebSocket closed before a remote response'),
+          );
+        }
+      },
+    );
     try {
       socket.add('remote:{"op":"state"}');
-      final state = await response.future.timeout(const Duration(seconds: 5));
+      final message = await response.future.timeout(
+        const Duration(seconds: 15),
+      );
+      expect(
+        message['state'],
+        isA<Map>(),
+        reason:
+            'HTTPS proxy WebSocket should return radio state; response: $message',
+      );
+      final state = Map<String, Object?>.from(message['state']! as Map);
       expect(state['radioId'], expectedRadioId);
       expect(state['connected'], isTrue);
     } finally {
@@ -362,12 +383,15 @@ Future<void> _verifyAndroidRemotePaths(
     ],
   );
 
+  // Validate the HTTPS reverse-proxy login and WebSocket while the app is
+  // foregrounded. The following local WebSocket test deliberately backgrounds
+  // the app and turns the display off to test ongoing radio control there.
+  await _verifyHttpsProxySession(port, expectedRadioId);
   await _verifyRemoteServerSeesConnectedRadio(
     port,
     expectedRadioId,
     bluetoothWrites,
   );
-  await _verifyHttpsProxySession(port, expectedRadioId);
 }
 
 void main() {
