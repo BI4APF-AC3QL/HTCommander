@@ -4650,32 +4650,41 @@ class _MainFormState extends State<MainForm>
   }
 
   Widget _buildHorizontalTabList() {
-    final currentIndex = _tabController.index;
-    final currentId = currentIndex >= 0 && currentIndex < _currentTabs.length
-        ? _currentTabs[currentIndex].label
-        : _currentTabs.first.label;
-    final primaryTabs = _currentTabs
-        .where((tab) => _compactPrimaryTabLabels.contains(tab.label))
-        .toList(growable: false);
-    final moreTabs = _currentTabs
-        .where((tab) => !_compactPrimaryTabLabels.contains(tab.label))
-        .toList(growable: false);
+    return AnimatedBuilder(
+      animation: _tabController,
+      builder: (context, child) {
+        final currentIndex = _tabController.index;
+        final currentId =
+            currentIndex >= 0 && currentIndex < _currentTabs.length
+            ? _currentTabs[currentIndex].label
+            : _currentTabs.first.label;
+        final primaryTabs = _currentTabs
+            .where((tab) => _compactPrimaryTabLabels.contains(tab.label))
+            .toList(growable: false);
+        final moreTabs = _currentTabs
+            .where((tab) => !_compactPrimaryTabLabels.contains(tab.label))
+            .toList(growable: false);
 
-    CompactTabDestination destination(_TabInfo tab) => CompactTabDestination(
-      id: tab.label,
-      title: _tabDisplayName(tab.label),
-      assetPath: tab.assetPath,
-      fallbackIcon: tab.fallbackIcon,
-    );
+        CompactTabDestination destination(_TabInfo tab) =>
+            CompactTabDestination(
+              id: tab.label,
+              title: _tabDisplayName(tab.label),
+              assetPath: tab.assetPath,
+              fallbackIcon: tab.fallbackIcon,
+            );
 
-    return CompactTabNavigation(
-      primaryDestinations: primaryTabs.map(destination).toList(growable: false),
-      moreDestinations: moreTabs.map(destination).toList(growable: false),
-      currentId: currentId,
-      moreTitle: AppLocalizations.of(context).chMore,
-      onSelect: (id) {
-        final index = _currentTabs.indexWhere((tab) => tab.label == id);
-        if (index >= 0) _selectTab(index);
+        return CompactTabNavigation(
+          primaryDestinations: primaryTabs
+              .map(destination)
+              .toList(growable: false),
+          moreDestinations: moreTabs.map(destination).toList(growable: false),
+          currentId: currentId,
+          moreTitle: AppLocalizations.of(context).chMore,
+          onSelect: (id) {
+            final index = _currentTabs.indexWhere((tab) => tab.label == id);
+            if (index >= 0) _selectTab(index);
+          },
+        );
       },
     );
   }
