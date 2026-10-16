@@ -5,10 +5,50 @@ import 'package:htcommander/radio/radio_transport.dart';
 import 'package:htcommander/services/bluetooth_service.dart';
 import 'package:htcommander/services/data_broker.dart';
 
+/// EventChannel driver used to inject native Classic Bluetooth events in an
+/// Android integration test. Install it before `app.main()` so the bridge's
+/// broadcast subscription is attached to the mock from its first listen.
+class AndroidBluetoothClassicEventFixture {
+  static const _channel = EventChannel(
+    'com.htcommander/bluetooth_classic_data',
+  );
+
+  MockStreamHandlerEventSink? _events;
+
+  void install(TestDefaultBinaryMessenger messenger) {
+    messenger.setMockStreamHandler(
+      _channel,
+      MockStreamHandler.inline(
+        onListen: (_, events) {
+          _events = events;
+        },
+      ),
+    );
+  }
+
+  void emitUnexpectedDisconnect(String address) {
+    final events = _events;
+    if (events == null) {
+      throw StateError('The Classic Bluetooth event stream is not listening');
+    }
+    events.success({
+      'event': 'disconnected',
+      'address': address,
+      'reason': 'remote_closed',
+    });
+  }
+}
+
 /// Exercises the Android Classic Bluetooth path against mocked native
 /// channels. No Bluetooth hardware, radio frames, or RF transmission is used.
 Future<void> exerciseAndroidBluetoothClassicConnection({
   Future<void> Function(int radioId, List<Uint8List> writes)? onConnected,
+  Future<void> Function(
+    int radioId,
+    int Function() nativeConnectCalls,
+    int Function() nativeDiscoveryCalls,
+  )?
+  onUnexpectedDisconnect,
 }) async {
   const permissionChannel = MethodChannel(
     'flutter.baseflow.com/permissions/methods',
@@ -16,12 +56,10 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
   const classicMethodChannel = MethodChannel(
     'com.htcommander/bluetooth_classic',
   );
-  const classicDataChannel = MethodChannel(
-    'com.htcommander/bluetooth_classic_data',
-  );
   const classicAudioChannel = MethodChannel(
     'com.htcommander/bluetooth_classic_audio',
   );
+  const androidDeviceChannel = MethodChannel('com.htcommander/android_device');
 
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -31,6 +69,7 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
   final priorConnectionIds = bluetooth.connectedRadioIds.toSet();
   final writes = <Uint8List>[];
   var nativeConnectCalls = 0;
+  var nativeDiscoveryCalls = 0;
   var nativeSendCalls = 0;
   var nativeDisconnectCalls = 0;
 
@@ -42,10 +81,15 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
     }
     return null;
   });
-  // EventChannel listen/cancel calls are accepted, but no radio frames are
-  // synthesized. This exercises the platform bridge without hardware or RF.
-  messenger.setMockMethodCallHandler(classicDataChannel, (_) async => null);
+  // The control EventChannel is driven by the event fixture, which lets the
+  // test inject a native disconnect without hardware or radio traffic.
   messenger.setMockMethodCallHandler(classicAudioChannel, (_) async => null);
+  messenger.setMockMethodCallHandler(androidDeviceChannel, (call) async {
+    // Null deliberately selects Classic-only discovery in the reconnect path,
+    // avoiding a real BLE scan from an emulator test.
+    if (call.method == 'getSdkInt') return null;
+    return null;
+  });
   messenger.setMockMethodCallHandler(classicMethodChannel, (call) async {
     final arguments = call.arguments is Map
         ? Map<Object?, Object?>.from(call.arguments as Map)
@@ -54,6 +98,29 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
       expect(arguments['address'], fakeAddress);
       nativeConnectCalls++;
       return true;
+    }
+    if (call.method == 'findCompatibleDevices') {
+      nativeDiscoveryCalls++;
+      return [
+        {
+          'name': 'VR-N7500 Android integration fixture',
+          'address': fakeAddress,
+          'isPaired': true,
+          'isConnected': false,
+          'serviceUuids': const <String>[],
+        },
+      ];
+    }
+    if (call.method == 'getPairedDevices') {
+      return [
+        {
+          'name': 'VR-N7500 Android integration fixture',
+          'address': fakeAddress,
+          'isPaired': true,
+          'isConnected': false,
+          'serviceUuids': const <String>[],
+        },
+      ];
     }
     if (call.method == 'send') {
       expect(arguments['address'], fakeAddress);
@@ -137,6 +204,11 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
     );
 
     await onConnected?.call(radioId, writes);
+    await onUnexpectedDisconnect?.call(
+      radioId,
+      () => nativeConnectCalls,
+      () => nativeDiscoveryCalls,
+    );
 
     await bluetooth.disconnectRadio(radioId);
     expect(bluetooth.connectedRadioIds, isNot(contains(radioId)));
@@ -160,8 +232,8 @@ Future<void> exerciseAndroidBluetoothClassicConnection({
       store: true,
     );
     messenger.setMockMethodCallHandler(classicMethodChannel, null);
-    messenger.setMockMethodCallHandler(classicDataChannel, null);
     messenger.setMockMethodCallHandler(classicAudioChannel, null);
+    messenger.setMockMethodCallHandler(androidDeviceChannel, null);
     messenger.setMockMethodCallHandler(permissionChannel, null);
   }
 }

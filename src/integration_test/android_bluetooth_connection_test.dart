@@ -378,6 +378,10 @@ void main() {
     (tester) async {
       final originalErrorWidgetBuilder = ErrorWidget.builder;
       final originalFlutterErrorHandler = FlutterError.onError;
+      final classicEvents = AndroidBluetoothClassicEventFixture();
+      classicEvents.install(
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger,
+      );
       try {
         app.main(<String>[]);
         await tester.pump(const Duration(seconds: 1));
@@ -400,6 +404,24 @@ void main() {
           startup,
           isNotNull,
           reason: 'the Android app must finish startup',
+        );
+        // Android keeps a startup gate visible until every core service is
+        // ready. Wait for the main form so its radio-state listener is mounted
+        // before injecting a native disconnect event.
+        final mainFormDeadline = DateTime.now().add(
+          const Duration(seconds: 60),
+        );
+        while (!tester.any(find.byType(app.MainForm)) &&
+            DateTime.now().isBefore(mainFormDeadline)) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 100)),
+          );
+          await tester.pump();
+        }
+        expect(
+          tester.any(find.byType(app.MainForm)),
+          isTrue,
+          reason: 'the Android startup gate must hand off to the main app',
         );
         expect(AppDatabase.instance, isNotNull);
 
@@ -438,6 +460,77 @@ void main() {
 
           try {
             await exerciseAndroidBluetoothClassicConnection(
+              onUnexpectedDisconnect:
+                  (radioId, nativeConnectCalls, nativeDiscoveryCalls) async {
+                    expect(nativeConnectCalls(), 1);
+                    expect(
+                      BluetoothService().previouslyConnectedRadioMacs(),
+                      contains('02:00:00:00:00:75'),
+                    );
+                    classicEvents.emitUnexpectedDisconnect(
+                      '02:00:00:00:00:75',
+                    );
+
+                    final disconnectedDeadline = DateTime.now().add(
+                      const Duration(seconds: 10),
+                    );
+                    while (DataBroker.getValue<String>(radioId, 'State') !=
+                            'Disconnected' &&
+                        DateTime.now().isBefore(disconnectedDeadline)) {
+                      await Future<void>.delayed(
+                        const Duration(milliseconds: 50),
+                      );
+                    }
+                    expect(
+                      DataBroker.getValue<String>(radioId, 'State'),
+                      'Disconnected',
+                      reason:
+                          'an unsolicited native event must clean up the old link',
+                    );
+                    expect(
+                      BluetoothService().connectedRadioIds,
+                      isNot(contains(radioId)),
+                      reason:
+                          'the disconnected Classic transport must be released',
+                    );
+
+                    final reconnectedDeadline = DateTime.now().add(
+                      const Duration(seconds: 30),
+                    );
+                    bool fakeRadioIsConnected() => BluetoothService()
+                        .connectedRadioIds
+                        .any(
+                          (id) =>
+                              DataBroker.getValue<String>(id, 'MacAddress') ==
+                                  '02:00:00:00:00:75' &&
+                              DataBroker.getValue<String>(id, 'State') ==
+                                  'Connected',
+                        );
+                    while ((nativeConnectCalls() < 2 ||
+                            !fakeRadioIsConnected()) &&
+                        DateTime.now().isBefore(reconnectedDeadline)) {
+                      await Future<void>.delayed(
+                        const Duration(milliseconds: 100),
+                      );
+                    }
+                    expect(
+                      nativeDiscoveryCalls(),
+                      greaterThanOrEqualTo(1),
+                      reason:
+                          'the scheduled retry must rediscover the paired radio',
+                    );
+                    expect(
+                      nativeConnectCalls(),
+                      greaterThanOrEqualTo(2),
+                      reason: 'Android should retry the remembered radio',
+                    );
+                    expect(
+                      fakeRadioIsConnected(),
+                      isTrue,
+                      reason:
+                          'the scheduled Classic retry should restore the link',
+                    );
+                  },
               onConnected: (radioId, bluetoothWrites) =>
                   _verifyAndroidRemotePaths(
                     server.boundPort!,
