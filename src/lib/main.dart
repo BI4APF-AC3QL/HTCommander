@@ -112,6 +112,7 @@ import 'echolink/echolink_client.dart' show echoLinkDeviceId;
 import 'allstar/allstar_client.dart' show allStarDeviceId;
 import 'widgets/comms_tab.dart';
 import 'widgets/audio_tab.dart';
+import 'widgets/compact_tab_navigation.dart';
 import 'widgets/aprs_tab.dart';
 import 'widgets/tab_visibility.dart';
 import 'widgets/map_tab.dart';
@@ -1357,6 +1358,16 @@ class _MainFormState extends State<MainForm>
     _TabInfo('Packets', 'assets/images/tabs/packets.png', Icons.search),
     _TabInfo('Debug', 'assets/images/tabs/debug.png', Icons.info),
   ];
+
+  /// Keep the five highest-use phone pages in the bottom bar. Every other
+  /// enabled page remains available from the More sheet.
+  static const Set<String> _compactPrimaryTabLabels = {
+    'Radio',
+    'Comms',
+    'Audio',
+    'APRS',
+    'Map',
+  };
 
   // Radio tab shown only in compact mode
   static const _TabInfo _radioTab = _TabInfo(
@@ -4639,100 +4650,33 @@ class _MainFormState extends State<MainForm>
   }
 
   Widget _buildHorizontalTabList() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      height: 68,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
-      ),
-      child: AnimatedBuilder(
-        animation: _tabController,
-        builder: (context, child) {
-          return ListView.builder(
-            key: const ValueKey('main_tab_navigation'),
-            controller: _tabListScrollController,
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-            itemCount: _currentTabs.length,
-            itemBuilder: (context, index) {
-              final tab = _currentTabs[index];
-              final isSelected = _tabController.index == index;
-              final title = _tabDisplayName(tab.label);
-              return SizedBox(
-                width: 76,
-                child: GestureDetector(
-                  onSecondaryTapUp: (details) =>
-                      _showTabContextMenu(context, details.globalPosition, tab),
-                  onLongPressStart: (details) =>
-                      _showTabContextMenu(context, details.globalPosition, tab),
-                  child: Tooltip(
-                    message: title,
-                    child: InkWell(
-                      key: ValueKey('main_tab_${tab.label}'),
-                      onTap: () => _selectTab(index),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Stack(
-                        children: [
-                          Positioned(
-                            top: 0,
-                            left: 22,
-                            right: 22,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              height: 3,
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? colorScheme.primary
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(4, 7, 4, 2),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Image.asset(
-                                  tab.assetPath,
-                                  width: 24,
-                                  height: 24,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      Icon(
-                                        tab.fallbackIcon,
-                                        size: 24,
-                                        color: isSelected
-                                            ? colorScheme.primary
-                                            : colorScheme.onSurfaceVariant,
-                                      ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  title,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: isSelected
-                                        ? colorScheme.primary
-                                        : colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
-        },
-      ),
+    final currentIndex = _tabController.index;
+    final currentId = currentIndex >= 0 && currentIndex < _currentTabs.length
+        ? _currentTabs[currentIndex].label
+        : _currentTabs.first.label;
+    final primaryTabs = _currentTabs
+        .where((tab) => _compactPrimaryTabLabels.contains(tab.label))
+        .toList(growable: false);
+    final moreTabs = _currentTabs
+        .where((tab) => !_compactPrimaryTabLabels.contains(tab.label))
+        .toList(growable: false);
+
+    CompactTabDestination destination(_TabInfo tab) => CompactTabDestination(
+      id: tab.label,
+      title: _tabDisplayName(tab.label),
+      assetPath: tab.assetPath,
+      fallbackIcon: tab.fallbackIcon,
+    );
+
+    return CompactTabNavigation(
+      primaryDestinations: primaryTabs.map(destination).toList(growable: false),
+      moreDestinations: moreTabs.map(destination).toList(growable: false),
+      currentId: currentId,
+      moreTitle: AppLocalizations.of(context).chMore,
+      onSelect: (id) {
+        final index = _currentTabs.indexWhere((tab) => tab.label == id);
+        if (index >= 0) _selectTab(index);
+      },
     );
   }
 
