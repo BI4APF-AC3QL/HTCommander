@@ -67,25 +67,50 @@ async function main() {
     );
 
     const pages = [
-      ['menuRadio', 'radio', '电台控制'],
-      ['menuAprs', 'aprs', 'APRS 消息与定位'],
-      ['menuMap', 'map', '台站地图'],
-      ['menuAudio', 'audio', '音频与频谱'],
-      ['menuMore', 'more', '诊断与设置'],
+      ['menuRadio', 'radio', '电台控制', [
+        '#channel', '#scan', '#squelch', '#satelliteStart', '#controlRequest', '#ptt',
+      ]],
+      ['menuAprs', 'aprs', 'APRS 消息与定位', [
+        '#aprsDestination', '#aprsText', '#aprsSend', '#aprsDeliveries',
+        '#aprsSearch', '#positionAcquire', '#positionSend',
+      ]],
+      ['menuMap', 'map', '台站地图', [
+        '#mapSource', '#stationMap', '#mapZoomIn', '#mapRetry', '#mapSearch',
+      ]],
+      ['menuAudio', 'audio', '音频与频谱', [
+        '#playback', '#audioBuffer', '#micTest', '#spectrumPause',
+        '#spectrumRange', '#spectrumGain', '#spectrum', '#waterfall',
+      ]],
+      ['menuMore', 'more', '诊断与设置', [
+        '#networkMode', '#dashboardRadio', '#gatewayMetrics', '#linkDiagnostics',
+        '#beaconTask', '#auditEvents', '#installApp',
+      ]],
     ];
-    for (const [button, key, heading] of pages) {
+    const mobileFeatureCoverage = {};
+    for (const [button, key, heading, selectors] of pages) {
       await page.locator(`#${button}`).click();
       assert.equal(await page.locator('#pageTitle').innerText(), heading);
       const visiblePages = await page.locator('[data-page]:not([hidden])').evaluateAll(
         (items) => [...new Set(items.map((item) => item.dataset.page))],
       );
       assert.deepEqual(visiblePages, [key], `${key} menu should show only its page`);
+      for (const selector of selectors) {
+        const control = page.locator(selector);
+        assert.equal(await control.count(), 1, `${key} menu is missing ${selector}`);
+        assert.equal(
+          await control.evaluate((element) => element.closest('[data-page]')?.dataset.page),
+          key,
+          `${selector} should be grouped under the ${key} menu`,
+        );
+      }
+      mobileFeatureCoverage[key] = selectors;
       assert.ok(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         `${key} menu must fit the phone viewport`,
       );
     }
     evidence.mobileMenu = pages.map(([, key]) => key);
+    evidence.mobileFeatureCoverage = mobileFeatureCoverage;
     await page.locator('#menuRadio').click();
     await page.waitForFunction(
       () => document.querySelector('#status')?.textContent.includes('音频通道已连接'),
