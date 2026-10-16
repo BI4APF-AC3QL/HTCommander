@@ -105,6 +105,13 @@ adb_cmd uninstall com.meshcentral.htcommander
 cd "$src_root"
 test -f integration_test/android_remote_server_test.dart
 test -f integration_test/android_bluetooth_connection_test.dart
+# The instrumentation APK is rebuilt from the source package manifest, not
+# from the earlier release APK. Declare every nested hosted-web asset folder
+# again so the debug test APK serves AssetManifest, fonts and package assets.
+python tools/stage_android_web_assets.py --prepare-package
+restore_android_package_manifest() {
+  python tools/stage_android_web_assets.py --restore-package
+}
 # Verify Android's permission and Classic method-channel path independently so
 # failures are easy to diagnose before the longer remote-server/browser run.
 bt_drive_log="$(mktemp)"
@@ -123,7 +130,7 @@ bt_drive_cleanup() {
   fi
   rm -f "$bt_drive_log"
 }
-trap bt_drive_cleanup EXIT
+trap 'bt_drive_cleanup; restore_android_package_manifest' EXIT
 
 bt_ready_line=''
 for attempt in {1..240}; do
@@ -234,7 +241,7 @@ fi
 cat "$bt_drive_log"
 bt_drive_pid=''
 bt_drive_cleanup
-trap - EXIT
+trap restore_android_package_manifest EXIT
 drive_log="$(mktemp)"
 drive_pid=""
 cleanup() {
@@ -245,7 +252,7 @@ cleanup() {
   fi
   rm -f "$drive_log"
 }
-trap cleanup EXIT
+trap 'cleanup; restore_android_package_manifest' EXIT
 
 timeout --signal=TERM --kill-after=30s 16m flutter drive \
   --no-pub \

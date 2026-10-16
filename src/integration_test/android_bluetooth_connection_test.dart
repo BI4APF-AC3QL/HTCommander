@@ -9,6 +9,8 @@ import 'package:flutter/widgets.dart' show ErrorWidget;
 import 'package:htcommander/handlers/web_server_handler.dart';
 import 'package:htcommander/main.dart' as app;
 import 'package:htcommander/radio/gaia_protocol.dart';
+import 'package:htcommander/radio/radio_models.dart';
+import 'package:htcommander/services/bluetooth_service.dart';
 import 'package:htcommander/services/data_broker.dart';
 import 'package:htcommander/services/db/app_database.dart';
 import 'package:integration_test/integration_test.dart';
@@ -128,6 +130,94 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
 
       await sendVolumeAndVerify(8);
 
+      Future<void> sendSettingsAndVerify(
+        Map<String, Object?> command,
+        bool Function(Uint8List frame) matches,
+        String description, {
+        required int channelA,
+        required int squelch,
+        required bool scan,
+      }) async {
+        final writeCount = bluetoothWrites.length;
+        final response = await sendCommand(command);
+        expect(response['error'], isNull, reason: '$description is accepted');
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        bool matchingWriteReachedBluetooth() => bluetoothWrites
+            .skip(writeCount)
+            .any(
+              (frame) =>
+                  frame.length >= 10 &&
+                  frame[0] == 0xFF &&
+                  frame[1] == 0x01 &&
+                  frame[4] == 0 &&
+                  frame[5] == RadioCommandGroup.basic.value &&
+                  frame[6] == 0 &&
+                  frame[7] == RadioBasicCommand.writeSettings.value &&
+                  matches(frame),
+            );
+
+        while (!matchingWriteReachedBluetooth() &&
+            DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(
+          matchingWriteReachedBluetooth(),
+          isTrue,
+          reason: '$description must reach Android Classic as GAIA settings',
+        );
+
+        // The mock bridge does not synthesize the radio's settings-read reply.
+        // Mirror the successful write so each subsequent command starts from
+        // the radio state the real firmware would report.
+        final rawSettings = Uint8List(26)
+          ..[5] = (channelA & 0x0F) << 4
+          ..[6] = (scan ? 0x80 : 0) | (squelch & 0x0F);
+        final nextSettings = RadioSettings.fromBytes(rawSettings);
+        final connectedRadio = BluetoothService().radioInstance(
+          expectedRadioId,
+        );
+        expect(connectedRadio, isNotNull);
+        connectedRadio!.settings = nextSettings;
+        DataBroker.dispatch(
+          deviceId: expectedRadioId,
+          name: 'Settings',
+          data: nextSettings.toJson(),
+        );
+      }
+
+      await sendSettingsAndVerify(
+        {'op': 'channel', 'value': 3, 'vfo': 'A'},
+        (frame) => frame[8] == 0x30,
+        'channel selection',
+        channelA: 3,
+        squelch: 0,
+        scan: false,
+      );
+      await sendSettingsAndVerify(
+        {'op': 'squelch', 'value': 7},
+        (frame) => frame[9] == 0x07,
+        'squelch adjustment',
+        channelA: 3,
+        squelch: 7,
+        scan: false,
+      );
+      await sendSettingsAndVerify(
+        {'op': 'scan', 'value': true},
+        (frame) => frame[9] == 0x87,
+        'scan start',
+        channelA: 3,
+        squelch: 7,
+        scan: true,
+      );
+      await sendSettingsAndVerify(
+        {'op': 'scan', 'value': false},
+        (frame) => frame[9] == 0x07,
+        'scan stop',
+        channelA: 3,
+        squelch: 7,
+        scan: false,
+      );
+
       // The host-side emulator script backgrounds MainActivity after this
       // marker. Keep the authenticated socket open so the next requests prove
       // that the radio and server remain connected together in the background.
@@ -158,10 +248,7 @@ Future<void> _verifyRemoteServerSeesConnectedRadio(
   }
 }
 
-Future<void> _verifyHttpsProxySession(
-  int port,
-  int expectedRadioId,
-) async {
+Future<void> _verifyHttpsProxySession(int port, int expectedRadioId) async {
   final backend = Uri(scheme: 'http', host: '::1', port: port);
   final origin = Uri.parse('https://radio.example.test');
   final http = HttpClient()..connectionTimeout = const Duration(seconds: 3);
@@ -187,10 +274,7 @@ Future<void> _verifyHttpsProxySession(
     login.cookies.add(csrf);
     login.write(
       Uri(
-        queryParameters: {
-          'csrf': csrf.value,
-          'password': _testRemotePassword,
-        },
+        queryParameters: {'csrf': csrf.value, 'password': _testRemotePassword},
       ).query,
     );
     final signedIn = await login.close();
@@ -248,6 +332,36 @@ Future<void> _verifyAndroidRemotePaths(
   int expectedRadioId,
   List<Uint8List> bluetoothWrites,
 ) async {
+  // The mocked N7500 has no inbound frames. Seed only the receive-safe state
+  // needed to exercise the browser controls through the Android radio stack.
+  final connectedRadio = BluetoothService().radioInstance(expectedRadioId);
+  expect(connectedRadio, isNotNull);
+  final settings = RadioSettings.fromBytes(Uint8List(26));
+  connectedRadio!.settings = settings;
+  DataBroker.dispatch(
+    deviceId: expectedRadioId,
+    name: 'Settings',
+    data: settings.toJson(),
+  );
+  DataBroker.dispatch(
+    deviceId: expectedRadioId,
+    name: 'Channels',
+    data: <Map<String, Object>>[
+      {
+        'channelId': 3,
+        'name': 'RX TEST',
+        'rxFreq': 145500000,
+        'txFreq': 145500000,
+        'scan': true,
+        'txDisable': true,
+        'mute': false,
+        'txMod': 0,
+        'rxMod': 0,
+        'bandwidth': 0,
+      },
+    ],
+  );
+
   await _verifyRemoteServerSeesConnectedRadio(
     port,
     expectedRadioId,
