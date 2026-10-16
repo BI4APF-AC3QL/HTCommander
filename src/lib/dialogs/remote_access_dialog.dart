@@ -358,10 +358,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(
-                _text(
-                  '控制权申请必须由 Windows 批准',
-                  'Host approval required for control',
-                ),
+                _text('控制权申请必须由主机批准', 'Host approval required for control'),
               ),
               subtitle: Text(
                 _text(
@@ -619,7 +616,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              Platform.isAndroid
+              (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
                   ? _text(
                       '同一 Wi-Fi：另一台手机访问上方本机 IP 和端口。Android 会在服务开启期间显示常驻通知并保持服务运行，可能增加耗电；关闭网页服务即可停止。外网请使用 VPN 或 HTTPS 反向代理。浏览器麦克风和定位需要 HTTPS；局域网 HTTP 下可使用电台控制和收听。',
                       'On the same Wi-Fi, open the local IP and port above on another device. Android shows an ongoing notification and keeps the server active while enabled, which can use more battery; turn the web server off to stop it. Use a VPN or HTTPS reverse proxy for outside access. Browser microphone and location need HTTPS; radio control and listening work over LAN HTTP.',
