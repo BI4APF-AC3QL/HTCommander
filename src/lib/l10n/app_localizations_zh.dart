@@ -1266,6 +1266,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connectOpenBluetoothSettings => '蓝牙设置';
 
   @override
+  String get connectScanAgain => '重新扫描';
+
+  @override
   String get radioConnectionTitle => '电台连接';
 
   @override

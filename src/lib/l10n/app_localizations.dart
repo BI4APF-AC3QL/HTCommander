@@ -2434,6 +2434,12 @@ abstract class AppLocalizations {
   /// **'Bluetooth settings'**
   String get connectOpenBluetoothSettings;
 
+  /// No description provided for @connectScanAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan again'**
+  String get connectScanAgain;
+
   /// No description provided for @radioConnectionTitle.
   ///
   /// In en, this message translates to:

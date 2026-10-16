@@ -1324,6 +1324,9 @@ class AppLocalizationsFr extends AppLocalizations {
   String get connectOpenBluetoothSettings => 'Paramètres Bluetooth';
 
   @override
+  String get connectScanAgain => 'Relancer la recherche';
+
+  @override
   String get radioConnectionTitle => 'Connexion radio';
 
   @override

@@ -430,6 +430,7 @@
   "connectBluetoothOffBody": "蓝牙不可用或已禁用。\n\n请在设备设置中打开蓝牙；如果使用 Android 12 或更高版本，请在应用权限中允许 HTCommander 访问“附近的设备”，然后重试。",
   "connectOpenAppSettings": "打开应用设置",
   "connectOpenBluetoothSettings": "蓝牙设置",
+  "connectScanAgain": "重新扫描",
 
   "radioConnectionTitle": "电台连接",
   "radioConnectionEmpty": "未找到兼容的电台。\n请确保您的电台已开机且蓝牙已启用。",

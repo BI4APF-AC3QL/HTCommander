@@ -1313,6 +1313,9 @@ class AppLocalizationsHi extends AppLocalizations {
   String get connectOpenBluetoothSettings => 'ब्लूटूथ सेटिंग';
 
   @override
+  String get connectScanAgain => 'फिर से खोजें';
+
+  @override
   String get radioConnectionTitle => 'रेडियो कनेक्शन';
 
   @override

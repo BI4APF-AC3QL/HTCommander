@@ -974,6 +974,7 @@
   "connectBluetoothOffBody": "Bluetooth is not available or is turned off.\n\nPlease turn on Bluetooth in your device settings. On Android 12 or later, also allow HTCommander access to Nearby devices in app permissions, then try again.",
   "connectOpenAppSettings": "App settings",
   "connectOpenBluetoothSettings": "Bluetooth settings",
+  "connectScanAgain": "Scan again",
 
   "radioConnectionTitle": "Radio Connection",
   "radioConnectionEmpty": "No compatible radios found.\nMake sure your radio is powered on and Bluetooth is enabled.",

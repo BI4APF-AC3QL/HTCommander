@@ -430,6 +430,7 @@
   "connectBluetoothOffBody": "Bluetooth jest niedostępny lub wyłączony.\n\nWłącz Bluetooth w ustawieniach urządzenia. W systemie Android 12 lub nowszym zezwól też aplikacji HTCommander na dostęp do urządzeń w pobliżu w uprawnieniach aplikacji, a następnie spróbuj ponownie.",
   "connectOpenAppSettings": "Otwórz ustawienia aplikacji",
   "connectOpenBluetoothSettings": "Ustawienia Bluetooth",
+  "connectScanAgain": "Skanuj ponownie",
 
   "radioConnectionTitle": "Połączenie radiotelefonu",
   "radioConnectionEmpty": "Nie znaleziono zgodnych radiotelefonów.\nUpewnij się, że radiotelefon jest włączony, a Bluetooth aktywny.",

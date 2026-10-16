@@ -5358,6 +5358,19 @@ class _MainFormState extends State<MainForm>
               child: Text(l10n.connectOpenBluetoothSettings),
             ),
             TextButton(
+              onPressed: () async {
+                await openAppSettings();
+              },
+              child: Text(l10n.connectOpenAppSettings),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _onConnect();
+              },
+              child: Text(l10n.connectScanAgain),
+            ),
+            TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
               child: Text(l10n.commonOk),
             ),

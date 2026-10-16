@@ -430,6 +430,7 @@
   "connectBluetoothOffBody": "Bluetooth ist nicht verfügbar oder deaktiviert.\n\nAktivieren Sie Bluetooth in den Geräteeinstellungen. Erlauben Sie unter Android 12 oder höher außerdem in den App-Berechtigungen den Zugriff auf Geräte in der Nähe und versuchen Sie es erneut.",
   "connectOpenAppSettings": "App-Einstellungen öffnen",
   "connectOpenBluetoothSettings": "Bluetooth-Einstellungen",
+  "connectScanAgain": "Erneut suchen",
 
   "radioConnectionTitle": "Funkgerät-Verbindung",
   "radioConnectionEmpty": "Keine kompatiblen Funkgeräte gefunden.\nStellen Sie sicher, dass Ihr Funkgerät eingeschaltet und Bluetooth aktiviert ist.",
