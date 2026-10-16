@@ -94,6 +94,7 @@ void main() {
         macAddress: radio.macAddress,
         playback: player,
         engineSpawner: spawn,
+        audioReconnectDelay: (_) => const Duration(milliseconds: 100),
       );
       Map status() =>
           DataBroker.getValueDynamic(2, 'RadioAudioDiagnostics', {}) as Map;
@@ -111,6 +112,20 @@ void main() {
         await done.future;
         // Let real ReceivePort messages arrive; no real platform channel is opened.
         await Future<void>.delayed(const Duration(milliseconds: 1100));
+      }
+
+      Future<void> disconnectAudioChannel() async {
+        final done = Completer<void>();
+        messenger.handlePlatformMessage(
+          'com.htcommander/bluetooth_classic_audio',
+          const StandardMethodCodec().encodeSuccessEnvelope({
+            'event': 'disconnected',
+            'address': radio.macAddress,
+            'reason': 'remote_closed',
+          }),
+          (_) => done.complete(),
+        );
+        await done.future;
       }
 
       try {
@@ -155,9 +170,27 @@ void main() {
         expect(status()['bufferedMs'], 0);
         expect(status()['receivedBytes'], 9);
         expect(status()['lastRxAt'], isNotNull);
-        await audio.stop();
+
+        // A transient Android Classic audio-channel loss should recover while
+        // audio remains enabled.
+        await disconnectAudioChannel();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        expect(calls.where((call) => call == 'connectAudio'), hasLength(2));
+        expect(status()['state'], 'running');
+
+        // Once another retry is queued, an explicit user stop cancels it.
+        await disconnectAudioChannel();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        DataBroker.dispatch(
+          deviceId: 2,
+          name: 'SetAudio',
+          data: false,
+          store: false,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 150));
         expect(status()['state'], 'stopped');
         expect(status()['bufferedMs'], 0);
+        expect(calls.where((call) => call == 'connectAudio'), hasLength(2));
         expect(calls, contains('connectAudio'));
         expect(calls, contains('disconnectAudio'));
         expect(calls, isNot(contains('sendAudio')));

@@ -32,6 +32,16 @@ import 'link_diagnostics.dart';
 class RadioAudio {
   // Audio format: 32 kHz, 16-bit, mono (matches the radio's SBC stream).
   static const int _sampleRate = 32000;
+  static const List<Duration> _audioReconnectDelays = [
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 5),
+  ];
 
   // Bound playback latency: drop incoming PCM if we are more than this many
   // frames (~800 ms) behind real time, mirroring the C# buffer catch-up logic.
@@ -66,9 +76,15 @@ class RadioAudio {
   // drain callback from the platform. The engine decodes; the host feeds.
   final PcmPlayer _pcm;
   final Future<void> Function(List<Object?>)? _engineSpawner;
+  final Duration Function(int attempt) _audioReconnectDelay;
   bool _pcmSoundReady = false;
   final RadioAudioDiagnostics _diagnostics;
   Timer? _diagnosticsTimer;
+  Timer? _audioReconnectTimer;
+  Timer? _audioHealthyTimer;
+  int _audioReconnectAttempt = 0;
+  bool _audioRequested = false;
+  bool _disposed = false;
 
   // The device ID of the radio currently selected (preferred) in the main form,
   // published on DataBroker device 1 as 'SelectedRadioDeviceId'. When connected
@@ -89,11 +105,14 @@ class RadioAudio {
     required this.macAddress,
     PcmPlayer? playback,
     Future<void> Function(List<Object?>)? engineSpawner,
+    Duration Function(int attempt)? audioReconnectDelay,
     DateTime Function()? clock,
   }) : _pcm = playback ?? PcmPlayer(),
        // Keep the construction adapter public and its implementation private.
        // ignore: prefer_initializing_formals
        _engineSpawner = engineSpawner,
+       _audioReconnectDelay =
+           audioReconnectDelay ?? _defaultAudioReconnectDelay,
        _diagnostics = RadioAudioDiagnostics(clock: clock) {
     // Restore the persisted output-device selection (device 0 = global).
     _outputDeviceId =
@@ -384,8 +403,20 @@ class RadioAudio {
   void _onSetAudio(int deviceId, String name, Object? data) {
     if (data is! bool) return;
     if (data) {
+      _audioRequested = true;
+      _audioReconnectAttempt = 0;
+      _audioReconnectTimer?.cancel();
+      _audioReconnectTimer = null;
+      _audioHealthyTimer?.cancel();
+      _audioHealthyTimer = null;
       start();
     } else {
+      _audioRequested = false;
+      _audioReconnectAttempt = 0;
+      _audioReconnectTimer?.cancel();
+      _audioReconnectTimer = null;
+      _audioHealthyTimer?.cancel();
+      _audioHealthyTimer = null;
       _audioPendingPowerOn = false;
       stop();
     }
@@ -529,7 +560,10 @@ class RadioAudio {
 
   /// Connect to the radio's audio RFCOMM channel and begin receiving audio.
   Future<void> start() async {
-    if (_running || _connecting) return;
+    if (_disposed || _running || _connecting) return;
+    _audioRequested = true;
+    _audioReconnectTimer?.cancel();
+    _audioReconnectTimer = null;
     _connecting = true;
     _diagnostics.start();
     _diagnosticsTimer?.cancel();
@@ -635,12 +669,18 @@ class RadioAudio {
           'control and packet reception remain connected. Retry Audio when the link improves.',
         );
         await _releasePcmSound();
+        _scheduleAudioReconnect();
         return;
       }
 
       _running = true;
       _connecting = false;
       _audioPendingPowerOn = false;
+      _audioHealthyTimer?.cancel();
+      _audioHealthyTimer = Timer(const Duration(minutes: 1), () {
+        _audioHealthyTimer = null;
+        if (_running && !_disposed) _audioReconnectAttempt = 0;
+      });
       _dispatchAudioStateChanged(true);
     } catch (e) {
       await _audioDataSub?.cancel();
@@ -653,11 +693,16 @@ class RadioAudio {
       _running = false;
       _connecting = false;
       _dispatchAudioStateChanged(false);
+      _scheduleAudioReconnect();
     }
   }
 
   /// Stop receiving audio and release the audio RFCOMM channel.
   Future<void> stop() async {
+    _audioReconnectTimer?.cancel();
+    _audioReconnectTimer = null;
+    _audioHealthyTimer?.cancel();
+    _audioHealthyTimer = null;
     if (!_running && !_connecting) return;
     _running = false;
     _connecting = false;
@@ -688,6 +733,12 @@ class RadioAudio {
 
   /// Dispose all resources.
   Future<void> dispose() async {
+    _disposed = true;
+    _audioRequested = false;
+    _audioReconnectTimer?.cancel();
+    _audioReconnectTimer = null;
+    _audioHealthyTimer?.cancel();
+    _audioHealthyTimer = null;
     _diagnosticsTimer?.cancel();
     _diagnosticsTimer = null;
     await stop();
@@ -710,8 +761,40 @@ class RadioAudio {
     if (event.type == BluetoothClassicEventType.disconnected) {
       _diagnostics.failureReason = 'audioDisconnected';
       _debug('Audio channel disconnected by remote.');
-      stop();
+      unawaited(_stopAfterAudioDisconnect());
     }
+  }
+
+  Future<void> _stopAfterAudioDisconnect() async {
+    await stop();
+    _scheduleAudioReconnect();
+  }
+
+  void _scheduleAudioReconnect() {
+    if (_disposed ||
+        !_audioRequested ||
+        _audioPendingPowerOn ||
+        _running ||
+        _connecting ||
+        _audioReconnectTimer != null) {
+      return;
+    }
+    final attempt = ++_audioReconnectAttempt;
+    final delay = _audioReconnectDelay(attempt);
+    _debug(
+      'Audio channel retry $attempt scheduled in '
+      '${delay.inSeconds} second(s).',
+    );
+    _audioReconnectTimer = Timer(delay, () {
+      _audioReconnectTimer = null;
+      if (_disposed || !_audioRequested || _running || _connecting) return;
+      unawaited(start());
+    });
+  }
+
+  static Duration _defaultAudioReconnectDelay(int attempt) {
+    final index = (attempt - 1).clamp(0, _audioReconnectDelays.length - 1);
+    return _audioReconnectDelays[index];
   }
 
   // ---------------------------------------------------------------------------
