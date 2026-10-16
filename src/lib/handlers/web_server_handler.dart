@@ -46,7 +46,8 @@ import '../winlink/winlink_mail.dart';
 /// Manages the lifecycle of the [WebServer] and bridges WebSocket clients to the
 /// radio, based on app settings.
 class WebServerHandler {
-  WebServerHandler() : _broker = DataBrokerClient() {
+  WebServerHandler({this.reconcileAndroidServiceRecovery = false})
+    : _broker = DataBrokerClient() {
     _remote = RemoteRadioController(
       target: () => _targetRadioDeviceId,
       clientCanControl: (id) => _server?.clientById(id)?.readOnly == false,
@@ -57,6 +58,7 @@ class WebServerHandler {
   Timer? _rebindTimer;
 
   final DataBrokerClient _broker;
+  final bool reconcileAndroidServiceRecovery;
   final AndroidServerLifecycle _androidServerLifecycle =
       AndroidServerLifecycle();
 
@@ -257,7 +259,13 @@ class WebServerHandler {
       callback: _onRawCommandRx,
     );
 
-    if (_enabled) _startServer();
+    if (_enabled) {
+      _startServer();
+    } else if (reconcileAndroidServiceRecovery &&
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(_androidServerLifecycle.stop());
+    }
   }
 
   /// The radio device bridged to WebSocket clients, or `-1` if none. Follows the

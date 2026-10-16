@@ -136,7 +136,11 @@ void main(List<String> args) {
     () async {
       WidgetsFlutterBinding.ensureInitialized();
       runApp(const _StartupApp());
-      await _startApp(args);
+      final androidServiceRecovery =
+          !kIsWeb &&
+          Platform.isAndroid &&
+          await AndroidServerLifecycle().consumeServiceRecoveryMode();
+      await _startApp(args, androidServiceRecovery: androidServiceRecovery);
       startupComplete = true;
     },
     (Object error, StackTrace stack) {
@@ -376,24 +380,40 @@ class _AndroidStartupGate extends StatelessWidget {
 }
 
 /// Application entry point, executed inside the guarded zone set up by [main].
-Future<void> _startApp(List<String> args) async {
+Future<void> _startApp(
+  List<String> args, {
+  bool androidServiceRecovery = false,
+}) async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb && Platform.isAndroid) {
-    final initialization = _initializeApplication(args).catchError((
-      Object error,
-      StackTrace stack,
-    ) {
-      CrashLogger.instance.logError('Application startup failed', error, stack);
-      Error.throwWithStackTrace(error, stack);
-    });
+    final initialization =
+        _initializeApplication(
+          args,
+          androidServiceRecovery: androidServiceRecovery,
+        ).catchError((Object error, StackTrace stack) {
+          CrashLogger.instance.logError(
+            'Application startup failed',
+            error,
+            stack,
+          );
+          Error.throwWithStackTrace(error, stack);
+        });
     runApp(_AndroidStartupGate(initialization: initialization));
     return;
   }
 
-  runApp(await _initializeApplication(args));
+  runApp(
+    await _initializeApplication(
+      args,
+      androidServiceRecovery: androidServiceRecovery,
+    ),
+  );
 }
 
-Future<Widget> _initializeApplication(List<String> args) async {
+Future<Widget> _initializeApplication(
+  List<String> args, {
+  bool androidServiceRecovery = false,
+}) async {
   // Recover settings/data orphaned by the Windows CompanyName rename
   // (com.example -> com.meshcentral). Must run before anything reads or writes
   // the (new) application-support folder, i.e. before the crash log and the
@@ -437,6 +457,23 @@ Future<Widget> _initializeApplication(List<String> args) async {
 
   // Initialize the DataBroker for cross-component communication
   await DataBroker.initialize();
+
+  // A recovered network service may bootstrap Flutter while the Activity is
+  // still absent. Do not silently resume local audio capture in that context;
+  // the user can enable rolling recording again after returning to the app.
+  if (androidServiceRecovery &&
+      DataBroker.getValue<bool>(0, 'RollingVoiceEnabled', false) == true) {
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'RollingVoiceEnabled',
+      data: false,
+      store: true,
+    );
+    DataBrokerClient().logInfo(
+      '[Android] Local rolling recording was paused after service recovery; '
+      'enable it again in the app if needed.',
+    );
+  }
 
   // When this is the web build served by the desktop app, device-0 settings are
   // read from and written to the host over the bridge instead of being saved in
@@ -739,7 +776,9 @@ Future<Widget> _initializeApplication(List<String> args) async {
           Platform.isLinux ||
           Platform.isMacOS ||
           Platform.isAndroid)) {
-    final webServerHandler = WebServerHandler();
+    final webServerHandler = WebServerHandler(
+      reconcileAndroidServiceRecovery: androidServiceRecovery,
+    );
     webServerHandler.init();
     DataBroker.addDataHandler('WebServerHandler', webServerHandler);
   }
@@ -760,7 +799,9 @@ Future<Widget> _initializeApplication(List<String> args) async {
   // Android radio connections and network servers need a foreground service
   // when the activity is backgrounded.
   if (!kIsWeb && Platform.isAndroid) {
-    final networkServicesHandler = AndroidNetworkServicesHandler();
+    final networkServicesHandler = AndroidNetworkServicesHandler(
+      reconcileAndroidServiceRecovery: androidServiceRecovery,
+    );
     networkServicesHandler.init();
     DataBroker.addDataHandler(
       'AndroidNetworkServicesHandler',

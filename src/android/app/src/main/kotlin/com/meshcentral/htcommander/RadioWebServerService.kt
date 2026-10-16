@@ -24,6 +24,8 @@ class RadioWebServerService : Service() {
         private const val EXTRA_REASON = "reason"
         private const val REASON_SERVER = RadioServiceReasonState.REASON_SERVER
         private const val ACTION_START = "com.htcommander.action.START_RADIO_SERVICE"
+        private const val PREFERENCES_NAME = "radio_service_lifecycle"
+        private const val KEY_RESTORABLE_REASONS = "restorable_reasons"
         private val lifecycleLock = Any()
         @Volatile
         private var runningInstance: RadioWebServerService? = null
@@ -55,6 +57,7 @@ class RadioWebServerService : Service() {
             synchronized(lifecycleLock) {
                 service = runningInstance
                 pendingReasons.add(reason)
+                persistRestorableReasonsLocked(context)
                 if (service == null) {
                     if (onStarted != null) {
                         pendingStartCallbacks.getOrPut(reason) { mutableListOf() }
@@ -85,7 +88,10 @@ class RadioWebServerService : Service() {
                 val failure = error.message ?: "Could not start service"
                 val failedReasons = synchronized(lifecycleLock) {
                     startRequested = false
-                    pendingReasons.toList().also { pendingReasons.clear() }
+                    pendingReasons.toList().also {
+                        pendingReasons.clear()
+                        persistRestorableReasonsLocked(context)
+                    }
                 }
                 failedReasons.forEach { failedReason ->
                     finishPendingStart(failedReason, failure)
@@ -103,10 +109,27 @@ class RadioWebServerService : Service() {
         private fun pendingReasonSnapshot(): Set<String> =
             synchronized(lifecycleLock) { pendingReasons.toSet() }
 
+        private fun persistRestorableReasonsLocked(context: Context) {
+            val restorable = RadioServiceRestartPolicy.restorableReasons(pendingReasons)
+            context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(KEY_RESTORABLE_REASONS, HashSet(restorable))
+                .apply()
+        }
+
+        private fun restorePersistedReasons(context: Context): Set<String> {
+            val persisted = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getStringSet(KEY_RESTORABLE_REASONS, emptySet())
+                ?.toSet()
+                .orEmpty()
+            return RadioServiceRestartPolicy.restorableReasons(persisted)
+        }
+
         @Suppress("UNUSED_PARAMETER")
         fun stop(context: Context, reason: String = REASON_SERVER) {
             val service = synchronized(lifecycleLock) {
                 pendingReasons.remove(reason)
+                persistRestorableReasonsLocked(context)
                 runningInstance
             }
             if (service != null) service.stopReason(reason)
@@ -129,6 +152,7 @@ class RadioWebServerService : Service() {
         synchronized(lifecycleLock) {
             runningInstance = this
             startRequested = false
+            pendingReasons.addAll(restorePersistedReasons(applicationContext))
         }
 
         // Network services and the recorder cannot respond while Android
@@ -147,9 +171,25 @@ class RadioWebServerService : Service() {
         } else {
             reasons.forEach { startReason(it) }
         }
-        // The HTTP listener, recorder and radio bridge live in Flutter's main
-        // isolate. A restarted notification-only service cannot restore them.
-        return START_NOT_STICKY
+        val activeReasons = pendingReasonSnapshot()
+        if (intent == null && RadioServiceRestartPolicy.shouldRestart(activeReasons)) {
+            try {
+                (application as HTCommanderApplication)
+                    .startFlutterEngineForServiceRecovery()
+            } catch (error: Exception) {
+                Log.e("HTCommander", "Could not restore Flutter host after service restart", error)
+                stopForegroundAndService()
+                return START_NOT_STICKY
+            }
+        }
+        // Restoring the application-owned Dart engine brings back the HTTP
+        // listener and remembered radio connections. Android will retry only
+        // while a radio or network feature remains explicitly enabled.
+        return if (RadioServiceRestartPolicy.shouldRestart(activeReasons)) {
+            START_STICKY
+        } else {
+            START_NOT_STICKY
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -195,7 +235,10 @@ class RadioWebServerService : Service() {
             null
         } catch (error: Exception) {
             reasonState.set(reason, false)
-            synchronized(lifecycleLock) { pendingReasons.remove(reason) }
+            synchronized(lifecycleLock) {
+                pendingReasons.remove(reason)
+                persistRestorableReasonsLocked(applicationContext)
+            }
             Log.e("HTCommander", "Could not promote radio service for $reason", error)
             try {
                 if (reasonState.set(reason, false)) startForegroundWithCurrentTypes()

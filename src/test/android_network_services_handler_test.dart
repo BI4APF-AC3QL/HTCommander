@@ -1,9 +1,43 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/handlers/android_network_services_handler.dart';
 import 'package:htcommander/services/data_broker.dart';
 
 void main() {
-  tearDown(DataBroker.reset);
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const lifecycle = MethodChannel('com.htcommander/server_lifecycle');
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(lifecycle, null);
+    DataBroker.reset();
+  });
+
+  test(
+    'clears a stale network-services lease after Android service recovery',
+    () async {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(lifecycle, (call) async {
+            calls.add(call);
+            return true;
+          });
+      final handler = AndroidNetworkServicesHandler(
+        isAndroid: true,
+        reconcileAndroidServiceRecovery: true,
+      );
+
+      try {
+        handler.init();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(calls.map((call) => call.method), ['stop']);
+        expect(calls.single.arguments, {'reason': 'networkServices'});
+      } finally {
+        await handler.dispose();
+      }
+    },
+  );
 
   test(
     'keeps Android foreground service active for configured Home Assistant MQTT',

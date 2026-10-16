@@ -23,4 +23,13 @@ class AndroidServerLifecycle {
       // The desktop and web implementations do not register this channel.
     }
   }
+
+  Future<bool> consumeServiceRecoveryMode() async {
+    try {
+      return await _channel.invokeMethod<bool>('consumeServiceRecoveryMode') ??
+          false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
 }

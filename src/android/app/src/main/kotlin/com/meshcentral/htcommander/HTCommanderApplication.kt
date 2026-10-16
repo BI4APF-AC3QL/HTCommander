@@ -1,6 +1,8 @@
 package com.meshcentral.htcommander
 
 import android.content.Context
+import android.util.Log
+import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
@@ -12,6 +14,8 @@ class HTCommanderApplication : android.app.Application() {
     private var configuredEngine: FlutterEngine? = null
     private var bluetoothPlugin: BluetoothClassicPlugin? = null
     private var pcmPlayerPlugin: AndroidPcmPlayerPlugin? = null
+    @Volatile
+    private var serviceRecoveryPending = false
 
     override fun onCreate() {
         super.onCreate()
@@ -33,7 +37,7 @@ class HTCommanderApplication : android.app.Application() {
     }
 
     @Synchronized
-    fun configureFlutterEngine(engine: FlutterEngine, activity: MainActivity) {
+    fun configureFlutterEngine(engine: FlutterEngine, activity: MainActivity?) {
         if (configuredEngine === engine) {
             bluetoothPlugin?.activity = activity
             return
@@ -95,6 +99,11 @@ class HTCommanderApplication : android.app.Application() {
                             }
                             result.success(true)
                         }
+                        "consumeServiceRecoveryMode" -> {
+                            val pending = serviceRecoveryPending
+                            serviceRecoveryPending = false
+                            result.success(pending)
+                        }
                         else -> result.notImplemented()
                     }
                 } catch (error: Exception) {
@@ -108,6 +117,28 @@ class HTCommanderApplication : android.app.Application() {
 
         AndroidAutoBridge.attach(messenger)
         configuredEngine = engine
+    }
+
+    /**
+     * A sticky service can be recreated after Android reclaims the app process.
+     * Re-run the normal Dart entrypoint in the retained engine so its persisted
+     * settings can bring the web server and radio handlers back without opening
+     * an Activity. MainActivity attaches to the same engine when the user returns.
+     */
+    @Synchronized
+    fun startFlutterEngineForServiceRecovery() {
+        val engine = provideFlutterEngine(applicationContext)
+        configureFlutterEngine(engine, null)
+        if (engine.dartExecutor.isExecutingDart) return
+
+        serviceRecoveryPending = true
+        Log.i("HTCommander", "Starting retained Flutter engine after service recovery")
+        try {
+            engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
+        } catch (error: Exception) {
+            serviceRecoveryPending = false
+            throw error
+        }
     }
 
     @Synchronized

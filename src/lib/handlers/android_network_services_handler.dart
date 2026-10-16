@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import '../allstar/allstar_client.dart' show allStarDeviceId;
 import '../allstar/allstar_node.dart' show allStarNodeDeviceId;
@@ -10,14 +11,21 @@ import '../services/data_broker_client.dart';
 /// The application-owned Flutter engine keeps the Dart radio and network handlers
 /// alive; this service keeps the process eligible to run in the background.
 class AndroidNetworkServicesHandler {
-  AndroidNetworkServicesHandler({this._startService, this._stopService})
-    : _broker = DataBrokerClient(),
-      _lifecycle = AndroidServerLifecycle();
+  AndroidNetworkServicesHandler({
+    this._startService,
+    this._stopService,
+    this.reconcileAndroidServiceRecovery = false,
+    bool? isAndroid,
+  }) : _isAndroid = isAndroid ?? Platform.isAndroid,
+       _broker = DataBrokerClient(),
+       _lifecycle = AndroidServerLifecycle();
 
+  final bool _isAndroid;
   final DataBrokerClient _broker;
   final AndroidServerLifecycle _lifecycle;
   final Future<void> Function()? _startService;
   final Future<void> Function()? _stopService;
+  final bool reconcileAndroidServiceRecovery;
   Future<void> _transition = Future<void>.value();
   bool _active = false;
   bool _allStarNodeActive = false;
@@ -59,6 +67,11 @@ class AndroidNetworkServicesHandler {
       name: 'State',
       callback: _onAllStarNodeStateChanged,
     );
+    if (reconcileAndroidServiceRecovery && _isAndroid && !_shouldRun) {
+      // A process can die after the setting changed but before the native
+      // stop request reached Android. Clear a stale persisted keep-alive lease.
+      unawaited(_lifecycle.stop(reason: 'networkServices'));
+    }
     _apply();
   }
 
