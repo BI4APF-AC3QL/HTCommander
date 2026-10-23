@@ -3,7 +3,7 @@ Copyright 2026 Ylian Saint-Hilaire
 Licensed under the Apache License, Version 2.0 (the "License");
 http://www.apache.org/licenses/LICENSE-2.0
 
-Home Assistant bridge (desktop only).
+Home Assistant bridge for desktop and Android.
 
 Owns an MQTT connection to a broker (typically the Mosquitto add-on that Home
 Assistant users already run) and exposes every connected radio to Home Assistant
@@ -20,8 +20,9 @@ For each connected radio it:
   * turns inbound Home Assistant command topics back into the same DataBroker
     commands the app's own UI dispatches.
 
-The bridge is only wired up on desktop (Windows / Linux / macOS); on the web the
-[MqttClientFacade] resolves to an inert stub and this handler is never started.
+The bridge is wired up on desktop (Windows / Linux / macOS) and Android; on the
+web the [MqttClientFacade] resolves to an inert stub and this handler is never
+started.
 */
 
 import 'dart:convert';

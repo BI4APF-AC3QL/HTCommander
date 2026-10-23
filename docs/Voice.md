@@ -19,4 +19,4 @@ The English-only models are best if you intend to only listen to English convers
 
 Once enabled, the voice recognition will run when the radio no longer receives a signal or every 20 to 30 seconds.
 
-In addition, there is support for text-to-speech (TTS) using the Microsoft Speech API. So, you can type a message and it will be read on the radio.
+In addition, there is support for text-to-speech (TTS) using the Microsoft Speech API on Windows. Android uses the system TextToSpeech service, with a local voice preview in Settings and PCM synthesis for radio transmission. Preview playback is local and does not send audio to the radio.

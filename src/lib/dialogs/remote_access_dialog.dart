@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,9 +9,29 @@ import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../services/secret_store.dart';
 import '../services/web/remote_access_config.dart';
+import '../services/web/remote_audit.dart';
+import 'aprs_shortcuts_dialog.dart';
+import 'remote_profile_dialog.dart';
+import 'link_diagnostics_dialog.dart';
+import 'remote_connection_dialog.dart';
+import 'offline_simulation_dialog.dart';
+import '../services/diagnostic_log.dart';
+import '../services/web/remote_connection_models.dart';
 
 class RemoteAccessDialog extends StatefulWidget {
-  const RemoteAccessDialog({super.key});
+  const RemoteAccessDialog({
+    super.key,
+    this.addressLoader,
+    this.networkChanges,
+  });
+
+  /// Optional seams for exercising address changes without a device network.
+  @visibleForTesting
+  final Future<List<String>> Function()? addressLoader;
+
+  @visibleForTesting
+  final Stream<List<ConnectivityResult>>? networkChanges;
+
   @override
   State<RemoteAccessDialog> createState() => _RemoteAccessDialogState();
 }
@@ -22,11 +44,20 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
   late bool _enabled;
   late bool _remote;
   late bool _tx;
+  late bool _aprs;
+  late bool _position;
+  late bool _readOnly;
+  late bool _approval;
+  bool _stopped = false;
+  List<Map> _clients = [];
   bool _showPassword = false;
   bool _saving = false;
   String? _error;
   String _status = '';
   List<String> _addresses = [];
+  StreamSubscription<List<ConnectivityResult>>? _networkSubscription;
+  int _addressGeneration = 0;
+  bool _loadingAddresses = false;
   bool get _zh => Localizations.localeOf(context).languageCode == 'zh';
   String _text(String zh, String en) => _zh ? zh : en;
 
@@ -37,6 +68,29 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
     _enabled = DataBroker.getValue<int>(0, 'webServerEnabled', 0) == 1;
     _remote = config.enabled;
     _tx = config.allowTransmit;
+    _aprs = config.allowAprs;
+    _position = config.allowPosition;
+    _readOnly = config.defaultReadOnly;
+    _approval = config.requireControlApproval;
+    _stopped = DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1;
+    _clients = (DataBroker.getValueDynamic(0, 'RemoteClients', []) as List)
+        .whereType<Map>()
+        .toList();
+    _broker.subscribeMultiple(
+      deviceId: 0,
+      names: const ['RemoteClients', 'webServerEmergencyStopped'],
+      callback: (_, _, _) {
+        if (!mounted) return;
+        setState(() {
+          _clients =
+              (DataBroker.getValueDynamic(0, 'RemoteClients', []) as List)
+                  .whereType<Map>()
+                  .toList();
+          _stopped =
+              DataBroker.getValue<int>(0, 'webServerEmergencyStopped', 0) == 1;
+        });
+      },
+    );
     _password = TextEditingController(text: config.password);
     _origin = TextEditingController(text: config.publicOrigin);
     _port = TextEditingController(
@@ -51,21 +105,40 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
       },
     );
     _loadAddresses();
+    if (!kIsWeb && (Platform.isAndroid || widget.networkChanges != null)) {
+      _networkSubscription =
+          (widget.networkChanges ?? Connectivity().onConnectivityChanged)
+              .listen((_) => unawaited(_loadAddresses()), onError: (_) {});
+    }
   }
 
   Future<void> _loadAddresses() async {
     if (kIsWeb) return;
+    final generation = ++_addressGeneration;
+    if (mounted) setState(() => _loadingAddresses = true);
     try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-      );
-      final addresses = interfaces
-          .expand((i) => i.addresses)
-          .map((a) => a.address)
-          .toSet()
-          .toList();
-      if (mounted) setState(() => _addresses = addresses);
-    } catch (_) {}
+      final addresses = widget.addressLoader != null
+          ? await widget.addressLoader!()
+          : await _discoverAddresses();
+      if (!mounted || generation != _addressGeneration) return;
+      setState(() {
+        _addresses = addresses;
+        _loadingAddresses = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _addressGeneration) return;
+      setState(() => _loadingAddresses = false);
+    }
+  }
+
+  Future<List<String>> _discoverAddresses() async {
+    final interfaces = await NetworkInterface.list();
+    return interfaces
+        .expand((i) => i.addresses)
+        .where((a) => !a.isLinkLocal && !a.isLoopback && !a.isMulticast)
+        .map((a) => a.address)
+        .toSet()
+        .toList();
   }
 
   Future<void> _save() async {
@@ -102,6 +175,10 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
         'webServerPassword': _password.text,
         'webServerPublicOrigin': config.externalOrigin ?? '',
         'webServerAllowTransmit': _tx ? 1 : 0,
+        'webServerAllowAprs': _aprs ? 1 : 0,
+        'webServerAllowPosition': _position ? 1 : 0,
+        'webServerDefaultReadOnly': _readOnly ? 1 : 0,
+        'webServerRequireControlApproval': _approval ? 1 : 0,
         'webServerRemoteEnabled': _remote ? 1 : 0,
         'webServerPort': port,
         'webServerEnabled': _enabled ? 1 : 0,
@@ -125,6 +202,7 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
 
   @override
   void dispose() {
+    unawaited(_networkSubscription?.cancel());
     _broker.dispose();
     _password.dispose();
     _origin.dispose();
@@ -224,22 +302,312 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
               value: _tx,
               onChanged: _saving ? null : (v) => setState(() => _tx = v),
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _text('允许远程 APRS 消息发送', 'Allow remote APRS messages'),
+              ),
+              subtitle: Text(
+                _text(
+                  '仍须电脑总允许发射；与语音权限独立。',
+                  'Requires host transmit permission, independent of voice.',
+                ),
+              ),
+              value: _aprs,
+              onChanged: _saving ? null : (v) => setState(() => _aprs = v),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_text('允许远程位置发送', 'Allow remote position packets')),
+              value: _position,
+              onChanged: _saving ? null : (v) => setState(() => _position = v),
+            ),
+            const Divider(),
+            FilledButton.icon(
+              icon: Icon(_stopped ? Icons.play_arrow : Icons.stop_circle),
+              onPressed: () => DataBroker.dispatch(
+                deviceId: 0,
+                name: 'webServerEmergencyStopped',
+                data: _stopped ? 0 : 1,
+              ),
+              label: Text(
+                _stopped
+                    ? _text('明确恢复远程控制', 'Resume remote control')
+                    : _text('紧急停止远程控制与发送', 'Emergency stop remote control/TX'),
+              ),
+            ),
+            Text(
+              _text(
+                '停止后不自动恢复；会取消待确认消息。恢复后仍须满足各项发射权限。',
+                'Stopped control stays stopped until explicitly resumed; pending messages are cancelled. TX permissions still apply.',
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_text('新客户端默认只读', 'New clients start read-only')),
+              subtitle: Text(
+                _text(
+                  '只读客户端可收听与查看；在此授予控制权。重新连接使用默认权限。',
+                  'Read-only clients may listen and inspect. Grant control below; reconnect uses the default role.',
+                ),
+              ),
+              value: _readOnly,
+              onChanged: _saving ? null : (v) => setState(() => _readOnly = v),
+            ),
+            Text(_text('在线客户端', 'Connected clients')),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _text('控制权申请必须由主机批准', 'Host approval required for control'),
+              ),
+              subtitle: Text(
+                _text(
+                  '关闭时空闲控制权自动授予首个有操作权限的申请者。只读客户端仍需由主机授权。',
+                  'When off, an eligible requester receives idle control automatically. Read-only clients still need host authorization.',
+                ),
+              ),
+              value: _approval,
+              onChanged: _saving ? null : (v) => setState(() => _approval = v),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.back_hand),
+              label: Text(_text('收回所有远程控制权', 'Recall all remote control')),
+              onPressed: () => DataBroker.dispatch(
+                deviceId: 0,
+                name: 'RemoteControlRecall',
+                data: true,
+                store: false,
+              ),
+            ),
+            ..._clients.map(
+              (client) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('#${client['id']} · ${client['address']}'),
+                subtitle: Text(
+                  (client['ownsControl'] == true
+                          ? _text('正在操作 · ', 'Operating · ')
+                          : '') +
+                      (client['controlRequested'] == true
+                          ? _text(
+                              '申请中 #${client['queuePosition']} · ',
+                              'Waiting #${client['queuePosition']} · ',
+                            )
+                          : '') +
+                      (client['readOnly'] == true
+                          ? _text('只读', 'Read-only')
+                          : _text('可申请控制', 'May request control')),
+                ),
+                trailing: Wrap(
+                  children: [
+                    IconButton(
+                      tooltip: _text('授予独占控制权', 'Grant exclusive control'),
+                      icon: Icon(
+                        client['ownsControl'] == true
+                            ? Icons.verified_user
+                            : Icons.gamepad,
+                      ),
+                      onPressed: _stopped
+                          ? null
+                          : () => DataBroker.dispatch(
+                              deviceId: 0,
+                              name: 'RemoteControlGrant',
+                              data: client['id'],
+                              store: false,
+                            ),
+                    ),
+                    IconButton(
+                      tooltip: _text('切换只读 / 控制', 'Toggle read-only / control'),
+                      icon: Icon(
+                        client['readOnly'] == true
+                            ? Icons.lock
+                            : Icons.lock_open,
+                      ),
+                      onPressed: () => DataBroker.dispatch(
+                        deviceId: 0,
+                        name: 'RemoteClientRole',
+                        data: {
+                          'id': client['id'],
+                          'readOnly': client['readOnly'] != true,
+                        },
+                        store: false,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: _text('撤销登录并断开', 'Revoke login and disconnect'),
+                      icon: const Icon(Icons.person_remove),
+                      onPressed: () => DataBroker.dispatch(
+                        deviceId: 0,
+                        name: 'RemoteClientRevoke',
+                        data: client['id'],
+                        store: false,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.science_outlined),
+              label: Text(_text('离线模拟演练', 'Offline simulation')),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const OfflineSimulationDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.copy),
+              label: Text(
+                _text('复制脱敏运行日志', 'Copy private diagnostic metadata'),
+              ),
+              onPressed: () => Clipboard.setData(
+                ClipboardData(
+                  text: DiagnosticLog.export(
+                    (DataBroker.getValueDynamic(1, 'DebugLogEntries', [])
+                            as List)
+                        .whereType<Map>(),
+                  ),
+                ),
+              ),
+            ),
+            if (!kIsWeb)
+              OutlinedButton.icon(
+                icon: const Icon(Icons.qr_code),
+                label: Text(
+                  _text('连接地址二维码与诊断', 'Address QR and connection diagnostics'),
+                ),
+                onPressed: () {
+                  try {
+                    final spec = RemoteConnectionSpec(
+                      port:
+                          DataBroker.getValue<int>(0, 'webServerPort', 8080) ??
+                          8080,
+                      publicOrigin: RemoteAccessConfig.current.publicOrigin,
+                    );
+                    showDialog<void>(
+                      context: context,
+                      builder: (_) => RemoteConnectionDialog(
+                        spec: spec,
+                        hosts: List.of(_addresses),
+                      ),
+                    );
+                  } catch (_) {
+                    setState(
+                      () => _error = _text(
+                        '先保存有效的地址和端口。',
+                        'Save a valid address and port first.',
+                      ),
+                    );
+                  }
+                },
+              ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.monitor_heart_outlined),
+              label: Text(_text('链路诊断', 'Link diagnostics')),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const LinkDiagnosticsDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.star_outline),
+              label: Text(
+                _text('常用呼号与消息模板', 'Favorite callsigns and message templates'),
+              ),
+              onPressed: () => showDialog<void>(
+                context: context,
+                builder: (_) => const AprsShortcutsDialog(),
+              ),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.import_export),
+              label: Text(
+                _text('远控配置导入 / 导出', 'Remote profile import / export'),
+              ),
+              onPressed: () async {
+                final applied = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => const RemoteProfileDialog(),
+                );
+                if (applied == true && context.mounted) {
+                  // Import is immediate: close this stale editor so Save cannot
+                  // restore the pre-import activation or old endpoints.
+                  Navigator.of(context).pop(true);
+                }
+              },
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.copy),
+              label: Text(
+                _text('复制脱敏操作审计 JSON', 'Copy redacted operation audit JSON'),
+              ),
+              onPressed: () => Clipboard.setData(
+                ClipboardData(
+                  text: RemoteAudit.export(
+                    (DataBroker.getValueDynamic(0, 'RemoteAudit', []) as List)
+                        .whereType<Map>()
+                        .toList(),
+                  ),
+                ),
+              ),
+            ),
+            Text(
+              _text(
+                '审计仅在本次运行的内存中保存最近 200 条，不含密码、地址、消息正文、定位或音频；“接受”表示软件接受请求，不代表射频发送成功。相同客户端的连续同类拒绝每秒记录一次。',
+                'Audit keeps the latest 200 events in memory for this run. No passwords, addresses, message text, locations or audio. Accepted means software accepted a request, not RF success. Repeated identical denials are coalesced to one per second.',
+              ),
+            ),
             const Divider(),
             Text(
               _text('手机连接地址', 'Phone connection addresses'),
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => unawaited(_loadAddresses()),
+                icon: const Icon(Icons.refresh),
+                label: Text(_text('刷新本机地址', 'Refresh local addresses')),
+              ),
+            ),
+            if (_addresses.isEmpty && !_loadingAddresses)
+              Text(
+                _text(
+                  '当前没有可显示的局域网地址。',
+                  'No local network address is available.',
+                ),
+              ),
             ..._addresses.map(
               (ip) => Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Row(
                   children: [
-                    Expanded(child: SelectableText('http://$ip:${_port.text}')),
+                    Expanded(
+                      child: SelectableText(
+                        Uri(
+                          scheme: 'http',
+                          host: ip,
+                          port: (int.tryParse(_port.text) ?? 8080).clamp(
+                            1,
+                            65535,
+                          ),
+                        ).toString(),
+                      ),
+                    ),
                     IconButton(
                       tooltip: _text('复制地址', 'Copy address'),
                       icon: const Icon(Icons.copy),
                       onPressed: () => Clipboard.setData(
-                        ClipboardData(text: 'http://$ip:${_port.text}'),
+                        ClipboardData(
+                          text: Uri(
+                            scheme: 'http',
+                            host: ip,
+                            port: (int.tryParse(_port.text) ?? 8080).clamp(
+                              1,
+                              65535,
+                            ),
+                          ).toString(),
+                        ),
                       ),
                     ),
                   ],
@@ -248,10 +616,15 @@ class _RemoteAccessDialogState extends State<RemoteAccessDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              _text(
-                '同一 Wi-Fi：使用上方电脑 IP。外网：电脑和手机使用同一 VPN，或配置 HTTPS 反向代理并填写上方外网地址。手机麦克风必须使用 HTTPS。Windows 防火墙需要允许此应用的相应网络访问。',
-                'Same Wi-Fi: use the PC IP above. Internet: join the same VPN or configure an HTTPS reverse proxy and enter its public origin. Browser microphone requires HTTPS. Allow the app through Windows Firewall on the intended network.',
-              ),
+              (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                  ? _text(
+                      '同一 Wi-Fi：另一台手机访问上方本机 IP 和端口。Android 会在服务开启期间显示常驻通知并保持服务运行，可能增加耗电；关闭网页服务即可停止。外网请使用 VPN 或 HTTPS 反向代理。浏览器麦克风和定位需要 HTTPS；局域网 HTTP 下可使用电台控制和收听。',
+                      'On the same Wi-Fi, open the local IP and port above on another device. Android shows an ongoing notification and keeps the server active while enabled, which can use more battery; turn the web server off to stop it. Use a VPN or HTTPS reverse proxy for outside access. Browser microphone and location need HTTPS; radio control and listening work over LAN HTTP.',
+                    )
+                  : _text(
+                      '同一 Wi-Fi：使用上方电脑 IP。外网：电脑和手机使用同一 VPN，或配置 HTTPS 反向代理并填写上方外网地址。手机麦克风必须使用 HTTPS。Windows 防火墙需要允许此应用的相应网络访问。',
+                      'Same Wi-Fi: use the PC IP above. Internet: join the same VPN or configure an HTTPS reverse proxy and enter its public origin. Browser microphone requires HTTPS. Allow the app through Windows Firewall on the intended network.',
+                    ),
             ),
             if (_status.isNotEmpty) Text(_status),
             if (_error != null)

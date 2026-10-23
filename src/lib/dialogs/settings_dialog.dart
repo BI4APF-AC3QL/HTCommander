@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_serial_communication/flutter_serial_communication.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pasteboard/pasteboard.dart';
@@ -21,21 +22,27 @@ import '../echolink/echolink_credential_test.dart';
 import '../radio/repeaterbook_client.dart';
 import '../services/serial/serial_port.dart';
 import '../services/data_broker_client.dart';
+import '../services/data_broker.dart';
 import '../services/history_limiter.dart';
 import '../services/locale_controller.dart';
 import '../services/mqtt/mqtt_client_facade.dart';
 import '../services/theme_controller.dart';
 import '../services/tts_service.dart';
+import '../services/notification_service.dart';
+import '../services/android_current_location.dart';
 import '../services/winlink_gateway_service.dart';
 import '../services/sherpa_model_manager.dart';
+import '../handlers/android_speech_to_text_capabilities.dart';
 import '../widgets/contact_avatar.dart';
 import 'app_settings.dart';
 import 'remote_access_dialog.dart';
 import 'aprs_route_dialog.dart';
+import 'gateway_policy_dialog.dart';
 import 'contact_logo_picker_dialog.dart';
 import 'echolink_create_account_dialog.dart';
 import 'image_crop_dialog.dart';
 import 'location_picker_dialog.dart';
+import '../gps/gps_serial_handler.dart';
 
 /// Settings dialog with tabbed interface
 class SettingsDialog extends StatefulWidget {
@@ -49,14 +56,12 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog>
     with SingleTickerProviderStateMixin {
-  static bool get _serialGpsSupported =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux);
+  static bool get _serialGpsSupported => GpsSerialHandler.isSupported;
 
   late TabController _tabController;
   late AppSettings _settings;
+  late Future<bool> _androidSystemSttAvailable;
+  late Future<bool> _androidSherpaFallbackAvailable;
 
   // Operator's own avatar for the License tab. Mirrors [_settings] and is
   // written back on save. A custom [_avatarImage] takes precedence over a
@@ -115,6 +120,9 @@ class _SettingsDialogState extends State<SettingsDialog>
   bool _homeAssistantTesting = false;
   String _homeAssistantTestResult = '';
   bool _homeAssistantTestOk = false;
+  bool _phoneGpsBusy = false;
+  bool? _phoneGpsSucceeded;
+  bool _phoneGpsTrackingEnabled = false;
 
   // APRS.fi API key "Test" state.
   bool _aprsFiTesting = false;
@@ -138,8 +146,11 @@ class _SettingsDialogState extends State<SettingsDialog>
   String _allStarTestResult = '';
   bool _allStarTestOk = false;
 
-  // Serial ports available for the GPS receiver (desktop only).
+  // Desktop serial ports or Android USB-serial GPS devices.
   List<String> _availablePorts = const [];
+  final Map<String, String> _usbGpsPortLabels = {};
+  final FlutterSerialCommunication _androidUsbSerial =
+      FlutterSerialCommunication();
 
   // Available text-to-speech voices, loaded asynchronously.
   List<Map<String, String>> _voices = const [];
@@ -158,8 +169,9 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   /// Settings tabs in display order. On the web the radio is used over the BLE
   /// control channel only, so the audio-centric "Comms" tab and the
-  /// internet-service "Servers" / "Map" tabs are hidden. On Android/iOS the
-  /// "Servers" tab is hidden. All tabs remain visible on desktop platforms.
+  /// internet-service "Servers" / "Map" tabs are hidden. iOS hides the
+  /// "Servers" tab because it cannot host the app's TCP services. Android and
+  /// desktop expose the network services their platforms can run.
   List<String> get _visibleTabs {
     const all = [
       'License',
@@ -185,8 +197,7 @@ class _SettingsDialogState extends State<SettingsDialog>
           )
           .toList();
     }
-    if (defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS) {
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
       return all.where((t) => t != 'Servers').toList();
     }
     return all;
@@ -265,11 +276,24 @@ class _SettingsDialogState extends State<SettingsDialog>
 
     // Load settings from DataBroker
     _settings = AppSettings.loadFromDataBroker();
+    _androidSystemSttAvailable =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        ? AndroidSpeechToTextCapabilities.systemRecognizerAvailable
+        : Future<bool>.value(false);
+    _androidSherpaFallbackAvailable =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        ? AndroidSpeechToTextCapabilities.sherpaFallbackAvailable
+        : Future<bool>.value(false);
+    _phoneGpsTrackingEnabled =
+        (_broker.getValue<int>(0, 'PhoneGpsTrackingEnabled', 0) ?? 0) == 1;
     _avatarIcon = _settings.avatarIcon;
     _avatarImage = _settings.avatarImage;
 
-    // Enumerate serial ports for the GPS receiver dropdown (desktop only).
+    // Enumerate serial ports for the GPS receiver dropdown.
     _availablePorts = _listSerialPorts();
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      unawaited(_refreshAndroidUsbGpsPorts());
+    }
 
     _callSignController = TextEditingController(text: _settings.callSign);
     _winlinkPasswordController = TextEditingController(
@@ -361,13 +385,10 @@ class _SettingsDialogState extends State<SettingsDialog>
     // Load current history counts for the Limits tab.
     _loadHistoryCounts();
 
-    // Sync the speech-to-text model status shown in the Voice tab.
-    // Speech-to-text is not available on Android.
-    if (defaultTargetPlatform != TargetPlatform.android) {
-      SherpaModelManager.refreshStatus(
-        SherpaModelManager.modelById(_settings.voiceModel).id,
-      );
-    }
+    // Sync the optional offline speech-to-text model status.
+    SherpaModelManager.refreshStatus(
+      SherpaModelManager.modelById(_settings.voiceModel).id,
+    );
   }
 
   /// Loads the available text-to-speech voices for the Voice settings tab.
@@ -995,6 +1016,15 @@ class _SettingsDialogState extends State<SettingsDialog>
     _settings.avatarIcon = _avatarIcon;
     _settings.avatarImage = _avatarImage;
     _settings.saveToDataBroker();
+    if (_settings.messageNotifications && !kIsWeb && Platform.isAndroid) {
+      await NotificationService.instance.requestAndroidPermission();
+    }
+    _broker.dispatch(
+      deviceId: 0,
+      name: 'PhoneGpsTrackingEnabled',
+      data: _phoneGpsTrackingEnabled ? 1 : 0,
+      store: true,
+    );
 
     // Persist AllStarLink node-hosting configuration (device 0).
     _broker.dispatch(
@@ -1166,6 +1196,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: _settings.language,
+                  isExpanded: true,
                   decoration: _inputDecoration(),
                   items: [
                     DropdownMenuItem(
@@ -1231,6 +1262,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: _settings.themeMode,
+                  isExpanded: true,
                   decoration: _inputDecoration(),
                   items: [
                     DropdownMenuItem(
@@ -1484,71 +1516,82 @@ class _SettingsDialogState extends State<SettingsDialog>
                   style: _sectionTitleStyle(),
                 ),
                 const SizedBox(height: 16),
-                // Call Sign & Station ID on the same line
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Call Sign
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            l10n.settingsCallSign,
-                            style: DialogStyles.labelStyle,
+                // Keep both controls wide enough to use on phone-sized screens.
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final callSign = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.settingsCallSign,
+                          style: DialogStyles.labelStyle,
+                        ),
+                        const SizedBox(height: 4),
+                        TextField(
+                          controller: _callSignController,
+                          decoration: _inputDecoration(
+                            hintText: l10n.settingsCallSignHint,
                           ),
-                          const SizedBox(height: 4),
-                          TextField(
-                            controller: _callSignController,
-                            decoration: _inputDecoration(
-                              hintText: l10n.settingsCallSignHint,
+                          textCapitalization: TextCapitalization.characters,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'[A-Za-z0-9]'),
                             ),
-                            textCapitalization: TextCapitalization.characters,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[A-Za-z0-9]'),
-                              ),
-                              TextInputFormatter.withFunction(
-                                (oldValue, newValue) => newValue.copyWith(
-                                  text: newValue.text.toUpperCase(),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    // Station ID
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            l10n.settingsStationId,
-                            style: DialogStyles.labelStyle,
-                          ),
-                          const SizedBox(height: 4),
-                          DropdownButtonFormField<int>(
-                            initialValue: _settings.stationId,
-                            decoration: _inputDecoration(),
-                            items: List.generate(
-                              16,
-                              (i) => DropdownMenuItem(
-                                value: i,
-                                child: Text(
-                                  i == 0 ? l10n.settingsNone : i.toString(),
-                                ),
+                            TextInputFormatter.withFunction(
+                              (oldValue, newValue) => newValue.copyWith(
+                                text: newValue.text.toUpperCase(),
                               ),
                             ),
-                            onChanged: (value) {
-                              setState(() => _settings.stationId = value ?? 0);
-                            },
+                          ],
+                        ),
+                      ],
+                    );
+                    final stationId = Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.settingsStationId,
+                          style: DialogStyles.labelStyle,
+                        ),
+                        const SizedBox(height: 4),
+                        DropdownButtonFormField<int>(
+                          initialValue: _settings.stationId,
+                          decoration: _inputDecoration(),
+                          items: List.generate(
+                            16,
+                            (i) => DropdownMenuItem(
+                              value: i,
+                              child: Text(
+                                i == 0 ? l10n.settingsNone : i.toString(),
+                              ),
+                            ),
                           ),
+                          onChanged: (value) {
+                            setState(() => _settings.stationId = value ?? 0);
+                          },
+                        ),
+                      ],
+                    );
+
+                    if (constraints.maxWidth < 400) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          callSign,
+                          const SizedBox(height: 12),
+                          stationId,
                         ],
-                      ),
-                    ),
-                  ],
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: callSign),
+                        const SizedBox(width: 16),
+                        Expanded(child: stationId),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 16),
                 // Allow Transmit
@@ -1613,6 +1656,43 @@ class _SettingsDialogState extends State<SettingsDialog>
           Text(l10n.settingsLocation, style: _sectionTitleStyle()),
           const SizedBox(height: 8),
           Text(l10n.settingsLocationInfo, style: _secondaryStyle()),
+          if (!kIsWeb && Platform.isAndroid) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _phoneGpsBusy ? null : _usePhoneGps,
+              icon: _phoneGpsBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location, size: 18),
+              label: Text(l10n.settingsLocationUsePhoneGps),
+            ),
+            Text(
+              l10n.settingsLocationUsePhoneGpsHint,
+              style: _secondaryStyle(),
+            ),
+            const SizedBox(height: 6),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(l10n.settingsLocationPhoneGpsTracking),
+              subtitle: Text(l10n.settingsLocationPhoneGpsTrackingHint),
+              value: _phoneGpsTrackingEnabled,
+              onChanged: _setPhoneGpsTracking,
+            ),
+            if (_phoneGpsSucceeded != null)
+              Text(
+                _phoneGpsSucceeded!
+                    ? l10n.settingsLocationPhoneGpsSuccess
+                    : l10n.settingsLocationPhoneGpsFailure,
+                style: TextStyle(
+                  color: _phoneGpsSucceeded!
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.error,
+                ),
+              ),
+          ],
           const SizedBox(height: 8),
           RadioGroup<bool>(
             groupValue: manual,
@@ -1672,6 +1752,44 @@ class _SettingsDialogState extends State<SettingsDialog>
         ],
       ),
     );
+  }
+
+  Future<void> _usePhoneGps() async {
+    setState(() {
+      _phoneGpsBusy = true;
+      _phoneGpsSucceeded = null;
+    });
+    try {
+      final position = await AndroidCurrentLocation.getCurrentPosition();
+      if (!mounted) return;
+      setState(() {
+        _settings
+          ..manualLatitude = position.latitude
+          ..manualLongitude = position.longitude
+          ..manualLocationEnabled = true;
+        _phoneGpsSucceeded = true;
+      });
+    } on Object {
+      if (mounted) setState(() => _phoneGpsSucceeded = false);
+    } finally {
+      if (mounted) setState(() => _phoneGpsBusy = false);
+    }
+  }
+
+  Future<void> _setPhoneGpsTracking(bool enabled) async {
+    if (enabled) {
+      try {
+        await AndroidCurrentLocation.requestPermission();
+      } on Object {
+        if (mounted) setState(() => _phoneGpsSucceeded = false);
+        return;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _phoneGpsTrackingEnabled = enabled;
+      if (enabled) _settings.manualLocationEnabled = true;
+    });
   }
 
   /// Small labelled read-only coordinate display used by the Location section.
@@ -1895,6 +2013,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                 initialValue: _aprsIsCustomServer
                     ? ''
                     : _aprsIsServerController.text.trim(),
+                isExpanded: true,
                 decoration: _inputDecoration(),
                 items: _aprsIsRegionItems(l10n),
                 onChanged: hasCallSign
@@ -1986,6 +2105,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                     ).any((e) => e.value == _settings.aprsIsRangeKm)
                     ? _settings.aprsIsRangeKm
                     : 0,
+                isExpanded: true,
                 decoration: _inputDecoration(),
                 items: _aprsIsRangeItems(l10n),
                 onChanged: hasCallSign
@@ -2023,6 +2143,14 @@ class _SettingsDialogState extends State<SettingsDialog>
           ),
           const SizedBox(height: 4),
           Text(l10n.settingsAprsIsGateToRfHelp, style: _secondaryStyle()),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.rule),
+            label: Text(Localizations.localeOf(context).languageCode == 'zh'
+                ? 'APRS 网关转发规则' : 'APRS gateway forwarding rules'),
+            onPressed: () => showDialog<void>(context: context,
+              builder: (_) => const GatewayPolicyDialog()),
+          ),
           const SizedBox(height: 16),
           // Cloud push notifications via aprs.meshcentral.com. Available on
           // Android through FCM and iOS through APNs.
@@ -2269,6 +2397,11 @@ class _SettingsDialogState extends State<SettingsDialog>
         ),
       );
     }
+    final current = _settings.aprsIsRangeKm;
+    if (current > 0 && !items.any((item) => item.value == current)) {
+      items.add(DropdownMenuItem<int>(value: current,
+        child: Text(l10n.settingsAprsIsRangeKm(current))));
+    }
     return items;
   }
 
@@ -2389,23 +2522,65 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   /// Speech-to-text setup: model selection, language and on-device management.
   Widget _buildSpeechRecognitionSection() {
-    final l10n = AppLocalizations.of(context);
-    // Android transcribes via the OS on-device recognizer, which downloads no
-    // model into the app, so the sherpa model picker/status is not shown.
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: _sectionDecoration(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
-            const SizedBox(height: 8),
-            Text(l10n.settingsSpeechToTextInfo, style: DialogStyles.bodyStyle),
-          ],
-        ),
+      return FutureBuilder<bool>(
+        future: _androidSystemSttAvailable,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.data!) return _buildAndroidSystemSttInfo();
+          return FutureBuilder<bool>(
+            future: _androidSherpaFallbackAvailable,
+            builder: (context, fallbackSnapshot) {
+              if (!fallbackSnapshot.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              return fallbackSnapshot.data!
+                  ? _buildSherpaModelSelection(androidFallback: true)
+                  : _buildAndroidSttUnavailableInfo();
+            },
+          );
+        },
       );
     }
+    return _buildSherpaModelSelection();
+  }
+
+  Widget _buildAndroidSystemSttInfo() {
+    final l10n = AppLocalizations.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _sectionDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
+          const SizedBox(height: 8),
+          Text(l10n.settingsSpeechToTextInfo, style: DialogStyles.bodyStyle),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAndroidSttUnavailableInfo() {
+    final l10n = AppLocalizations.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _sectionDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
+          const SizedBox(height: 8),
+          Text(l10n.settingsAndroidSttUnsupported, style: DialogStyles.bodyStyle),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSherpaModelSelection({bool androidFallback = false}) {
+    final l10n = AppLocalizations.of(context);
     final model = SherpaModelManager.modelById(_settings.voiceModel);
     final langCodes = model.languages ?? const <String>[];
     final sttLang = langCodes.contains(_settings.voiceLanguage)
@@ -2420,6 +2595,10 @@ class _SettingsDialogState extends State<SettingsDialog>
           Text(l10n.settingsSpeechToText, style: _sectionTitleStyle()),
           const SizedBox(height: 8),
           Text(l10n.settingsSpeechToTextInfo, style: DialogStyles.bodyStyle),
+          if (androidFallback) ...[
+            const SizedBox(height: 8),
+            Text(l10n.settingsAndroidSttFallbackInfo, style: _secondaryStyle()),
+          ],
           const SizedBox(height: 16),
           Text(l10n.settingsModel, style: DialogStyles.labelStyle),
           const SizedBox(height: 4),
@@ -2588,7 +2767,9 @@ class _SettingsDialogState extends State<SettingsDialog>
       children: [
         statusLine,
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             ElevatedButton.icon(
               onPressed: busy || status.state == SttModelState.ready
@@ -2601,7 +2782,6 @@ class _SettingsDialogState extends State<SettingsDialog>
                     : l10n.settingsDownload,
               ),
             ),
-            const SizedBox(width: 8),
             ElevatedButton.icon(
               onPressed: busy || status.state != SttModelState.ready
                   ? null
@@ -2894,7 +3074,12 @@ class _SettingsDialogState extends State<SettingsDialog>
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             const SizedBox(width: 12),
-            Text(l10n.settingsLoadingVoices, style: DialogStyles.bodyStyle),
+            Expanded(
+              child: Text(
+                l10n.settingsLoadingVoices,
+                style: DialogStyles.bodyStyle,
+              ),
+            ),
           ],
         ),
       );
@@ -3538,6 +3723,7 @@ class _SettingsDialogState extends State<SettingsDialog>
           const SizedBox(height: 4),
           DropdownButtonFormField<AllStarRegMethod>(
             initialValue: _allStarRegMethod,
+            isExpanded: true,
             decoration: _inputDecoration(),
             items: [
               DropdownMenuItem(
@@ -3590,6 +3776,7 @@ class _SettingsDialogState extends State<SettingsDialog>
 
   Widget _buildServersTab() {
     final l10n = AppLocalizations.of(context);
+    final isNarrow = MediaQuery.sizeOf(context).width < 400;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -3628,11 +3815,12 @@ class _SettingsDialogState extends State<SettingsDialog>
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(left: 48),
-                  child: Row(
+                  padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       Text(l10n.settingsPort, style: DialogStyles.labelStyle),
-                      const SizedBox(width: 8),
                       SizedBox(
                         width: 100,
                         child: TextField(
@@ -3654,6 +3842,7 @@ class _SettingsDialogState extends State<SettingsDialog>
                     label: Text(Localizations.localeOf(context).languageCode == 'zh'
                         ? '手机远程操控设置' : 'Phone remote control settings'),
                     onPressed: () async {
+                      final profileRevision = DataBroker.getValueDynamic(0, 'RemoteProfileRevision', 0);
                       await showDialog<bool>(context: context,
                           builder: (_) => const RemoteAccessDialog());
                       if (!mounted) return;
@@ -3662,6 +3851,17 @@ class _SettingsDialogState extends State<SettingsDialog>
                         _settings.webServerEnabled = current.webServerEnabled;
                         _settings.webServerPort = current.webServerPort;
                         _webPortController.text = current.webServerPort.toString();
+                        if (profileRevision != DataBroker.getValueDynamic(0, 'RemoteProfileRevision', 0)) {
+                          _settings.allowTransmit = current.allowTransmit;
+                          _settings.aprsIsEnabled = current.aprsIsEnabled;
+                          _settings.aprsIsServer = current.aprsIsServer;
+                          _settings.aprsIsPort = current.aprsIsPort;
+                          _settings.aprsIsRangeKm = current.aprsIsRangeKm;
+                          _settings.aprsIsGateToRf = current.aprsIsGateToRf;
+                          _aprsIsServerController.text = current.aprsIsServer;
+                          _aprsIsPortController.text = current.aprsIsPort.toString();
+                          _aprsIsCustomServer = !(current.aprsIsPort == _aprsIsDefaultPort && _aprsIsRegionHosts.contains(current.aprsIsServer));
+                        }
                       });
                     },
                   ),
@@ -3690,11 +3890,51 @@ class _SettingsDialogState extends State<SettingsDialog>
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(left: 48),
-                  child: Row(
+                  padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: _settings.agwpeServerLanAccess,
+                            onChanged: _settings.agwpeServerEnabled
+                                ? (value) => setState(
+                                    () => _settings.agwpeServerLanAccess =
+                                        value ?? false,
+                                  )
+                                : null,
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _settings.agwpeServerEnabled
+                                  ? () => setState(
+                                      () => _settings.agwpeServerLanAccess =
+                                          !_settings.agwpeServerLanAccess,
+                                    )
+                                  : null,
+                              child: Text(l10n.settingsAgwpeLanAccess),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 12, bottom: 8),
+                        child: Text(
+                          l10n.settingsAgwpeLanAccessDescription,
+                          style: DialogStyles.bodyStyle,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(left: isNarrow ? 0 : 48),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
                     children: [
                       Text(l10n.settingsPort, style: DialogStyles.labelStyle),
-                      const SizedBox(width: 8),
                       SizedBox(
                         width: 100,
                         child: TextField(
@@ -3836,15 +4076,56 @@ class _SettingsDialogState extends State<SettingsDialog>
     );
   }
 
-  /// Returns the serial ports available on the system, or an empty list on
-  /// platforms that do not support serial access (web/mobile). Wrapped in a
-  /// try/catch because port enumeration can throw on unsupported platforms.
+  /// Returns desktop serial ports. Android USB devices are enumerated through
+  /// its asynchronous USB-host plugin instead.
   static List<String> _listSerialPorts() {
-    if (!_serialGpsSupported) return const [];
+    if (!_serialGpsSupported ||
+        defaultTargetPlatform == TargetPlatform.android) {
+      return const [];
+    }
     try {
       return SerialPort.availablePorts;
     } catch (_) {
       return const [];
+    }
+  }
+
+  Future<void> _refreshAndroidUsbGpsPorts() async {
+    try {
+      final devices = await _androidUsbSerial.getAvailableDevices();
+      if (!mounted) return;
+      setState(() {
+        _usbGpsPortLabels.clear();
+        _availablePorts = devices
+            .where((device) => device.deviceId != null)
+            .map((device) {
+              final value = 'USB:${device.deviceId}';
+              final vendor = device.vendorId?.toRadixString(16).padLeft(4, '0');
+              final product = device.productId?.toRadixString(16).padLeft(4, '0');
+              final ids = vendor != null && product != null
+                  ? ' · $vendor:$product'
+                  : '';
+              final name = [
+                    device.manufacturerName,
+                    device.productName,
+                    device.deviceName,
+                  ]
+                  .whereType<String>()
+                  .where((part) => part.trim().isNotEmpty)
+                  .toSet()
+                  .join(' ');
+              _usbGpsPortLabels[value] =
+                  '${name.isEmpty ? 'USB 串口设备' : name}$ids';
+              return value;
+            })
+            .toList(growable: false);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _availablePorts = const [];
+        _usbGpsPortLabels.clear();
+      });
     }
   }
 
@@ -3863,7 +4144,10 @@ class _SettingsDialogState extends State<SettingsDialog>
         .map(
           (p) => DropdownMenuItem(
             value: p,
-            child: Text(p, overflow: TextOverflow.ellipsis),
+            child: Text(
+              _usbGpsPortLabels[p] ?? p,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         )
         .toList();
@@ -3892,66 +4176,89 @@ class _SettingsDialogState extends State<SettingsDialog>
                 children: [
                   Text(l10n.settingsGpsSerialPort, style: _sectionTitleStyle()),
                   const SizedBox(height: 16),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 13,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final serialPortField = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l10n.settingsSerialPort,
+                            style: DialogStyles.labelStyle,
+                          ),
+                          if (!kIsWeb &&
+                              defaultTargetPlatform == TargetPlatform.android)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: IconButton(
+                                icon: const Icon(Icons.refresh),
+                                tooltip: MaterialLocalizations.of(
+                                  context,
+                                ).refreshIndicatorSemanticLabel,
+                                onPressed: _refreshAndroidUsbGpsPorts,
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          DropdownButtonFormField<String>(
+                            initialValue: _settings.gpsSerialPort,
+                            isExpanded: true,
+                            decoration: _inputDecoration(),
+                            items: _gpsPortItems(),
+                            onChanged: (value) {
+                              setState(
+                                () =>
+                                    _settings.gpsSerialPort = value ?? 'None',
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                      final baudRateField = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            l10n.settingsBaudRate,
+                            style: DialogStyles.labelStyle,
+                          ),
+                          const SizedBox(height: 4),
+                          DropdownButtonFormField<int>(
+                            initialValue: _settings.gpsBaudRate,
+                            isExpanded: true,
+                            decoration: _inputDecoration(),
+                            items: _baudRates
+                                .map(
+                                  (b) => DropdownMenuItem(
+                                    value: b,
+                                    child: Text(b.toString()),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(
+                                () => _settings.gpsBaudRate = value ?? 4800,
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                      if (constraints.maxWidth < 300) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Text(
-                              l10n.settingsSerialPort,
-                              style: DialogStyles.labelStyle,
-                            ),
-                            const SizedBox(height: 4),
-                            DropdownButtonFormField<String>(
-                              initialValue: _settings.gpsSerialPort,
-                              isExpanded: true,
-                              decoration: _inputDecoration(),
-                              items: _gpsPortItems(),
-                              onChanged: (value) {
-                                setState(
-                                  () =>
-                                      _settings.gpsSerialPort = value ?? 'None',
-                                );
-                              },
-                            ),
+                            serialPortField,
+                            const SizedBox(height: 12),
+                            baudRateField,
                           ],
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        flex: 7,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              l10n.settingsBaudRate,
-                              style: DialogStyles.labelStyle,
-                            ),
-                            const SizedBox(height: 4),
-                            DropdownButtonFormField<int>(
-                              initialValue: _settings.gpsBaudRate,
-                              decoration: _inputDecoration(),
-                              items: _baudRates
-                                  .map(
-                                    (b) => DropdownMenuItem(
-                                      value: b,
-                                      child: Text(b.toString()),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) {
-                                setState(
-                                  () => _settings.gpsBaudRate = value ?? 4800,
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 13, child: serialPortField),
+                          const SizedBox(width: 16),
+                          Expanded(flex: 7, child: baudRateField),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 8),
                   Row(

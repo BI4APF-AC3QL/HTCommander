@@ -73,6 +73,11 @@ class PacketStore {
       name: 'ClearPackets',
       callback: _onClearPackets,
     );
+    _broker.subscribe(
+      deviceId: 1,
+      name: 'ClearAprsPackets',
+      callback: _onClearAprsPackets,
+    );
 
     // Notify subscribers that PacketStore is ready (stored so late subscribers
     // can check the flag directly).
@@ -166,6 +171,19 @@ class PacketStore {
       data: getPackets(),
       store: false,
     );
+  }
+
+  void _onClearAprsPackets(int deviceId, String name, Object? data) {
+    if (_disposed) return;
+    _packets.removeWhere((packet) => packet.channelName == 'APRS');
+    final dao = AppDatabase.instance?.packets;
+    if (dao != null) {
+      unawaited(
+        dao.clearAprs().catchError(
+          (Object e) => debugPrint('PacketStore: failed to clear APRS: $e'),
+        ),
+      );
+    }
   }
 
   /// Persists a packet to the database. Each insert is a small WAL append, so

@@ -75,6 +75,7 @@ class AppSettings {
   bool webServerEnabled;
   int webServerPort;
   bool agwpeServerEnabled;
+  bool agwpeServerLanAccess;
   int agwpeServerPort;
 
   // Home Assistant (Servers tab)
@@ -209,6 +210,7 @@ class AppSettings {
     this.webServerEnabled = false,
     this.webServerPort = 8080,
     this.agwpeServerEnabled = false,
+    this.agwpeServerLanAccess = false,
     this.agwpeServerPort = 8000,
     this.homeAssistantEnabled = false,
     this.homeAssistantMqttUrl = '',
@@ -262,6 +264,7 @@ class AppSettings {
     bool? webServerEnabled,
     int? webServerPort,
     bool? agwpeServerEnabled,
+    bool? agwpeServerLanAccess,
     int? agwpeServerPort,
     bool? homeAssistantEnabled,
     String? homeAssistantMqttUrl,
@@ -316,6 +319,8 @@ class AppSettings {
       webServerEnabled: webServerEnabled ?? this.webServerEnabled,
       webServerPort: webServerPort ?? this.webServerPort,
       agwpeServerEnabled: agwpeServerEnabled ?? this.agwpeServerEnabled,
+      agwpeServerLanAccess:
+          agwpeServerLanAccess ?? this.agwpeServerLanAccess,
       agwpeServerPort: agwpeServerPort ?? this.agwpeServerPort,
       homeAssistantEnabled: homeAssistantEnabled ?? this.homeAssistantEnabled,
       homeAssistantMqttUrl: homeAssistantMqttUrl ?? this.homeAssistantMqttUrl,
@@ -414,6 +419,8 @@ class AppSettings {
       webServerPort: DataBroker.getValue<int>(0, 'webServerPort', 8080) ?? 8080,
       agwpeServerEnabled:
           (DataBroker.getValue<int>(0, 'agwpeServerEnabled', 0) ?? 0) == 1,
+      agwpeServerLanAccess:
+          (DataBroker.getValue<int>(0, 'agwpeServerLanAccess', 0) ?? 0) == 1,
       agwpeServerPort:
           DataBroker.getValue<int>(0, 'agwpeServerPort', 8000) ?? 8000,
       homeAssistantEnabled:
@@ -582,6 +589,11 @@ class AppSettings {
       deviceId: 0,
       name: 'agwpeServerEnabled',
       data: agwpeServerEnabled ? 1 : 0,
+    );
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'agwpeServerLanAccess',
+      data: agwpeServerLanAccess ? 1 : 0,
     );
     DataBroker.dispatch(
       deviceId: 0,

@@ -39,6 +39,10 @@ class TtsService {
   static final bool _useNativeChannel =
       !kIsWeb && (Platform.isMacOS || Platform.isIOS || Platform.isWindows);
 
+  /// Android uses the platform TextToSpeech service for local previews and
+  /// the existing file-based synthesis path for radio PCM.
+  static final bool _useAndroidFlutterTts = !kIsWeb && Platform.isAndroid;
+
   /// Whether this is a Linux desktop build. `flutter_tts` has no Linux plugin,
   /// so synthesis is delegated to the `espeak-ng` / `espeak` command line tool.
   static final bool _isLinux = !kIsWeb && Platform.isLinux;
@@ -248,8 +252,9 @@ class TtsService {
     }
   }
 
-  /// Whether on-device preview playback is supported (Apple platforms only).
-  bool get isPreviewSupported => _useNativeChannel;
+  /// Whether on-device preview playback is supported by this platform's TTS.
+  /// Linux's espeak fallback only synthesizes files for radio transmission.
+  bool get isPreviewSupported => _useNativeChannel || _useAndroidFlutterTts;
 
   /// Ensures the one-time platform probe has run (e.g. locating `espeak-ng` on
   /// Linux) and reports whether text-to-speech synthesis is usable right now.
@@ -288,7 +293,20 @@ class TtsService {
     double? rate,
     double? pitch,
   }) async {
-    if (!_useNativeChannel || text.trim().isEmpty) return;
+    if (text.trim().isEmpty) return;
+    if (_useAndroidFlutterTts) {
+      await _ensureInit();
+      if (!_ttsAvailable) return;
+      await previewWithFlutterTts(
+        _tts,
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+      return;
+    }
+    if (!_useNativeChannel) return;
     String voiceIdentifier = '';
     String locale = '';
     if (voiceJson != null && voiceJson.isNotEmpty) {
@@ -315,10 +333,56 @@ class TtsService {
 
   /// Stops any in-progress [preview] playback.
   Future<void> stopPreview() async {
+    if (_useAndroidFlutterTts) {
+      try {
+        await _tts.stop();
+      } catch (_) {}
+      return;
+    }
     if (!_useNativeChannel) return;
     try {
       await _channel.invokeMethod<void>('stopPreview');
     } catch (_) {}
+  }
+
+  /// Plays a local FlutterTts preview using the selected voice, rate, and
+  /// pitch. Kept separate so the Android preview path can be tested without
+  /// transmitting audio or requiring an attached radio.
+  @visibleForTesting
+  static Future<void> previewWithFlutterTts(
+    FlutterTts tts,
+    String text, {
+    String? voiceJson,
+    double? rate,
+    double? pitch,
+  }) async {
+    if (text.trim().isEmpty) return;
+    try {
+      // Android TTS can queue utterances. Replace an earlier preview so rapid
+      // taps do not build a speech backlog.
+      await tts.stop();
+      await tts.setSpeechRate(rate ?? 0.5);
+      await tts.setPitch(pitch ?? 1.0);
+      await tts.clearVoice();
+      if (voiceJson != null && voiceJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(voiceJson);
+          if (decoded is Map) {
+            final voice = <String, String>{
+              for (final key in const ['name', 'locale', 'identifier'])
+                if (decoded[key]?.toString().isNotEmpty == true)
+                  key: decoded[key].toString(),
+            };
+            if (voice.isNotEmpty) await tts.setVoice(voice);
+          }
+        } catch (_) {
+          // An invalid saved voice falls back to the system voice.
+        }
+      }
+      await tts.speak(text);
+    } catch (e) {
+      debugPrint('TtsService: FlutterTts preview failed: $e');
+    }
   }
 
   /// Synthesizes [text] and returns 32 kHz / mono / signed 16-bit LE PCM, or

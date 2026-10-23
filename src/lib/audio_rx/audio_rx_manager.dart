@@ -23,6 +23,7 @@ import 'package:flutter/foundation.dart';
 
 import '../echolink/pcm_resampler.dart';
 import '../radio/software_modem.dart';
+import '../services/android_recording_service_lease.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
 import '../services/microphone_capture.dart';
@@ -44,21 +45,31 @@ class _RunningCapture {
   /// receive pipeline instead of a fixed software-modem external source.
   final _RadioPipelineFeeder? feeder;
 
-  _RunningCapture(this.capture, this.signature,
-      {required this.inputDeviceId, this.feeder});
+  _RunningCapture(
+    this.capture,
+    this.signature, {
+    required this.inputDeviceId,
+    this.feeder,
+  });
 }
 
 /// Owns every Audio Receive Device: reads the persisted list, opens each input
 /// port, and bridges its audio into the [SoftwareModem]. Registered as a Data
 /// Broker handler in `main()` on platforms with a dart:io audio stack.
 class AudioRxManager {
-  AudioRxManager(this._softwareModem);
+  AudioRxManager(
+    this._softwareModem, {
+    AndroidRecordingServiceLease? recordingService,
+  }) : _recordingService =
+           recordingService ?? AndroidRecordingServiceLease.shared;
 
   final SoftwareModem _softwareModem;
+  final AndroidRecordingServiceLease _recordingService;
   final DataBrokerClient _broker = DataBrokerClient();
 
   bool _initialized = false;
   bool _disposed = false;
+  Future<void> _reconcileQueue = Future<void>.value();
 
   /// Running captures keyed by each device's own (source) id.
   final Map<int, _RunningCapture> _running = <int, _RunningCapture>{};
@@ -105,12 +116,13 @@ class AudioRxManager {
     // Track which device (if any) the Audio tab spectrograph is showing so its
     // captured audio is republished for visualization.
     _spectrogramDeviceId = _parseSpectrogramDeviceId(
-        _broker.getValue<String>(0, 'SpectrogramSource', 'none'));
+      _broker.getValue<String>(0, 'SpectrogramSource', 'none'),
+    );
     _broker.subscribe(
       deviceId: 0,
       name: 'SpectrogramSource',
-      callback: (_, _, Object? data) => _spectrogramDeviceId =
-          _parseSpectrogramDeviceId(data?.toString()),
+      callback: (_, _, Object? data) =>
+          _spectrogramDeviceId = _parseSpectrogramDeviceId(data?.toString()),
     );
 
     _reconcile();
@@ -119,9 +131,11 @@ class AudioRxManager {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    await _reconcileQueue;
     for (final entry in _running.entries) {
       _softwareModem.unregisterExternalSource(entry.key);
       await entry.value.capture.dispose();
+      await _recordingService.release();
     }
     _running.clear();
     _publishActivePorts();
@@ -134,7 +148,15 @@ class AudioRxManager {
 
   /// Start, stop, or rebuild capture pipelines so the running set matches the
   /// current configuration and connected-radio state.
-  Future<void> _reconcile() async {
+  Future<void> _reconcile() {
+    final next = _reconcileQueue.then((_) => _reconcileNow());
+    _reconcileQueue = next.catchError((Object error) {
+      _log('audio receive reconciliation failed: $error');
+    });
+    return _reconcileQueue;
+  }
+
+  Future<void> _reconcileNow() async {
     if (_disposed || !_supported) return;
 
     final List<AudioRxDevice> devices = _readDevices();
@@ -153,7 +175,9 @@ class AudioRxManager {
       if (d.usage == AudioRxUsage.paired) {
         if (d.pairedRadioMac.isEmpty) continue; // no radio chosen yet
         final int? radioId = connected[d.pairedRadioMac.toUpperCase()];
-        if (radioId == null) continue; // paired radio not connected -> stay silent
+        if (radioId == null) {
+          continue; // paired radio not connected -> stay silent
+        }
         // A paired device replays audio through the radio's own pipeline; only
         // do so while the radio's Bluetooth audio path is off, otherwise the
         // radio is already decoding this audio and we would duplicate it.
@@ -172,6 +196,7 @@ class AudioRxManager {
 
     // Stop pipelines that are no longer desired.
     for (final int sourceId in _running.keys.toList()) {
+      if (_disposed) return;
       if (!desired.containsKey(sourceId)) {
         await _stop(sourceId);
       }
@@ -179,6 +204,7 @@ class AudioRxManager {
 
     // Start or rebuild the desired pipelines.
     for (final MapEntry<int, _Plan> entry in desired.entries) {
+      if (_disposed) return;
       final int sourceId = entry.key;
       final _Plan plan = entry.value;
       final String signature = plan.signature;
@@ -227,20 +253,50 @@ class AudioRxManager {
       monoReduction: _monoReductionFor(plan.config.audioChannel),
       gain: plan.config.audioGain,
     );
-    final bool ok = await capture.start(
-      (Uint8List pcm16) => _onCapturePcm(sourceId, pcm16),
-    );
-    if (!ok || _disposed) {
+
+    var holdsRecordingService = false;
+    try {
+      // Check/request permission while the activity is visible, then promote
+      // the Android service to its microphone type before opening the stream.
+      // This ordering is required for reliable Android 14+ background capture.
+      if (!await capture.hasPermission()) {
+        await capture.dispose();
+        _softwareModem.unregisterExternalSource(sourceId);
+        _log(
+          'microphone permission is not available for "${plan.config.name}"',
+        );
+        return;
+      }
+      await _recordingService.acquire();
+      holdsRecordingService = true;
+      final bool ok = await capture.start(
+        (Uint8List pcm16) => _onCapturePcm(sourceId, pcm16),
+      );
+      if (!ok || _disposed) {
+        await capture.dispose();
+        _softwareModem.unregisterExternalSource(sourceId);
+        await _recordingService.release();
+        holdsRecordingService = false;
+        if (!_disposed) {
+          _log('could not open input for "${plan.config.name}"');
+        }
+        return;
+      }
+    } catch (error) {
       await capture.dispose();
       _softwareModem.unregisterExternalSource(sourceId);
-      if (!_disposed) {
-        _log('could not open input for "${plan.config.name}"');
+      if (holdsRecordingService) {
+        await _recordingService.release();
       }
+      _log('could not start input for "${plan.config.name}": $error');
       return;
     }
-    _running[sourceId] =
-        _RunningCapture(capture, plan.signature,
-            inputDeviceId: plan.config.inputDeviceId, feeder: feeder);
+    _running[sourceId] = _RunningCapture(
+      capture,
+      plan.signature,
+      inputDeviceId: plan.config.inputDeviceId,
+      feeder: feeder,
+    );
     feeder?.start();
     _log(
       'started "${plan.config.name}" '
@@ -256,6 +312,7 @@ class AudioRxManager {
     _softwareModem.unregisterExternalSource(sourceId);
     if (running != null) {
       await running.capture.dispose();
+      await _recordingService.release();
     }
   }
 
@@ -378,8 +435,9 @@ class AudioRxManager {
     if (raw is List) {
       for (final Object? e in raw) {
         if (e is! Map) continue;
-        final String mac =
-            (e['MacAddress'] ?? e['macAddress'] ?? '').toString().toUpperCase();
+        final String mac = (e['MacAddress'] ?? e['macAddress'] ?? '')
+            .toString()
+            .toUpperCase();
         if (mac.isEmpty) continue;
         final int? id = _asInt(e['DeviceId'] ?? e['deviceId']);
         if (id != null) byMac[mac] = id;
