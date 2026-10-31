@@ -9,3 +9,5 @@ The language selector can provide a hint to multilingual models. Recognition run
 Recognition runs when the radio no longer receives a signal or every 20 to 30 seconds.
 
 In addition, the app supports text-to-speech (TTS). Windows uses Microsoft Speech API, Android uses the system TextToSpeech service, and Apple platforms use AVSpeechSynthesizer. Voice preview playback is local and does not send audio to the radio.
+
+Windows also supports optional offline Kokoro 1.1 (Chinese and English, 103 voices) and MeloTTS Chinese/English models. Download and extract the original model folders into the TTS model folder opened from **Settings → Comms → Text-to-Speech**, then refresh the voice list. Inference runs on a background isolate; rate is supported, while pitch adjustment does not apply to these models. Models are not bundled. See [语音合成模型使用方法.md](语音合成模型使用方法.md) for installation instructions and upstream links.

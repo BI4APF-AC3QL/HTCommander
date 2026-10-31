@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
+import 'offline_tts_models.dart';
 
 /// Converts text into 32 kHz / mono / signed 16-bit little-endian PCM suitable
 /// for transmission through the radio audio path (same format as the
@@ -48,6 +51,9 @@ class TtsService {
   static final bool _isLinux = !kIsWeb && Platform.isLinux;
 
   final FlutterTts _tts = FlutterTts();
+  AudioPlayer? _offlinePreviewPlayer;
+  bool _offlineBusy = false;
+  int _previewGeneration = 0;
   bool _initialized = false;
   bool _ttsAvailable = true;
 
@@ -152,10 +158,13 @@ class TtsService {
             }
           }
         }
+        if (Platform.isWindows) result.addAll(await OfflineTtsModels.voices());
         return result;
       } catch (e) {
         debugPrint('TtsService.getVoices (native) failed: $e');
-        return const <Map<String, String>>[];
+        return Platform.isWindows
+            ? OfflineTtsModels.voices()
+            : const <Map<String, String>>[];
       }
     }
 
@@ -260,7 +269,17 @@ class TtsService {
   /// Linux) and reports whether text-to-speech synthesis is usable right now.
   Future<bool> isAvailable() async {
     await _ensureInit();
+    if (Platform.isWindows && !_ttsAvailable) {
+      return (await OfflineTtsModels.voices()).isNotEmpty;
+    }
     return _ttsAvailable;
+  }
+
+  /// Opens the optional offline model folder on Windows.
+  Future<void> openModelDirectory() async {
+    if (!Platform.isWindows) return;
+    final dir = await OfflineTtsModels.directory(create: true);
+    await Process.start('explorer.exe', [dir.path]);
   }
 
   /// User-facing guidance explaining how to enable text-to-speech when
@@ -294,6 +313,26 @@ class TtsService {
     double? pitch,
   }) async {
     if (text.trim().isEmpty) return;
+    final generation = ++_previewGeneration;
+    if (_offlineIdentifier(voiceJson) != null) {
+      final pcm = await synthesizeToPcm(
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+      if (pcm == null || pcm.isEmpty || generation != _previewGeneration) {
+        return;
+      }
+      try {
+        final player = _offlinePreviewPlayer ??= AudioPlayer();
+        await player.stop();
+        await player.play(BytesSource(_wavFromPcm(pcm)));
+      } catch (e) {
+        debugPrint('TtsService: offline preview failed: $e');
+      }
+      return;
+    }
     if (_useAndroidFlutterTts) {
       await _ensureInit();
       if (!_ttsAvailable) return;
@@ -333,6 +372,8 @@ class TtsService {
 
   /// Stops any in-progress [preview] playback.
   Future<void> stopPreview() async {
+    _previewGeneration++;
+    await _offlinePreviewPlayer?.stop();
     if (_useAndroidFlutterTts) {
       try {
         await _tts.stop();
@@ -397,6 +438,27 @@ class TtsService {
     double? pitch,
   }) async {
     if (text.trim().isEmpty) return null;
+    final identifier = _offlineIdentifier(voiceJson);
+    if (identifier != null) {
+      if (_offlineBusy) return null;
+      _offlineBusy = true;
+      try {
+        final audio = await OfflineTtsModels.synthesize(
+          identifier,
+          text,
+          rate ?? 0.5,
+        );
+        if (audio == null) return null;
+        return await Isolate.run(
+          () => _toPcm16Mono(audio.samples, audio.sampleRate),
+        );
+      } catch (e) {
+        debugPrint('TtsService: offline synthesis failed: $e');
+        return null;
+      } finally {
+        _offlineBusy = false;
+      }
+    }
     if (_useNativeChannel) {
       return _synthesizeNative(
         text,
@@ -485,8 +547,7 @@ class TtsService {
       try {
         final decoded = jsonDecode(voiceJson);
         if (decoded is Map) {
-          voice =
-              (decoded['identifier']?.toString().isNotEmpty ?? false)
+          voice = (decoded['identifier']?.toString().isNotEmpty ?? false)
               ? decoded['identifier'].toString()
               : (decoded['locale']?.toString() ?? '');
         }
@@ -507,9 +568,12 @@ class TtsService {
     final File file = File(filePath);
 
     final args = <String>[
-      '-w', filePath,
-      '-s', '$wpm',
-      '-p', '$pitchArg',
+      '-w',
+      filePath,
+      '-s',
+      '$wpm',
+      '-p',
+      '$pitchArg',
       if (voice.isNotEmpty) ...['-v', voice],
       text,
     ];
@@ -821,7 +885,7 @@ class TtsService {
 
   /// Resamples mono float samples to [targetSampleRate] and packs them into
   /// signed 16-bit little-endian PCM bytes.
-  Uint8List _toPcm16Mono(Float32List samples, int srcRate) {
+  static Uint8List _toPcm16Mono(Float32List samples, int srcRate) {
     if (samples.isEmpty || srcRate <= 0) return Uint8List(0);
     Float32List resampled;
     if (srcRate == targetSampleRate) {
@@ -847,6 +911,36 @@ class TtsService {
       bd.setInt16(i * 2, (s * 32767).round(), Endian.little);
     }
     return out;
+  }
+
+  static String? _offlineIdentifier(String? voiceJson) {
+    if (voiceJson == null || voiceJson.isEmpty) return null;
+    try {
+      final voice = jsonDecode(voiceJson);
+      final id = voice is Map ? voice['identifier']?.toString() : null;
+      return id != null && id.startsWith(OfflineTtsModels.prefix) ? id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Uint8List _wavFromPcm(Uint8List pcm) {
+    final wav = Uint8List(44 + pcm.length);
+    final header = ByteData.sublistView(wav);
+    wav.setRange(0, 4, 'RIFF'.codeUnits);
+    header.setUint32(4, 36 + pcm.length, Endian.little);
+    wav.setRange(8, 16, 'WAVEfmt '.codeUnits);
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little);
+    header.setUint16(22, 1, Endian.little);
+    header.setUint32(24, targetSampleRate, Endian.little);
+    header.setUint32(28, targetSampleRate * 2, Endian.little);
+    header.setUint16(32, 2, Endian.little);
+    header.setUint16(34, 16, Endian.little);
+    wav.setRange(36, 40, 'data'.codeUnits);
+    header.setUint32(40, pcm.length, Endian.little);
+    wav.setRange(44, wav.length, pcm);
+    return wav;
   }
 }
 

@@ -2855,6 +2855,33 @@ class _SettingsDialogState extends State<SettingsDialog>
                 Text(l10n.settingsVoice, style: DialogStyles.labelStyle),
                 const SizedBox(height: 4),
                 _buildVoiceDropdown(),
+                if (!kIsWeb && Platform.isWindows) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    Localizations.localeOf(context).languageCode == 'zh'
+                        ? '离线模型：下载并解压模型文件夹到模型目录，然后点刷新。Kokoro 1.1 提供中英文多种声音；MeloTTS 支持中英文。离线模型暂不支持音调调节。'
+                        : 'Offline voices: extract the downloaded model folder into the model directory, then refresh. Kokoro 1.1 and MeloTTS support Chinese and English. Pitch adjustment is unavailable for offline models.',
+                    style: DialogStyles.bodyStyle,
+                  ),
+                  Wrap(spacing: 8, children: [
+                    TextButton(
+                      onPressed: () => _launchUrl('https://k2-fsa.github.io/sherpa/onnx/tts/all/Chinese-English/kokoro-multi-lang-v1_1.html'),
+                      child: const Text('Kokoro 1.1'),
+                    ),
+                    TextButton(
+                      onPressed: () => _launchUrl('https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html'),
+                      child: const Text('MeloTTS'),
+                    ),
+                    TextButton(
+                      onPressed: () => TtsService.instance.openModelDirectory(),
+                      child: Text(Localizations.localeOf(context).languageCode == 'zh' ? '打开模型目录' : 'Open model folder'),
+                    ),
+                    TextButton(
+                      onPressed: _loadVoices,
+                      child: Text(Localizations.localeOf(context).languageCode == 'zh' ? '刷新声音' : 'Refresh voices'),
+                    ),
+                  ]),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   children: [
