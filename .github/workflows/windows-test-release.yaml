@@ -142,6 +142,7 @@ jobs:
           Copy-Item docs/remote-dashboard.md "$buildDir/remote-dashboard.md"
           Copy-Item docs/remote-profile.md "$buildDir/remote-profile.md"
           Copy-Item docs/remote-low-bandwidth.md "$buildDir/remote-low-bandwidth.md"
+          Copy-Item docs/Voice.md "$buildDir/VOICE-RECOGNITION.md"
           Copy-Item docs/radio-link-diagnostics.md "$buildDir/radio-link-diagnostics.md"
           Copy-Item docs/remote-client-roles.md "$buildDir/remote-client-roles.md"
           Copy-Item docs/remote-beacon-task.md "$buildDir/remote-beacon-task.md"
@@ -220,6 +221,7 @@ jobs:
           详细步骤见包内 PHONE-REMOTE-CONTROL.md；尚未进行N7500实机远程语音验收。
           包含可配置域名及后端端口的 HTCommander-HTTPS-Gateway.exe；入门见包内 简单配置方法.md。
           包含远程 APRS/会话/位置预览、地图换源/轨迹、音频频谱/瀑布、运行仪表盘、低带宽模式、网关统计、客户端权限与脱敏诊断。
+          语音识别可下载 FireRed ASR 2 CTC 中文/英文模型（支持 20 多种中文方言/口音），以及 Whisper Small/Medium；模型由用户在设置中按需下载。详见 VOICE-RECOGNITION.md。
           增加每连接发送容量、旧音频丢弃和写入超时保护；详情见 docs/remote-output-backpressure.md。
           手机五菜单收纳、设备静噪、卫星接收多普勒，以及本机 24 小时循环 WAV 录音；说明见 docs/remote-mobile-menu.md 和 docs/rolling-voice-recording.md。
           24 项软件验收见 REMOTE-SUITE-ACCEPTANCE.md；软件测试范围和现场复测边界见 docs/remote-suite-v2-verification.md。
