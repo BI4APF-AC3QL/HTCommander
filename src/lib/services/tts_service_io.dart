@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'offline_tts_models.dart';
+import 'tts_audio_gain.dart';
 
 /// Converts text into 32 kHz / mono / signed 16-bit little-endian PCM suitable
 /// for transmission through the radio audio path (same format as the
@@ -311,15 +312,21 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async {
     if (text.trim().isEmpty) return;
     final generation = ++_previewGeneration;
-    if (_offlineIdentifier(voiceJson) != null) {
+    if (Platform.isWindows) {
+      try {
+        await _offlinePreviewPlayer?.stop();
+        await _channel.invokeMethod<void>('stopPreview');
+      } catch (_) {}
       final pcm = await synthesizeToPcm(
         text,
         voiceJson: voiceJson,
         rate: rate,
         pitch: pitch,
+        outputGain: outputGain,
       );
       if (pcm == null || pcm.isEmpty || generation != _previewGeneration) {
         return;
@@ -436,8 +443,10 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async {
     if (text.trim().isEmpty) return null;
+    Uint8List? pcm;
     final identifier = _offlineIdentifier(voiceJson);
     if (identifier != null) {
       if (_offlineBusy) return null;
@@ -449,7 +458,7 @@ class TtsService {
           rate ?? 0.5,
         );
         if (audio == null) return null;
-        return await Isolate.run(
+        pcm = await Isolate.run(
           () => _toPcm16Mono(audio.samples, audio.sampleRate),
         );
       } catch (e) {
@@ -458,29 +467,31 @@ class TtsService {
       } finally {
         _offlineBusy = false;
       }
-    }
-    if (_useNativeChannel) {
-      return _synthesizeNative(
+    } else if (_useNativeChannel) {
+      pcm = await _synthesizeNative(
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+    } else if (_isLinux) {
+      pcm = await _synthesizeViaEspeak(
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+    } else {
+      pcm = await _synthesizeViaFile(
         text,
         voiceJson: voiceJson,
         rate: rate,
         pitch: pitch,
       );
     }
-    if (_isLinux) {
-      return _synthesizeViaEspeak(
-        text,
-        voiceJson: voiceJson,
-        rate: rate,
-        pitch: pitch,
-      );
-    }
-    return _synthesizeViaFile(
-      text,
-      voiceJson: voiceJson,
-      rate: rate,
-      pitch: pitch,
-    );
+    final result = pcm;
+    if (result == null || outputGain == 1.0) return result;
+    return Isolate.run(() => applyTtsOutputGain(result, outputGain));
   }
 
   /// In-memory synthesis on Apple platforms. The native plugin streams mono

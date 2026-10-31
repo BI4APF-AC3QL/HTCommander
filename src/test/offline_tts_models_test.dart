@@ -1,9 +1,12 @@
 import 'dart:io';
 import 'dart:ffi';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/services/offline_tts_models.dart';
+import 'package:htcommander/services/tts_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -101,6 +104,32 @@ void main() {
       expect(audio!.sampleRate, greaterThan(0));
       expect(audio.samples.length, greaterThan(100));
       expect(audio.samples.any((sample) => sample.abs() > 0.0001), isTrue);
+      final voice = jsonEncode({
+        'identifier': 'sherpa-tts:${OfflineTtsModels.melo}:0',
+      });
+      final normal = await TtsService.instance.synthesizeToPcm(
+        '你好',
+        voiceJson: voice,
+        outputGain: 1,
+      );
+      final louder = await TtsService.instance.synthesizeToPcm(
+        '你好',
+        voiceJson: voice,
+        outputGain: 1.5,
+      );
+      expect(normal, isNotNull);
+      expect(louder, isNotNull);
+      double energy(Uint8List bytes) {
+        final data = ByteData.sublistView(bytes);
+        var sum = 0.0;
+        for (var i = 0; i + 1 < bytes.length; i += 2) {
+          final sample = data.getInt16(i, Endian.little).toDouble();
+          sum += sample * sample;
+        }
+        return sum / (bytes.length ~/ 2);
+      }
+
+      expect(energy(louder!), greaterThan(energy(normal!)));
     },
     skip: modelRoot == null || nativeDir == null || !Platform.isWindows
         ? 'Optional model not installed'

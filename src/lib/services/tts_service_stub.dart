@@ -68,6 +68,7 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async {}
 
   /// No-op preview stop on the web.
@@ -79,5 +80,6 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async => null;
 }

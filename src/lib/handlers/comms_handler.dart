@@ -3092,12 +3092,16 @@ class CommsHandler {
       final voiceJson = _broker.getValue<String>(0, 'Voice', '') ?? '';
       final rate = _broker.getValue<double>(0, 'VoiceSpeechRate', 0.5) ?? 0.5;
       final pitch = _broker.getValue<double>(0, 'VoicePitch', 1.0) ?? 1.0;
+      final outputGain = !kIsWeb && Platform.isWindows
+          ? (_broker.getValue<double>(0, 'VoiceOutputGain', 1.5) ?? 1.5)
+          : 1.0;
 
       final pcm16 = await TtsService.instance.synthesizeToPcm(
         textToSpeak,
         voiceJson: voiceJson.isEmpty ? null : voiceJson,
         rate: rate,
         pitch: pitch,
+        outputGain: outputGain,
       );
 
       if (_disposed) return;

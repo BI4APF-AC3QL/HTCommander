@@ -53,6 +53,7 @@ class AppSettings {
   String voice;
   double voiceSpeechRate;
   double voicePitch;
+  double voiceOutputGain;
 
   // Winlink tab
   String winlinkPassword;
@@ -198,6 +199,7 @@ class AppSettings {
     this.voice = '',
     this.voiceSpeechRate = 0.5,
     this.voicePitch = 1.0,
+    this.voiceOutputGain = 1.5,
     this.winlinkPassword = '',
     this.winlinkUseStationId = false,
     this.echoLinkPassword = '',
@@ -252,6 +254,7 @@ class AppSettings {
     String? voice,
     double? voiceSpeechRate,
     double? voicePitch,
+    double? voiceOutputGain,
     String? winlinkPassword,
     bool? winlinkUseStationId,
     String? echoLinkPassword,
@@ -306,6 +309,7 @@ class AppSettings {
       voice: voice ?? this.voice,
       voiceSpeechRate: voiceSpeechRate ?? this.voiceSpeechRate,
       voicePitch: voicePitch ?? this.voicePitch,
+      voiceOutputGain: voiceOutputGain ?? this.voiceOutputGain,
       winlinkPassword: winlinkPassword ?? this.winlinkPassword,
       winlinkUseStationId: winlinkUseStationId ?? this.winlinkUseStationId,
       echoLinkPassword: echoLinkPassword ?? this.echoLinkPassword,
@@ -395,6 +399,7 @@ class AppSettings {
       voiceSpeechRate:
           DataBroker.getValue<double>(0, 'VoiceSpeechRate', 0.5) ?? 0.5,
       voicePitch: DataBroker.getValue<double>(0, 'VoicePitch', 1.0) ?? 1.0,
+      voiceOutputGain: DataBroker.getValue<double>(0, 'VoiceOutputGain', 1.5) ?? 1.5,
       winlinkPassword:
           DataBroker.getValue<String>(0, 'WinlinkPassword', '') ?? '',
       winlinkUseStationId:
@@ -530,6 +535,7 @@ class AppSettings {
       data: voiceSpeechRate,
     );
     DataBroker.dispatch(deviceId: 0, name: 'VoicePitch', data: voicePitch);
+    DataBroker.dispatch(deviceId: 0, name: 'VoiceOutputGain', data: voiceOutputGain);
     DataBroker.dispatch(
       deviceId: 0,
       name: 'WinlinkPassword',

@@ -2927,6 +2927,29 @@ class _SettingsDialogState extends State<SettingsDialog>
                     setState(() => _settings.voicePitch = value);
                   },
                 ),
+                if (!kIsWeb && Platform.isWindows) ...[
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Text(Localizations.localeOf(context).languageCode == 'zh'
+                        ? '朗读音量' : 'Speech output gain',
+                        style: DialogStyles.labelStyle),
+                    const Spacer(),
+                    Text('${_settings.voiceOutputGain.toStringAsFixed(2)}×',
+                        style: DialogStyles.bodyStyle),
+                  ]),
+                  Slider(
+                    value: _settings.voiceOutputGain.clamp(0.5, 4.0),
+                    min: 0.5,
+                    max: 4.0,
+                    divisions: 14,
+                    label: '${_settings.voiceOutputGain.toStringAsFixed(2)}×',
+                    onChanged: (value) => setState(() => _settings.voiceOutputGain = value),
+                  ),
+                  Text(Localizations.localeOf(context).languageCode == 'zh'
+                      ? '同时用于电脑试听和电台朗读，过高的峰值会平滑限制。'
+                      : 'Applies to local preview and radio speech; boosted peaks are softly limited.',
+                      style: DialogStyles.bodyStyle),
+                ],
                 if (TtsService.instance.isPreviewSupported) ...[
                   const SizedBox(height: 8),
                   Align(
@@ -3079,10 +3102,13 @@ class _SettingsDialogState extends State<SettingsDialog>
   /// so the user can audition the Text-to-Speech settings before saving.
   void _previewVoice() {
     TtsService.instance.preview(
-      'This is a Handi-Talky Commander voice preview.',
+      Localizations.localeOf(context).languageCode == 'zh'
+          ? '你好，这里是电台语音试听。'
+          : 'This is a Handi-Talky Commander voice preview.',
       voiceJson: _settings.voice.isEmpty ? null : _settings.voice,
       rate: _settings.voiceSpeechRate,
       pitch: _settings.voicePitch,
+      outputGain: !kIsWeb && Platform.isWindows ? _settings.voiceOutputGain : 1.0,
     );
   }
 
