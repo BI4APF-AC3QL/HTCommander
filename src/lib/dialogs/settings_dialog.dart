@@ -2927,13 +2927,15 @@ class _SettingsDialogState extends State<SettingsDialog>
                     setState(() => _settings.voicePitch = value);
                   },
                 ),
-                if (!kIsWeb && Platform.isWindows) ...[
+                if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) ...[
                   const SizedBox(height: 8),
                   Row(children: [
-                    Text(Localizations.localeOf(context).languageCode == 'zh'
-                        ? '朗读音量' : 'Speech output gain',
-                        style: DialogStyles.labelStyle),
-                    const Spacer(),
+                    Expanded(child: Text(
+                      Localizations.localeOf(context).languageCode == 'zh'
+                          ? '朗读音量' : 'Speech output gain',
+                      style: DialogStyles.labelStyle,
+                    )),
+                    const SizedBox(width: 8),
                     Text('${_settings.voiceOutputGain.toStringAsFixed(2)}×',
                         style: DialogStyles.bodyStyle),
                   ]),
@@ -3108,7 +3110,8 @@ class _SettingsDialogState extends State<SettingsDialog>
       voiceJson: _settings.voice.isEmpty ? null : _settings.voice,
       rate: _settings.voiceSpeechRate,
       pitch: _settings.voicePitch,
-      outputGain: !kIsWeb && Platform.isWindows ? _settings.voiceOutputGain : 1.0,
+      outputGain: !kIsWeb && defaultTargetPlatform == TargetPlatform.windows
+          ? _settings.voiceOutputGain : 1.0,
     );
   }
 
