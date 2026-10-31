@@ -36,6 +36,10 @@ class TncDataFragment {
   String? radioMac;
   int? radioDeviceId;
   String? usage;
+  // Runtime-only transmission control, preserved from the outgoing AX.25
+  // request through software encoding. Not part of received/capture records.
+  String? transmitTag;
+  DateTime? transmitDeadline;
 
   /// DART payload mode/level (0–5 for OFDM modes, 6 for Mode F), or -1 when the
   /// fragment was not carried by the DART modem.

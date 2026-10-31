@@ -604,6 +604,29 @@ class AppLocalizationsEs extends AppLocalizations {
       'Elija de dónde proviene su ubicación actual. Se envía a la radio y se usa para APRS-IS y el seguimiento de satélites.';
 
   @override
+  String get settingsLocationUsePhoneGps => 'Usar el GPS de este teléfono';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Obtiene una posición actual y la guarda como ubicación manual para la radio, APRS-IS y el seguimiento de satélites.';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'Seguir continuamente el GPS de este teléfono';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Actualiza la ubicación guardada mientras HTCommander está en ejecución, también en segundo plano. Consume batería y puede actualizar las balizas de posición si el envío está permitido.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess =>
+      'Ubicación del teléfono guardada.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'No se pudo obtener la ubicación del teléfono. Compruebe el permiso de ubicación y active los servicios de ubicación.';
+
+  @override
   String get settingsLocationSourceGps => 'Desde GPS (radio o GPS serie)';
 
   @override
@@ -788,6 +811,14 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       'Transcribe a texto el audio de radio recibido. Funciona completamente sin conexión en este dispositivo; el audio nunca se guarda en el disco.';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'En Android 12 y versiones anteriores, descarga abajo un modelo sin conexión. Android 13+ usa el reconocedor del sistema cuando está disponible; el modelo descargable admite ARM de 64 bits y x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'El reconocimiento de voz sin conexión no está disponible: el dispositivo necesita Android 13+ con reconocimiento del sistema o un procesador ARM de 64 bits/x86_64 para el modelo descargable.';
 
   @override
   String get settingsModel => 'Modelo';
@@ -1063,6 +1094,14 @@ class AppLocalizationsEs extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'Habilitar el servidor AGWPE';
 
   @override
+  String get settingsAgwpeLanAccess =>
+      'Permitir clientes AGWPE en la red local';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE no usa contraseña. Actívelo solo en una red local o VPN de confianza.';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1258,6 +1297,10 @@ class AppLocalizationsEs extends AppLocalizations {
       'No se encontró ningún dispositivo de radio compatible.\n\nAsegúrese de que su radio esté encendida y que el Bluetooth esté activado.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android busca radios BLE compatibles. Las radios Bluetooth Classic deben emparejarse primero en los ajustes de Bluetooth de Android. En Android 12 o posterior, permita el acceso a dispositivos cercanos; en versiones anteriores, el escaneo BLE también puede requerir permiso de ubicación.';
+
+  @override
   String get connectAllConnectedTitle => 'Todas conectadas';
 
   @override
@@ -1269,7 +1312,16 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'El Bluetooth no está disponible o está desactivado.\n\nActive el Bluetooth en la configuración de su dispositivo e inténtelo de nuevo.';
+      'El Bluetooth no está disponible o está desactivado.\n\nActive el Bluetooth en los ajustes del dispositivo. En Android 12 o posterior, permita también a HTCommander acceder a los dispositivos cercanos en los permisos de la aplicación y vuelva a intentarlo.';
+
+  @override
+  String get connectOpenAppSettings => 'Abrir los ajustes de la aplicación';
+
+  @override
+  String get connectOpenBluetoothSettings => 'Ajustes de Bluetooth';
+
+  @override
+  String get connectScanAgain => 'Volver a buscar';
 
   @override
   String get radioConnectionTitle => 'Conexión de radio';

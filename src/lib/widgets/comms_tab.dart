@@ -35,7 +35,7 @@ import '../services/data_broker_client.dart';
 import '../services/microphone_capture.dart';
 import '../services/shared_microphone.dart';
 import '../services/sherpa_model_manager.dart';
-import '../handlers/android_speech_to_text_engine.dart';
+import '../handlers/android_speech_to_text_capabilities.dart';
 import '../models/radio_models.dart';
 import '../radio/radio_models.dart' as radio;
 import '../utils/channel_share.dart';
@@ -110,7 +110,10 @@ class _CommsTabState extends State<CommsTab>
   bool _audioEnabled = false;
   bool _isListening = false;
   bool _isProcessing = false;
-  bool _isTransmitting = false;  bool _speechToTextEnabled = true;
+  bool _isTransmitting = false;
+  // Android asks for microphone access only when the user opts into speech
+  // recognition from this tab.
+  bool _speechToTextEnabled = kIsWeb || !Platform.isAndroid;
   bool _sttModelReady = false;
   bool _recordAudio = false;
   bool _decodeMorse = false;
@@ -404,8 +407,13 @@ class _CommsTabState extends State<CommsTab>
       _morseKeySettings = MorseKeySettings.fromJson(storedMorse);
     }
     _allowTransmit = (_broker.getValue<int>(0, 'AllowTransmit', 1) ?? 1) != 0;
-    _speechToTextEnabled =
-        _broker.getValue<bool>(0, 'SpeechToTextEnabled', true) ?? true;
+    final speechToTextDefault = kIsWeb || !Platform.isAndroid;
+    _speechToTextEnabled = _broker.getValue<bool>(
+          0,
+          'SpeechToTextEnabled',
+          speechToTextDefault,
+        ) ??
+        speechToTextDefault;
     _initSttModelStatus();
     _recordAudio = _broker.getValue<bool>(0, 'RecordingState', false) ?? false;
     _decodeMorse =
@@ -1144,21 +1152,30 @@ class _CommsTabState extends State<CommsTab>
       _sttModelReady = false;
       return;
     }
-    // Android feeds PCM into the OS on-device recognizer, which downloads no
-    // model into the app; readiness is a stable device capability (Android 13+
-    // with an on-device recognizer), independent of whether speech-to-text is
-    // currently enabled, so the toggle can always be re-enabled.
     if (Platform.isAndroid) {
       _sttStatusNotifier?.removeListener(_onSttModelStatusChanged);
       _sttStatusNotifier = null;
-      AndroidSpeechToTextEngine.isDeviceSupported().then((supported) {
+      AndroidSpeechToTextCapabilities.systemRecognizerAvailable.then((supported) {
         if (!mounted) return;
-        if (supported != _sttModelReady) {
-          setState(() => _sttModelReady = supported);
+        if (supported) {
+          if (!_sttModelReady) setState(() => _sttModelReady = true);
+          return;
         }
+        AndroidSpeechToTextCapabilities.sherpaFallbackAvailable.then((fallback) {
+          if (!mounted) return;
+          if (fallback) {
+            _bindSherpaModelStatus();
+          } else if (_sttModelReady) {
+            setState(() => _sttModelReady = false);
+          }
+        });
       });
       return;
     }
+    _bindSherpaModelStatus();
+  }
+
+  void _bindSherpaModelStatus() {
     // Remove previous listener if any.
     _sttStatusNotifier?.removeListener(_onSttModelStatusChanged);
     final modelId = SherpaModelManager.selectedModelId();

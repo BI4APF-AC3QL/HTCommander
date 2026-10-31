@@ -607,6 +607,29 @@ class AppLocalizationsPl extends AppLocalizations {
       'Wybierz źródło swojej bieżącej lokalizacji. Jest ona wysyłana do radia i używana w APRS-IS oraz do śledzenia satelitów.';
 
   @override
+  String get settingsLocationUsePhoneGps => 'Użyj GPS tego telefonu';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Pobiera aktualną pozycję i zapisuje ją jako lokalizację ręczną dla radia, APRS-IS i śledzenia satelitów.';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'Ciągle śledź GPS tego telefonu';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Aktualizuje zapisaną pozycję, gdy HTCommander działa, także w tle. Zużywa baterię i może aktualizować radiowe lub APRS-owe beacony pozycji, jeśli wysyłanie jest dozwolone.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess =>
+      'Zapisano lokalizację telefonu.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'Nie można pobrać lokalizacji telefonu. Sprawdź uprawnienia i włącz usługi lokalizacji.';
+
+  @override
   String get settingsLocationSourceGps => 'Z GPS (radio lub GPS szeregowy)';
 
   @override
@@ -791,6 +814,14 @@ class AppLocalizationsPl extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       'Transkrybuje odebrany dźwięk radiowy na tekst. Działa całkowicie offline na tym urządzeniu; dźwięk nigdy nie jest zapisywany na dysku.';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'W Androidzie 12 i starszym pobierz poniżej model offline. Android 13+ używa systemowego rozpoznawania, jeśli jest dostępne; pobierany model obsługuje 64-bitowy ARM i x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Rozpoznawanie mowy offline jest niedostępne: urządzenie wymaga Androida 13+ z obsługą systemową lub procesora 64-bit ARM/x86_64 dla pobieranego modelu.';
 
   @override
   String get settingsModel => 'Model';
@@ -1061,6 +1092,13 @@ class AppLocalizationsPl extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'Włącz serwer AGWPE';
 
   @override
+  String get settingsAgwpeLanAccess => 'Zezwalaj klientom AGWPE w sieci LAN';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE nie używa hasła. Włączaj tylko w zaufanej sieci LAN lub VPN.';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1261,6 +1299,10 @@ class AppLocalizationsPl extends AppLocalizations {
       'Nie znaleziono zgodnego radiotelefonu.\n\nUpewnij się, że radiotelefon jest włączony, a Bluetooth aktywny.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android wyszukuje obsługiwane radiotelefony BLE. Radiotelefony Bluetooth Classic trzeba najpierw sparować w ustawieniach Bluetooth Androida. W Androidzie 12 lub nowszym zezwól na dostęp do urządzeń w pobliżu; starsze wersje mogą wymagać także uprawnienia lokalizacji do skanowania BLE.';
+
+  @override
   String get connectAllConnectedTitle => 'Wszystkie połączone';
 
   @override
@@ -1272,7 +1314,16 @@ class AppLocalizationsPl extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Bluetooth jest niedostępny lub wyłączony.\n\nWłącz Bluetooth w ustawieniach urządzenia i spróbuj ponownie.';
+      'Bluetooth jest niedostępny lub wyłączony.\n\nWłącz Bluetooth w ustawieniach urządzenia. W systemie Android 12 lub nowszym zezwól też aplikacji HTCommander na dostęp do urządzeń w pobliżu w uprawnieniach aplikacji, a następnie spróbuj ponownie.';
+
+  @override
+  String get connectOpenAppSettings => 'Otwórz ustawienia aplikacji';
+
+  @override
+  String get connectOpenBluetoothSettings => 'Ustawienia Bluetooth';
+
+  @override
+  String get connectScanAgain => 'Skanuj ponownie';
 
   @override
   String get radioConnectionTitle => 'Połączenie radiotelefonu';

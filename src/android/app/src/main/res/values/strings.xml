@@ -1,0 +1,4 @@
+<resources>
+    <string name="radio_web_server_service_description">Keeps connected HTCommander radios, the remote control server, network services, or local receive recording active while the app is in the background.</string>
+    <string name="phone_location_service_description">Continuously updates the phone location used by radio, APRS and satellite features when the operator enables phone GPS tracking.</string>
+</resources>

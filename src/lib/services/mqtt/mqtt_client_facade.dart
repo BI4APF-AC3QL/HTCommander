@@ -10,8 +10,8 @@ real [MqttClientFacade] backed by `package:mqtt_client`'s `MqttServerClient`. On
 the web — which cannot open the plain TCP sockets MQTT needs — it resolves to an
 inert stub so `dart:io` is never referenced.
 
-The Home Assistant bridge that uses this is only wired up on desktop
-(Windows / Linux / macOS); the stub keeps the web/iOS/Android builds compiling.
+The Home Assistant bridge that uses this is wired up on desktop and Android;
+the stub keeps the web/iOS builds compiling.
 */
 
 export 'mqtt_client_stub.dart'

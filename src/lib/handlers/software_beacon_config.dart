@@ -11,9 +11,8 @@ import '../utils/num_parsing.dart';
 ///
 /// Persisted as a JSON string in the [DataBroker] at device 0 under the key
 /// `SoftwareBeaconConfig`. Unlike the radio's built-in beacon, the software
-/// beacon always uses the global station callsign + SSID, always transmits on
-/// the "APRS" channel in APRS format, and is always gated to the Internet
-/// (APRS-IS) in addition to any selected radio.
+/// beacon uses the global station callsign + SSID and the configured RF or
+/// verified APRS-IS destination. Saving the configuration does not arm it.
 class SoftwareBeaconConfig {
   /// Beacon interval in seconds. 0 disables the beacon.
   final int intervalSeconds;
@@ -31,9 +30,7 @@ class SoftwareBeaconConfig {
   /// report; otherwise a status-only beacon is sent.
   final bool includeLocation;
 
-  /// Preferred radio device id used for the RF transmission. -1 = none (the
-  /// beacon is only gated to the Internet, or the first connected radio with an
-  /// APRS channel is used as a fallback).
+  /// Explicit RF destination. -1 = Internet only. There is no radio fallback.
   final int radioDeviceId;
 
   const SoftwareBeaconConfig({
@@ -46,6 +43,30 @@ class SoftwareBeaconConfig {
   });
 
   bool get enabled => intervalSeconds > 0;
+
+  String? get validationError {
+    if (intervalSeconds != 0 &&
+        (intervalSeconds < 60 || intervalSeconds > 86400)) {
+      return 'Beacon interval must be 60–86400 seconds, or off.';
+    }
+    if (!['/', '\\'].contains(symbolTable) ||
+        symbolCode.length != 1 ||
+        symbolCode.codeUnitAt(0) < 33 ||
+        symbolCode.codeUnitAt(0) > 126) {
+      return 'Use a valid APRS symbol.';
+    }
+    if (message.length > 60 ||
+        message.codeUnits.any((c) => c < 32 || c > 126)) {
+      return 'Beacon comment must be up to 60 printable ASCII characters.';
+    }
+    if (!includeLocation && message.trim().isEmpty && enabled) {
+      return 'A status beacon needs a comment.';
+    }
+    if (radioDeviceId == 0 || radioDeviceId < -1) {
+      return 'Select an explicit destination.';
+    }
+    return null;
+  }
 
   SoftwareBeaconConfig copyWith({
     int? intervalSeconds,
@@ -90,7 +111,7 @@ class SoftwareBeaconConfig {
       intervalSeconds: asInt(json['intervalSeconds'], 0).clamp(0, 86400),
       symbolTable: asChar(json['symbolTable'], '/'),
       symbolCode: asChar(json['symbolCode'], '-'),
-      message: (json['message'] as String?) ?? '',
+      message: json['message'] is String ? json['message'] as String : '',
       includeLocation: asBool(json['includeLocation'], true),
       radioDeviceId: asInt(json['radioDeviceId'], -1),
     );
