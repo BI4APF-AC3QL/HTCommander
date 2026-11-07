@@ -907,6 +907,16 @@ jobs:
         working-directory: src
         run: flutter pub get
 
+      - name: Clear stale staged Android web assets
+        working-directory: src
+        run: python tools/stage_android_web_assets.py --clean
+
+      - name: Build and stage hosted web client for Android
+        working-directory: src
+        run: |
+          flutter build web --release --base-href / --dart-define=HTC_HOSTED=true --no-wasm-dry-run
+          python tools/stage_android_web_assets.py
+
       - name: Build signed Android APK
         working-directory: src
         run: flutter build apk --release
@@ -914,6 +924,31 @@ jobs:
       - name: Build signed Android App Bundle
         working-directory: src
         run: flutter build appbundle --release
+
+      - name: Verify hosted web client is packaged
+        working-directory: src
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          packages = [
+              Path('build/app/outputs/flutter-apk/app-release.apk'),
+              Path('build/app/outputs/bundle/release/app-release.aab'),
+          ]
+          suffixes = (
+              'assets/flutter_assets/assets/web_app/index.html',
+              'assets/flutter_assets/assets/web_app/main.dart.js',
+              'assets/flutter_assets/assets/web_app/canvaskit/canvaskit.wasm',
+          )
+          for package in packages:
+              with ZipFile(package) as archive:
+                  entries = set(archive.namelist())
+              missing = [suffix for suffix in suffixes if not any(name.endswith(suffix) for name in entries)]
+              if missing:
+                  raise SystemExit(f'{package} is missing hosted web assets: {missing}')
+              print(f'Hosted web assets verified in {package}')
+          PY
 
       - name: Rename artifacts
         working-directory: src

@@ -10,6 +10,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
+import 'android_bluetooth_audio_diagnostics.dart';
 import 'data_broker_client.dart';
 
 /// Dart wrapper for native Bluetooth Classic (RFCOMM) on macOS
@@ -72,6 +73,28 @@ class BluetoothClassicMacOS {
     _broker.logError('[BT-ClassicBridge] $msg');
   }
 
+  void _logDisconnect(String channel, String address, Object? rawReason) {
+    final reason = rawReason is String ? rawReason : null;
+    if (reason == null || reason.isEmpty || reason == 'user_requested') {
+      _logInfo('$channel event disconnected for $address');
+      return;
+    }
+    if (reason == 'receive_queue_overflow' ||
+        reason == 'control_queue_overflow' ||
+        reason == 'write_queue_overflow' ||
+        reason == 'write_timeout' ||
+        reason == 'read_failed' ||
+        reason == 'write_failed') {
+      _logError('$channel link ended; reason=$reason');
+      return;
+    }
+    if (reason == 'remote_closed') {
+      _logInfo('$channel link ended; peer closed RFCOMM');
+      return;
+    }
+    _logInfo('$channel event disconnected for $address');
+  }
+
   Uint8List? _coerceBytes(dynamic data) {
     if (data is Uint8List) return data;
     if (data is List) {
@@ -102,7 +125,7 @@ class BluetoothClassicMacOS {
               );
               break;
             case 'disconnected':
-              _logInfo('Control event disconnected for $address');
+              _logDisconnect('Control', address, event['reason']);
               _connectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.disconnected,
@@ -146,6 +169,7 @@ class BluetoothClassicMacOS {
 
           switch (eventType) {
             case 'connected':
+              _dispatchAndroidAudioQueueEvent(address, const {'kind': 'reset'});
               _audioConnectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.connected,
@@ -154,7 +178,7 @@ class BluetoothClassicMacOS {
               );
               break;
             case 'disconnected':
-              _logInfo('Audio event disconnected for $address');
+              _logDisconnect('Audio', address, event['reason']);
               _audioConnectionController.add(
                 BluetoothClassicEvent(
                   type: BluetoothClassicEventType.disconnected,
@@ -163,6 +187,21 @@ class BluetoothClassicMacOS {
               );
               _audioDataControllers[address]?.close();
               _audioDataControllers.remove(address);
+              break;
+            case 'buffer_overrun':
+              final chunks = event['droppedChunks'];
+              final bytes = event['droppedBytes'];
+              if (chunks is int && bytes is int && chunks > 0 && bytes >= 0) {
+                _dispatchAndroidAudioQueueEvent(address, {
+                  'kind': 'overrun',
+                  'droppedChunks': chunks,
+                  'droppedBytes': bytes,
+                });
+                _logError(
+                  'Audio receive backlog: Android discarded $chunks stale '
+                  'chunk(s), $bytes byte(s), to catch up with live playback.',
+                );
+              }
               break;
             case 'data':
               final bytes = _coerceBytes(event['data']);
@@ -181,6 +220,24 @@ class BluetoothClassicMacOS {
       onError: (error) {
         _logError('Audio EventChannel error: $error');
       },
+    );
+  }
+
+  void _dispatchAndroidAudioQueueEvent(
+    String address,
+    Map<String, Object?> data,
+  ) {
+    if (kIsWeb || !Platform.isAndroid) return;
+    final deviceId = radioDeviceIdForBluetoothAddress(
+      _broker.getValueDynamic(1, 'ConnectedRadios'),
+      address,
+    );
+    if (deviceId == null) return;
+    _broker.dispatch(
+      deviceId: deviceId,
+      name: androidBluetoothAudioQueueEventName,
+      data: data,
+      store: false,
     );
   }
 

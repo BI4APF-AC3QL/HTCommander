@@ -16,11 +16,10 @@ import 'android_speech_to_text_engine.dart';
 import 'speech_to_text_engine.dart';
 import 'sherpa_speech_to_text_engine.dart';
 
-/// Desktop platforms use the offline sherpa-onnx recognizer. Android has no
-/// bundled sherpa native libraries (they are stubbed out of the APK); instead
-/// it feeds PCM into the OS on-device recognizer via
-/// [AndroidSpeechToTextEngine], which requires no model download.
-SpeechToTextEngine createPlatformSpeechToTextEngine() =>
-    Platform.isAndroid
-        ? AndroidSpeechToTextEngine()
-        : SherpaSpeechToTextEngine();
+/// Desktop platforms use the offline sherpa-onnx recognizer. Android prefers
+/// the OS on-device recognizer and can fall back to sherpa-onnx on 64-bit ABIs.
+SpeechToTextEngine createPlatformSpeechToTextEngine() => Platform.isAndroid
+    ? AndroidSpeechToTextEngine(
+        fallbackFactory: () => SherpaSpeechToTextEngine(),
+      )
+    : SherpaSpeechToTextEngine();

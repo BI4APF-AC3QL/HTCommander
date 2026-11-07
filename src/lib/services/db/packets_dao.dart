@@ -60,6 +60,10 @@ class PacketsDao {
     await _db.delete(_table);
   }
 
+  Future<void> clearAprs() async {
+    await _db.delete(_table, where: 'channel_name = ?', whereArgs: ['APRS']);
+  }
+
   /// Counts packets on the APRS channel ([aprs] true) or all other channels
   /// ([aprs] false).
   Future<int> count({required bool aprs}) async {

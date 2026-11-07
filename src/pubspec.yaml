@@ -42,8 +42,12 @@ dependencies:
   desktop_multi_window: ^0.3.0
   window_manager: ^0.5.2
   file_picker: ^11.0.2
+  path: ^1.9.1
   shared_preferences: ^2.2.3
   flutter_blue_plus: ^1.35.2
+  # Android USB-OTG GPS receivers commonly expose FTDI/CP210x/CH34x/CDC serial.
+  # Desktop continues to use the native COM/tty implementation.
+  flutter_serial_communication: ^0.2.8
   permission_handler: ^13.0.1
   path_provider: ^2.1.4
   crypto: ^3.0.0
@@ -93,6 +97,7 @@ dependencies:
   sqflite: ^2.4.4
   sqflite_common_ffi: ^2.4.3
   sqlite3_flutter_libs: ^0.6.0+eol
+  qr_flutter: 4.1.0
 
 dev_dependencies:
   fake_async: ^1.3.3
@@ -106,11 +111,14 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.1
+  zxing2: 0.2.4
+  integration_test:
+    sdk: flutter
 
-# Override sherpa_onnx Android platform packages with empty stubs to exclude
-# the large native .so libraries from the Android APK. Speech-to-text is
-# disabled on Android at runtime; these stubs prevent ~50 MB of unused native
-# code from being bundled.
+# Android arm64 and x86_64 include sherpa-onnx so 64-bit devices without
+# Android 13's raw-PCM speech-recognition API can use the desktop offline models.
+# Keep 32-bit ABI packages stubbed until matching libraries are intentionally
+# enabled and tested for those architectures.
 dependency_overrides:
   # Vendored, patched copy of desktop_drop: the upstream Windows plugin only
   # reads dropped files (CF_HDROP), so links dragged from a web browser were
@@ -136,14 +144,10 @@ dependency_overrides:
   # below 2.3.0 removes jni/jni_flutter from the dependency graph entirely with
   # no loss of functionality.
   path_provider_android: 2.2.23
-  sherpa_onnx_android_arm64:
-    path: sherpa_stubs/sherpa_onnx_android_arm64
   sherpa_onnx_android_armeabi:
     path: sherpa_stubs/sherpa_onnx_android_armeabi
   sherpa_onnx_android_x86:
     path: sherpa_stubs/sherpa_onnx_android_x86
-  sherpa_onnx_android_x86_64:
-    path: sherpa_stubs/sherpa_onnx_android_x86_64
 
 flutter_launcher_icons:
   image_path: "assets/images/AppIcon.png"
@@ -179,6 +183,9 @@ flutter:
   assets:
     - assets/images/
     - assets/images/tabs/
+    # Android's LAN server hosts the same Flutter web interface as desktop.
+    # CI stages a hosted web build here before creating Android packages.
+    - assets/web_app/
     # Offline callsign -> country/DXCC-entity table (AD1C country-files.com),
     # gzip-compressed JSON loaded into memory at startup. See tools/build_cty.py.
     - assets/callsign/

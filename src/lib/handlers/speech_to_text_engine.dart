@@ -11,15 +11,10 @@ contract (start a segment, push PCM frames, complete the segment to force a
 final result) but delegates the actual recognition to a platform-specific
 engine so each platform can use the most native capability available:
 
-  - macOS / iOS  -> Apple `SFSpeechRecognizer` with a
-    `SFSpeechAudioBufferRecognitionRequest`. This is the one major native API
-    that accepts arbitrary audio buffers (not just the live microphone),
-    supports on-device recognition and reports partial + final results.
-  - Android / Windows / web -> no native API accepts raw PCM buffers
-    (`SpeechRecognizer` and the Web Speech API are microphone-only), so an
-    unsupported no-op engine is used. These platforms can later be backed by an
-    offline engine such as Vosk, which accepts PCM, without changing this
-    interface or the CommsHandler wiring.
+  - Android -> system raw-PCM recognition on Android 13+, with a sherpa-onnx fallback on 64-bit ABIs.
+  - Windows / Linux -> sherpa-onnx accepts the received PCM offline.
+  - macOS / iOS -> Apple speech recognition accepts arbitrary audio buffers.
+  - web -> no PCM-buffer recognizer is available, so a no-op engine is used.
 */
 
 import 'dart:async';
@@ -97,9 +92,9 @@ abstract class SpeechToTextEngine {
 
 /// Returns the speech-to-text engine appropriate for the current platform.
 ///
-/// All native platforms use sherpa-onnx (SenseVoice) for consistent,
-/// high-quality offline recognition that accepts raw PCM buffers. Web has no
-/// PCM-buffer recognizer, so it falls back to the no-op engine.
+/// Native platforms use an offline engine that accepts raw PCM. Android first
+/// tries its OS recognizer and can fall back to sherpa-onnx on 64-bit ABIs. Web has
+/// no PCM-buffer recognizer, so it uses the no-op engine.
 ///
 /// [AppleSpeechToTextEngine] remains available as a lightweight native
 /// fallback (Apple `SFSpeechRecognizer`) if sherpa-onnx is undesired.
@@ -108,8 +103,8 @@ SpeechToTextEngine createSpeechToTextEngine() {
   return createPlatformSpeechToTextEngine();
 }
 
-/// No-op engine used on platforms without a native PCM-buffer recognizer
-/// (Android, Windows, Linux, web). Reports unsupported and produces no results.
+/// No-op engine used on platforms without a PCM-buffer recognizer (web).
+/// Reports unsupported and produces no results.
 class UnsupportedSpeechToTextEngine implements SpeechToTextEngine {
   final StreamController<SpeechResult> _results =
       StreamController<SpeechResult>.broadcast();

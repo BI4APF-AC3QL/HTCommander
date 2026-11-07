@@ -13,6 +13,7 @@ void main() {
       });
       final values = <String, String>{};
       var fail = true;
+      var readAllCalls = 0;
       const channel = MethodChannel(
         'plugins.it_nomads.com/flutter_secure_storage',
       );
@@ -20,6 +21,10 @@ void main() {
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       messenger.setMockMethodCallHandler(channel, (call) async {
         final args = call.arguments as Map;
+        if (call.method == 'readAll') {
+          readAllCalls++;
+          return Map<String, String>.from(values);
+        }
         if (call.method == 'read') return values[args['key']];
         if (call.method == 'write') {
           if (fail) throw PlatformException(code: 'locked');
@@ -30,6 +35,7 @@ void main() {
       try {
         await DataBroker.initialize();
         await DataBroker.loadSecrets();
+        expect(readAllCalls, 1);
         final prefs = await SharedPreferences.getInstance();
         expect(
           prefs.getString('databroker_WinlinkPassword'),
@@ -37,6 +43,7 @@ void main() {
         );
         fail = false;
         await DataBroker.loadSecrets();
+        expect(readAllCalls, 2);
         expect(values['htc_secret_WinlinkPassword'], 'old-test-secret');
         expect(prefs.getString('databroker_WinlinkPassword'), isNull);
         expect(

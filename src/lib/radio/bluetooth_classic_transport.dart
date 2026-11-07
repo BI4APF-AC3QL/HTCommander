@@ -23,11 +23,13 @@ class BluetoothClassicTransport implements RadioTransport {
 
   Future<void> _sendTail = Future<void>.value();
   int _connectionGeneration = 0;
+  int? _activeConnectGeneration;
   int _queuedWrites = 0;
   TransportState _state = TransportState.disconnected;
   DiscoveredDevice? _connectedDevice;
   StreamSubscription<Uint8List>? _dataSubscription;
   StreamSubscription<BluetoothClassicEvent>? _connectionSubscription;
+  Future<void>? _disconnectInProgress;
 
   @override
   TransportState get state => _state;
@@ -116,19 +118,27 @@ class BluetoothClassicTransport implements RadioTransport {
 
   @override
   Future<bool> connect(DiscoveredDevice device) async {
-    if (_state == TransportState.connected ||
-        _state == TransportState.connecting) {
+    if (_state != TransportState.disconnected ||
+        _activeConnectGeneration != null ||
+        _disconnectInProgress != null) {
       _logInfo('Connect ignored for ${device.id}; state=${_state.name}');
       return false;
     }
 
+    final generation = ++_connectionGeneration;
+    _activeConnectGeneration = generation;
+    _connectedDevice = device;
     _updateState(TransportState.connecting);
+    StreamSubscription<Uint8List>? dataSubscription;
+    var nativeConnectStarted = false;
 
     try {
-      _connectedDevice = device;
-      final generation = ++_connectionGeneration;
-      await _dataSubscription?.cancel();
-      _dataSubscription = BluetoothClassicMacOS.instance
+      final previousSubscription = _dataSubscription;
+      _dataSubscription = null;
+      await previousSubscription?.cancel();
+      if (!_isCurrentConnect(generation)) return false;
+
+      dataSubscription = BluetoothClassicMacOS.instance
           .getDataStream(device.id)
           .listen((data) {
             if (generation == _connectionGeneration &&
@@ -146,53 +156,119 @@ class BluetoothClassicTransport implements RadioTransport {
               }
             }
           }, onError: (Object error) => _logError('RX stream error: $error'));
-      final success = await BluetoothClassicMacOS.instance.connect(device.id);
-
-      if (success &&
-          generation == _connectionGeneration &&
-          _state == TransportState.connecting) {
-        _connectedDevice = device;
-        _updateState(TransportState.connected);
-
-        return true;
-      } else {
-        await _dataSubscription?.cancel();
-        _dataSubscription = null;
-        _connectedDevice = null;
-        _logError('Native Classic connect failed for ${device.id}');
-        _updateState(TransportState.disconnected);
+      _dataSubscription = dataSubscription;
+      if (!_isCurrentConnect(generation)) {
+        await _cancelDataSubscription(dataSubscription);
         return false;
       }
+
+      nativeConnectStarted = true;
+      final success = await BluetoothClassicMacOS.instance.connect(device.id);
+
+      if (!_isCurrentConnect(generation)) {
+        // Disconnect may have raced with the native connect result. Repeating
+        // disconnect after a late success closes a socket that was created
+        // after the user's first cancellation reached the platform channel.
+        if (success) {
+          await BluetoothClassicMacOS.instance.disconnect(device.id);
+        }
+        await _cancelDataSubscription(dataSubscription);
+        return false;
+      }
+
+      if (success) {
+        _updateState(TransportState.connected);
+        return true;
+      }
+
+      await _cancelDataSubscription(dataSubscription);
+      if (!_isCurrentConnect(generation)) return false;
+      _connectedDevice = null;
+      _logError('Native Classic connect failed for ${device.id}');
+      _updateState(TransportState.disconnected);
+      return false;
     } catch (e) {
-      await _dataSubscription?.cancel();
-      _dataSubscription = null;
+      if (!_isCurrentConnect(generation)) {
+        if (nativeConnectStarted) {
+          await BluetoothClassicMacOS.instance.disconnect(device.id);
+        }
+        await _cancelDataSubscription(dataSubscription);
+        return false;
+      }
+      await _cancelDataSubscription(dataSubscription);
+      if (!_isCurrentConnect(generation)) return false;
+      _connectedDevice = null;
       _logError('Classic connect threw for ${device.id}: $e');
       _updateState(TransportState.disconnected);
       return false;
+    } finally {
+      if (_activeConnectGeneration == generation) {
+        _activeConnectGeneration = null;
+      }
     }
   }
 
   @override
-  Future<void> disconnect() async {
+  Future<void> disconnect() {
+    final pending = _disconnectInProgress;
+    if (pending != null) return pending;
+
+    final completion = Completer<void>();
+    _disconnectInProgress = completion.future;
+    unawaited(_performDisconnect(completion));
+    return completion.future;
+  }
+
+  Future<void> _performDisconnect(Completer<void> completion) async {
     ++_connectionGeneration;
     _startupData.clear();
     _startupBytes = 0;
-    if (_connectedDevice == null) return;
+    final device = _connectedDevice;
+    if (device == null) {
+      _updateState(TransportState.disconnected);
+      _finishDisconnect(completion);
+      return;
+    }
 
-    _logInfo('Disconnecting ${_connectedDevice!.id}');
+    _logInfo('Disconnecting ${device.id}');
 
     _updateState(TransportState.disconnecting);
 
     try {
-      await BluetoothClassicMacOS.instance.disconnect(_connectedDevice!.id);
+      await BluetoothClassicMacOS.instance.disconnect(device.id);
     } catch (e) {
-      _logError('Disconnect error for ${_connectedDevice!.id}: $e');
+      _logError('Disconnect error for ${device.id}: $e');
+    } finally {
+      final subscription = _dataSubscription;
+      try {
+        await _cancelDataSubscription(subscription);
+      } finally {
+        if (_connectedDevice == device) _connectedDevice = null;
+        _updateState(TransportState.disconnected);
+        _finishDisconnect(completion);
+      }
     }
+  }
 
-    _dataSubscription?.cancel();
-    _dataSubscription = null;
-    _connectedDevice = null;
-    _updateState(TransportState.disconnected);
+  void _finishDisconnect(Completer<void> completion) {
+    if (identical(_disconnectInProgress, completion.future)) {
+      _disconnectInProgress = null;
+    }
+    if (!completion.isCompleted) completion.complete();
+  }
+
+  bool _isCurrentConnect(int generation) =>
+      generation == _connectionGeneration &&
+      _state == TransportState.connecting;
+
+  Future<void> _cancelDataSubscription(
+    StreamSubscription<Uint8List>? subscription,
+  ) async {
+    if (subscription == null) return;
+    if (identical(_dataSubscription, subscription)) {
+      _dataSubscription = null;
+    }
+    await subscription.cancel();
   }
 
   @override

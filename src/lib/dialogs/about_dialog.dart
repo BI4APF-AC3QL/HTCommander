@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -12,6 +14,13 @@ import 'update_dialog.dart';
 class HTAboutDialog extends StatelessWidget {
   const HTAboutDialog({super.key});
 
+  // Android CI builds are published as prereleases, which GitHub excludes
+  // from `/releases/latest`. Open the release list so users can find the
+  // newest test APK as well as stable releases.
+  static final Uri _androidReleasesUri = Uri.parse(
+    'https://github.com/BI4APF-AC3QL/HTCommander/releases',
+  );
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<PackageInfo>(
@@ -25,6 +34,8 @@ class HTAboutDialog extends StatelessWidget {
 
   Widget _buildDialog(BuildContext context, String version) {
     final scheme = Theme.of(context).colorScheme;
+    final androidUpdateAvailable =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
     return Dialog(
       backgroundColor: scheme.surface, // Light gray like C# app
       child: ConstrainedBox(
@@ -133,22 +144,33 @@ class HTAboutDialog extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               // Action buttons
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              OverflowBar(
+                alignment: MainAxisAlignment.end,
+                overflowAlignment: OverflowBarAlignment.end,
+                spacing: 8,
+                overflowSpacing: 4,
                 children: [
                   TextButton(
                     onPressed: () => _reportCrash(context),
                     style: DialogStyles.secondaryButtonStyle(context),
                     child: const Text('Report an Issue...'),
                   ),
-                  if (UpdateService.instance.isSupported)
+                  if (UpdateService.instance.isSupported ||
+                      androidUpdateAvailable)
                     TextButton(
-                      onPressed: () {
+                      onPressed: () async {
                         Navigator.of(context).pop();
-                        showDialog(
-                          context: context,
-                          builder: (context) => const UpdateDialog(),
-                        );
+                        if (UpdateService.instance.isSupported) {
+                          await showDialog<void>(
+                            context: context,
+                            builder: (context) => const UpdateDialog(),
+                          );
+                        } else {
+                          await launchUrl(
+                            _androidReleasesUri,
+                            mode: LaunchMode.externalApplication,
+                          );
+                        }
                       },
                       style: DialogStyles.secondaryButtonStyle(context),
                       child: Text(

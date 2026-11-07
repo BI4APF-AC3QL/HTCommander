@@ -24,6 +24,7 @@ class DartIoAprsIsNetwork implements AprsIsNetwork {
   final Duration connectTimeout;
 
   Socket? _socket;
+  bool _closed = false;
   StreamSubscription<List<int>>? _sub;
   final StreamController<String> _incoming = StreamController<String>();
   final Completer<void> _done = Completer<void>();
@@ -36,7 +37,12 @@ class DartIoAprsIsNetwork implements AprsIsNetwork {
 
   @override
   Future<void> connect(String host, int port) async {
+    if (_closed) return;
     final socket = await Socket.connect(host, port, timeout: connectTimeout);
+    if (_closed) {
+      socket.destroy();
+      return;
+    }
     socket.setOption(SocketOption.tcpNoDelay, true);
     _socket = socket;
     _sub = socket.listen(
@@ -67,16 +73,15 @@ class DartIoAprsIsNetwork implements AprsIsNetwork {
 
   @override
   Future<void> close() async {
-    await _sub?.cancel();
-    _sub = null;
-    try {
-      await _socket?.close();
-    } catch (_) {
-      // Ignore errors while closing.
-    }
+    _closed = true;
+    // Destroy immediately: graceful socket flush can wait on an unreachable
+    // peer. This also makes a connection completing after close harmless.
     _socket?.destroy();
     _socket = null;
-    if (!_incoming.isClosed) await _incoming.close();
+    await _sub?.cancel();
+    _sub = null;
+    // StreamController.close waits for a listener; failed connects have none.
+    if (!_incoming.isClosed) unawaited(_incoming.close());
     if (!_done.isCompleted) _done.complete();
   }
 }

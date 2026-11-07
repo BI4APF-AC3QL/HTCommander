@@ -1,28 +1,23 @@
 package com.meshcentral.htcommander
 
+import android.content.Context
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 
+/** Shares one application-owned engine with the foreground radio/server service. */
 class MainActivity : FlutterActivity() {
-    private var bluetoothClassicPlugin: BluetoothClassicPlugin? = null
-    private var speechToTextPlugin: AndroidSpeechToTextPlugin? = null
+    override fun provideFlutterEngine(context: Context): FlutterEngine =
+        (application as HTCommanderApplication).provideFlutterEngine(context)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        val plugin = BluetoothClassicPlugin(
-            applicationContext,
-            flutterEngine.dartExecutor.binaryMessenger,
-        )
-        plugin.activity = this
-        bluetoothClassicPlugin = plugin
+        (application as HTCommanderApplication).configureFlutterEngine(flutterEngine, this)
+    }
 
-        speechToTextPlugin = AndroidSpeechToTextPlugin(
-            applicationContext,
-            flutterEngine.dartExecutor.binaryMessenger,
-        )
-
-        // Bind the Android Auto bridge so the car UI can mirror channel/APRS
-        // state and request channel changes from the Dart side.
-        AndroidAutoBridge.attach(flutterEngine.dartExecutor.binaryMessenger)
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        // The application owns this engine. Detaching the Activity must leave its
+        // Dart web server, Bluetooth streams and enabled location stream running.
+        (application as HTCommanderApplication).detachActivity(this)
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 }

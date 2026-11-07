@@ -1,22 +1,15 @@
 # Voice
 
-![image](https://github.com/Ylianst/HTCommander/blob/main/docs/images/ht-voice.png?raw=true)
+Handi-Talky Commander transcribes received radio audio entirely on the device. Audio stays in memory and is not written to disk. Select a model under **Settings → Comms → Speech Recognition** and download it there; the model is optional and is not bundled with the app.
 
-Handi-Talky Commander has built-in speech recognition capabilities with integration of Open AI's Whisper. Radio audio will be run into a neural-network language model to convert into text and the results are quite impressive. A powerful CPU with AVX support is required.
+Available models include SenseVoice for Chinese, English, Japanese, Korean and Cantonese; FireRed ASR 2 CTC for Chinese/English and 20+ Chinese dialects or accents; Whisper Tiny/Base for English; Whisper Small/Medium for multilingual recognition; and Zipformer for low-latency English streaming. FireRed is the recommended model to try for Chinese radio traffic: its Sherpa ONNX model is designed for fast CPU decoding and the download is about 740 MB. Whisper Medium has the largest Whisper model in the app and needs considerably more disk space, memory and CPU time. Download sizes shown in the app are estimates.
 
-From within Handi-Talky Commander you can select and download one of the Whisper models. The larger the model, the better the results but also the more CPU power is required.
+The language selector can provide a hint to multilingual models. Recognition runs in a background worker, but larger models can still use substantial CPU and may take longer to produce each result. FireRed has not been benchmarked against this app's real radio audio, so compare it with SenseVoice using a few received recordings before choosing a default. Choose Whisper Medium only if the computer has enough memory and slower results are acceptable.
 
-- Tiny, 77.7 MB
-- Tiny.en, 77.7 MB, English Only
-- Base, 148 MB
-- Base.en, 148 MB, English Only (Recommended)
-- Small, 488 MB
-- Small.en, 488 MB, English Only
-- Medium, 1.53 GB
-- Medium.en, 1.53 GB, English Only
+Recognition runs when the radio no longer receives a signal or every 20 to 30 seconds.
 
-The English-only models are best if you intend to only listen to English conversations, otherwise, the normal models support a large range of languages. You can help the model out by selecting the language you will be listening to in the Settings panel, this will give a hint to the model to focus that selected language.
+In addition, the app supports text-to-speech (TTS). Windows uses Microsoft Speech API, Android uses the system TextToSpeech service, and Apple platforms use AVSpeechSynthesizer. Voice preview playback is local and does not send audio to the radio.
 
-Once enabled, the voice recognition will run when the radio no longer receives a signal or every 20 to 30 seconds.
+Windows also supports optional offline Kokoro 1.1 (Chinese and English, 103 voices) and MeloTTS Chinese/English models. Download and extract the original model folders into the TTS model folder opened from **Settings → Comms → Text-to-Speech**, then refresh the voice list. Inference runs on a background isolate; rate is supported, while pitch adjustment does not apply to these models. Models are not bundled. See [语音合成模型使用方法.md](语音合成模型使用方法.md) for installation instructions and upstream links.
 
-In addition, there is support for text-to-speech (TTS) using the Microsoft Speech API. So, you can type a message and it will be read on the radio.
+On Windows, the speech output gain applies to both local previews and radio speech. It defaults to 1.5×, can be adjusted from 0.5× to 4×, and smoothly limits boosted peaks. Set it to 1× for the original level.

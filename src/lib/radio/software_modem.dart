@@ -56,6 +56,8 @@ class _PendingTransmission {
   final Uint8List frameData;
   final FragmentFrameType frameType;
   final DateTime deadline;
+  final String? tag;
+  bool cancelled = false;
 
   /// Which modem instance (general or APRS) should modulate this frame. Frames
   /// are only bundled together when they share the same target instance.
@@ -65,6 +67,7 @@ class _PendingTransmission {
     this.frameType,
     this.deadline,
     this.target,
+    this.tag,
   );
 }
 
@@ -72,6 +75,7 @@ class _PendingTransmission {
 /// (the user-selected mode) and a dedicated APRS one (AFSK 1200), plus the
 /// radio-global clear-channel transmit queue.
 class _RadioModemState {
+  List<_PendingTransmission> activeBundle = [];
   int deviceId;
   String macAddress;
   String currentChannelName = '';
@@ -456,6 +460,13 @@ class _HdlcFx25Bridge implements IHdlcReceiver {
 /// Software modem Data Broker handler that processes PCM audio from radios
 /// and decodes/encodes TNC frames using various modulation schemes.
 class SoftwareModem {
+  SoftwareModem({ModemTxEncoder? txEncoder, int Function(int)? randomInt,
+      DateTime Function()? clock})
+      : _txEncoder = txEncoder ?? ModemTxEncoder(),
+        _randomInt = randomInt ?? _rng.nextInt,
+        _txClock = clock ?? DateTime.now;
+  final int Function(int) _randomInt;
+  final DateTime Function() _txClock;
   final DataBrokerClient _broker = DataBrokerClient();
   final Map<int, _RadioModemState> _radioModems = {};
 
@@ -468,7 +479,7 @@ class SoftwareModem {
   /// Off-isolate transmit-audio encoder. DART (LDPC + OFDM) and AFSK/PSK tone
   /// generation run here instead of on the UI isolate, so a channel-access slot
   /// that fires during window/tab interaction can't stall the real-time audio.
-  final ModemTxEncoder _txEncoder = ModemTxEncoder();
+  final ModemTxEncoder _txEncoder;
   SoftwareModemMode _currentMode = SoftwareModemMode.none;
   // When true, transmitted packets that meet the AX.25 minimum length are wrapped
   // in FX.25 forward error correction. When false, all packets are sent as plain
@@ -594,6 +605,18 @@ class SoftwareModem {
       name: 'SoftModemTransmitPacket',
       callback: _onTransmitPacketRequested,
     );
+    _broker.subscribeMultiple(
+      deviceId: DataBroker.allDevices,
+      names: const ['CancelGatewayFrames', 'CancelRemoteAprsFrame', 'CancelSoftwareBeaconFrames'],
+      callback: (deviceId, _, tag) {
+        if (tag is String &&
+            (tag == 'aprs-is-gate' || tag == 'software-beacon' || tag.startsWith('remote-aprs:'))) {
+          _cancelTagged(deviceId, tag);
+        }
+      },
+    );
+    _broker.subscribe(deviceId: 0, name: 'AllowTransmit',
+      callback: (_, _, value) { if (value != 1) _cancelTagged(DataBroker.allDevices, null); });
 
     // Subscribe to channel-clear notifications from all radios
     _broker.subscribe(
@@ -1523,8 +1546,26 @@ class SoftwareModem {
     transmitPacket(deviceId, data);
   }
 
+  void _cancelTagged(int deviceId, String? tag) {
+    for (final state in _radioModems.values) {
+      if (deviceId != DataBroker.allDevices && state.deviceId != deviceId) continue;
+      for (final pending in [...state.transmitQueue, ...state.activeBundle]) {
+        if (tag == null || pending.tag == tag) pending.cancelled = true;
+      }
+      state.transmitQueue.removeWhere((pending) => pending.cancelled);
+      if (state.transmitQueue.isEmpty) {
+        state.channelWaitTimer?.cancel();
+        state.channelWaitTimer = null;
+        state.waitingForChannel = false;
+      }
+    }
+  }
+
   /// Transmits a TNC packet through the software modem.
   void transmitPacket(int deviceId, TncDataFragment fragment) {
+    if (_disposed || _broker.getValue<int>(0, 'AllowTransmit', 0) != 1) return;
+    if (fragment.transmitDeadline != null &&
+        !fragment.transmitDeadline!.isAfter(_txClock())) { return; }
     if (fragment.data.isEmpty) {
       _debug('TransmitPacket: Invalid fragment');
       return;
@@ -1562,13 +1603,15 @@ class SoftwareModem {
       return;
     }
 
+    if (state.transmitQueue.length >= 64) return;
     // Queue the frame. The audio is generated at flush time so several queued
     // frames can be bundled into a single transmission (one preamble).
     state.transmitQueue.add(_PendingTransmission(
       Uint8List.fromList(fragment.data),
       fragment.frameType,
-      DateTime.now().add(const Duration(seconds: 30)),
+      fragment.transmitDeadline ?? _txClock().add(const Duration(seconds: 30)),
       target,
+      fragment.transmitTag,
     ));
     _debug(
       'Queued ${fragment.frameType == FragmentFrameType.fx25 ? "FX.25" : "AX.25"} '
@@ -1655,7 +1698,7 @@ class SoftwareModem {
     }
 
     // Transmit now with probability persist/256, otherwise try the next slot.
-    if (_rng.nextInt(256) <= _csmaPersist) {
+    if (_randomInt(256) <= _csmaPersist) {
       // Fire-and-forget: the encode now runs off-isolate, so we don't block the
       // slot callback on it. The `encoding` guard prevents overlapping keyups.
       unawaited(_flushTransmitQueue(state));
@@ -1679,12 +1722,8 @@ class SoftwareModem {
   }
 
   void _dropExpired(_RadioModemState state) {
-    final now = DateTime.now();
-    while (state.transmitQueue.isNotEmpty &&
-        now.isAfter(state.transmitQueue.first.deadline)) {
-      state.transmitQueue.removeAt(0);
-      _debug('Dropped expired packet on device ${state.deviceId}');
-    }
+    final now = _txClock();
+    state.transmitQueue.removeWhere((p) => p.cancelled || !p.deadline.isAfter(now));
   }
 
   Future<void> _flushTransmitQueue(_RadioModemState state) async {
@@ -1720,10 +1759,12 @@ class SoftwareModem {
     // together; any queued frames for the other instance stay queued and are
     // sent in a following keyup.
     final _ModemInstance target = state.transmitQueue.first.target;
+    final tag = state.transmitQueue.first.tag;
     final List<_PendingTransmission> bundle = [];
     while (state.transmitQueue.isNotEmpty &&
         bundle.length < _maxBundleFrames &&
-        identical(state.transmitQueue.first.target, target)) {
+        identical(state.transmitQueue.first.target, target) &&
+        state.transmitQueue.first.tag == tag) {
       bundle.add(state.transmitQueue.removeAt(0));
     }
 
@@ -1733,15 +1774,26 @@ class SoftwareModem {
     // the PCM is being built off-isolate.
     state.channelIsClear = false;
     state.encoding = true;
+    state.activeBundle = bundle;
 
     Uint8List? pcmData;
     try {
       pcmData = await _buildBundledPcm(target, bundle);
+    } catch (_) {
+      _debug('Software TX encoding failed; packet discarded without replay');
     } finally {
       state.encoding = false;
+      state.activeBundle = [];
     }
 
     if (_disposed) return;
+
+    if (_broker.getValue<int>(0, 'AllowTransmit', 0) != 1 ||
+        bundle.any((p) => p.cancelled || !p.deadline.isAfter(_txClock())) ||
+        !identical(_radioModems[state.deviceId], state)) {
+      if (state.transmitQueue.isNotEmpty) _beginChannelAccess(state);
+      return;
+    }
 
     final bool moreQueued = state.transmitQueue.isNotEmpty;
     state.waitingForChannel = moreQueued;

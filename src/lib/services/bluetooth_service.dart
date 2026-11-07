@@ -23,6 +23,10 @@ import '../radio/websocket_transport.dart';
 import '../models/aircraft.dart';
 import '../models/station_info.dart';
 import '../winlink/winlink_mail.dart';
+import 'android_bluetooth_discovery.dart';
+import 'android_bluetooth_permissions.dart';
+import 'android_server_lifecycle.dart';
+import 'retrying_service_lease.dart';
 import 'bluetooth_classic_macos.dart';
 import 'data_broker.dart';
 import 'data_broker_client.dart';
@@ -72,9 +76,24 @@ class BluetoothService {
   BluetoothService._internal();
 
   final DataBrokerClient _broker = DataBrokerClient();
+  final AndroidServerLifecycle _androidServerLifecycle =
+      AndroidServerLifecycle();
+  late final RetryingServiceLease _androidRadioServiceLease =
+      RetryingServiceLease(
+        start: () => _androidServerLifecycle.start(reason: 'radio'),
+        stop: () => _androidServerLifecycle.stop(reason: 'radio'),
+        onError: (error) => _broker.logError(
+          '[Android] Could not update radio foreground service: $error',
+        ),
+      );
 
   // Connected radios: deviceId -> RadioTransport (BLE or Classic)
   final Map<int, RadioTransport> _connectedRadios = {};
+
+  // Reserve IDs and defer transport disposal while a connect flow is still
+  // unwinding. A user can cancel the transport immediately, but its native
+  // connect future may still complete later and must perform final cleanup.
+  final Map<int, String> _pendingRadioConnections = <int, String>{};
 
   // Hosted web build: the active WebSocket transport to the desktop host, used
   // to forward device-0 setting changes. Null when not hosted / not connected.
@@ -99,7 +118,8 @@ class BluetoothService {
   // Radio audio instances (macOS Bluetooth Classic only): deviceId -> RadioAudio
   final Map<int, RadioAudio> _radioAudioInstances = {};
 
-  // For macOS Bluetooth Classic connections
+  // Bluetooth Classic connections: deviceId -> MAC address. Retained while a
+  // Classic transport is connecting or connected for display and cleanup.
   final Map<int, String> _classicConnections = {}; // deviceId -> macAddress
 
   // Per-device transport state listeners used to detect an unsolicited
@@ -115,11 +135,31 @@ class BluetoothService {
   /// MAC addresses are stored upper-cased.
   static const String previouslyConnectedRadiosKey = 'PreviouslyConnectedRadios';
 
+  /// Keep Android awake while at least one local radio connection is active.
+  Future<void> _syncAndroidRadioService() {
+    if (!Platform.isAndroid) return Future<void>.value();
+    // Submit the current radio set to the serialized reconciler so overlapping
+    // connects and disconnects converge on the latest request. Failed Android
+    // service transitions retry without failing an otherwise working radio link.
+    final connected =
+        _connectedRadios.isNotEmpty || _classicConnections.isNotEmpty;
+    return _androidRadioServiceLease.setDesired(connected);
+  }
+
   // Track if Bluetooth has been initialized
   static bool _bluetoothInitialized = false;
 
-  /// Check if Bluetooth is available on this platform
-  /// On first call, waits for adapter to initialize
+  /// Emits whether the system Bluetooth adapter is on.
+  ///
+  /// Android uses this stream to retry remembered radios as soon as Bluetooth
+  /// is re-enabled. The initial state is also emitted by the platform plugin.
+  Stream<bool> get bluetoothAdapterEnabledChanges =>
+      FlutterBluePlus.adapterState
+          .map((state) => state == BluetoothAdapterState.on)
+          .distinct();
+
+  /// Check if Bluetooth is available on this platform. On first call, waits
+  /// for the adapter to initialize.
   static Future<bool> checkBluetooth() async {
     if (kIsWeb) return _checkBluetoothWeb();
     if (Platform.isWindows) return _checkBluetoothWindows();
@@ -171,7 +211,8 @@ class BluetoothService {
   int _getNextDeviceId() {
     int deviceId = _startingDeviceId;
     while (_connectedRadios.containsKey(deviceId) ||
-        _classicConnections.containsKey(deviceId)) {
+        _classicConnections.containsKey(deviceId) ||
+        _pendingRadioConnections.containsKey(deviceId)) {
       deviceId++;
     }
     return deviceId;
@@ -179,8 +220,16 @@ class BluetoothService {
 
   /// Connect to a radio by MAC address
   /// Returns the device ID if successful, or null if failed
-  Future<int?> connectToRadio(String macAddress, String friendlyName) async {
-    final int? deviceId = await _connectToRadioPlatform(macAddress, friendlyName);
+  Future<int?> connectToRadio(
+    String macAddress,
+    String friendlyName, {
+    BluetoothType bluetoothType = BluetoothType.classic,
+  }) async {
+    final int? deviceId = await _connectToRadioPlatform(
+      macAddress,
+      friendlyName,
+      bluetoothType,
+    );
     if (deviceId != null) {
       // Remember this radio so it can be auto-reconnected on the next launch.
       _rememberConnectedRadio(macAddress);
@@ -600,6 +649,7 @@ class BluetoothService {
   Future<int?> _connectToRadioPlatform(
     String macAddress,
     String friendlyName,
+    BluetoothType bluetoothType,
   ) async {
     if (kIsWeb) {
       return _connectToRadioWeb(this, macAddress, friendlyName);
@@ -611,7 +661,12 @@ class BluetoothService {
       return _connectToRadioMacos(this, macAddress, friendlyName);
     }
     if (Platform.isAndroid) {
-      return _connectToRadioAndroid(this, macAddress, friendlyName);
+      return _connectToRadioAndroid(
+        this,
+        macAddress,
+        friendlyName,
+        bluetoothType,
+      );
     }
     if (Platform.isIOS) {
       return _connectToRadioIos(this, macAddress, friendlyName);
@@ -645,14 +700,20 @@ class BluetoothService {
     final radio = _radioInstances.remove(deviceId);
     radio?.dispose();
 
-    // Check for Classic connection (macOS)
+    final connectStillUnwinding =
+        _pendingRadioConnections.containsKey(deviceId);
+
+    // Check for Bluetooth Classic connection.
     if (_classicConnections.containsKey(deviceId)) {
       _classicConnections.remove(deviceId);
       // Transport handles the actual disconnection
       final transport = _connectedRadios.remove(deviceId);
       if (transport != null) {
         await transport.disconnect();
-        await transport.dispose();
+        // The connect flow owns final disposal until its native connect call
+        // has returned. Disposing a pending transport here can close its Dart
+        // streams while a late native result is still being processed.
+        if (!connectStillUnwinding) await transport.dispose();
       }
       _broker.dispatch(
         deviceId: deviceId,
@@ -661,6 +722,7 @@ class BluetoothService {
         store: true,
       );
       _publishConnectedRadios();
+      await _syncAndroidRadioService();
       return;
     }
 
@@ -668,7 +730,7 @@ class BluetoothService {
     final transport = _connectedRadios.remove(deviceId);
     if (transport != null) {
       await transport.disconnect();
-      await transport.dispose();
+      if (!connectStillUnwinding) await transport.dispose();
       _broker.dispatch(
         deviceId: deviceId,
         name: 'State',
@@ -677,6 +739,7 @@ class BluetoothService {
       );
       _publishConnectedRadios();
     }
+    await _syncAndroidRadioService();
   }
 
   /// Start watching [transport] for an unsolicited disconnect of the radio at
@@ -737,6 +800,7 @@ class BluetoothService {
       store: true,
     );
     _publishConnectedRadios();
+    await _syncAndroidRadioService();
   }
 
   /// Disconnect a radio by MAC address
@@ -775,7 +839,7 @@ class BluetoothService {
   List<int> get connectedRadioIds =>
       <int>{..._connectedRadios.keys, ..._classicConnections.keys}.toList();
 
-  /// Get a transport by device ID (BLE only)
+  /// Get a transport by device ID.
   RadioTransport? getTransport(int deviceId) => _connectedRadios[deviceId];
 
   /// Get the [Radio] instance for a connected device, or null if not connected.
@@ -796,9 +860,11 @@ class BluetoothService {
   Future<Radio?> reconnectAfterReboot(
     String macAddress,
     String friendlyName, {
+    BluetoothType? bluetoothType,
     Duration rebootDelay = const Duration(seconds: 18),
     Duration timeout = const Duration(seconds: 90),
   }) async {
+    final transportType = bluetoothType ?? _bluetoothTypeForMac(macAddress);
     await disconnectRadioByMac(macAddress);
     await Future<void>.delayed(rebootDelay);
 
@@ -806,7 +872,11 @@ class BluetoothService {
     while (DateTime.now().isBefore(deadline)) {
       int? newId;
       try {
-        newId = await connectToRadio(macAddress, friendlyName);
+        newId = await connectToRadio(
+          macAddress,
+          friendlyName,
+          bluetoothType: transportType,
+        );
       } catch (_) {
         newId = null;
       }
@@ -826,19 +896,33 @@ class BluetoothService {
     return null;
   }
 
+  BluetoothType _bluetoothTypeForMac(String macAddress) {
+    final normalized = macAddress.toUpperCase();
+    for (final entry in _connectedRadios.entries) {
+      if (entry.value.connectedDevice?.id.toUpperCase() == normalized) {
+        return entry.value.connectedDevice!.type;
+      }
+    }
+    if (_classicConnections.values.any(
+      (mac) => mac.toUpperCase() == normalized,
+    )) {
+      return BluetoothType.classic;
+    }
+    return BluetoothType.classic;
+  }
+
   /// Publish the connected radios list to the DataBroker.
   ///
-  /// Builds exactly one entry per device ID. A Bluetooth Classic radio that has
-  /// finished connecting lives in both [_connectedRadios] (its transport) and
-  /// [_classicConnections] (its MAC address) under the same device ID; the two
-  /// maps are merged here so the radio is published only once. The
-  /// [_classicConnections] map is otherwise only needed for radios that are
-  /// still connecting and not yet present in [_connectedRadios].
+  /// Builds exactly one entry per device ID. A Bluetooth Classic radio lives
+  /// in both [_connectedRadios] (its transport) and [_classicConnections] (its
+  /// MAC address) under the same device ID while connecting and after
+  /// connecting. The two maps are merged here so the radio is published only
+  /// once; the MAC map also supplies its address before RFCOMM completes.
   void _publishConnectedRadios() {
     final byDeviceId = <int, Map<String, dynamic>>{};
 
-    // Add radios that have an active transport (BLE, or a connected Classic
-    // radio). The transport carries the most up-to-date MAC / name / state.
+    // Add radios that have a transport, including Classic connections still
+    // negotiating RFCOMM. The transport carries the current state and target.
     for (final entry in _connectedRadios.entries) {
       final transport = entry.value;
       final device = transport.connectedDevice;
@@ -956,15 +1040,20 @@ class BluetoothService {
     }
     _radioInstances.clear();
 
-    // Dispose BLE transports
-    for (final transport in _connectedRadios.values) {
+    // Dispose transports, deferring pending connection cleanup to its owner.
+    for (final entry in _connectedRadios.entries.toList()) {
+      final transport = entry.value;
       await transport.disconnect();
-      await transport.dispose();
+      if (!_pendingRadioConnections.containsKey(entry.key)) {
+        await transport.dispose();
+      }
     }
     _connectedRadios.clear();
 
     // Clear Classic connections (transports already disposed above)
     _classicConnections.clear();
+
+    if (Platform.isAndroid) await _androidRadioServiceLease.dispose();
 
     _broker.dispose();
   }

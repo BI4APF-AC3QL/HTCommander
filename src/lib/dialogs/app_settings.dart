@@ -53,6 +53,7 @@ class AppSettings {
   String voice;
   double voiceSpeechRate;
   double voicePitch;
+  double voiceOutputGain;
 
   // Winlink tab
   String winlinkPassword;
@@ -75,6 +76,7 @@ class AppSettings {
   bool webServerEnabled;
   int webServerPort;
   bool agwpeServerEnabled;
+  bool agwpeServerLanAccess;
   int agwpeServerPort;
 
   // Home Assistant (Servers tab)
@@ -197,6 +199,7 @@ class AppSettings {
     this.voice = '',
     this.voiceSpeechRate = 0.5,
     this.voicePitch = 1.0,
+    this.voiceOutputGain = 1.5,
     this.winlinkPassword = '',
     this.winlinkUseStationId = false,
     this.echoLinkPassword = '',
@@ -209,6 +212,7 @@ class AppSettings {
     this.webServerEnabled = false,
     this.webServerPort = 8080,
     this.agwpeServerEnabled = false,
+    this.agwpeServerLanAccess = false,
     this.agwpeServerPort = 8000,
     this.homeAssistantEnabled = false,
     this.homeAssistantMqttUrl = '',
@@ -250,6 +254,7 @@ class AppSettings {
     String? voice,
     double? voiceSpeechRate,
     double? voicePitch,
+    double? voiceOutputGain,
     String? winlinkPassword,
     bool? winlinkUseStationId,
     String? echoLinkPassword,
@@ -262,6 +267,7 @@ class AppSettings {
     bool? webServerEnabled,
     int? webServerPort,
     bool? agwpeServerEnabled,
+    bool? agwpeServerLanAccess,
     int? agwpeServerPort,
     bool? homeAssistantEnabled,
     String? homeAssistantMqttUrl,
@@ -303,6 +309,7 @@ class AppSettings {
       voice: voice ?? this.voice,
       voiceSpeechRate: voiceSpeechRate ?? this.voiceSpeechRate,
       voicePitch: voicePitch ?? this.voicePitch,
+      voiceOutputGain: voiceOutputGain ?? this.voiceOutputGain,
       winlinkPassword: winlinkPassword ?? this.winlinkPassword,
       winlinkUseStationId: winlinkUseStationId ?? this.winlinkUseStationId,
       echoLinkPassword: echoLinkPassword ?? this.echoLinkPassword,
@@ -316,6 +323,8 @@ class AppSettings {
       webServerEnabled: webServerEnabled ?? this.webServerEnabled,
       webServerPort: webServerPort ?? this.webServerPort,
       agwpeServerEnabled: agwpeServerEnabled ?? this.agwpeServerEnabled,
+      agwpeServerLanAccess:
+          agwpeServerLanAccess ?? this.agwpeServerLanAccess,
       agwpeServerPort: agwpeServerPort ?? this.agwpeServerPort,
       homeAssistantEnabled: homeAssistantEnabled ?? this.homeAssistantEnabled,
       homeAssistantMqttUrl: homeAssistantMqttUrl ?? this.homeAssistantMqttUrl,
@@ -390,6 +399,7 @@ class AppSettings {
       voiceSpeechRate:
           DataBroker.getValue<double>(0, 'VoiceSpeechRate', 0.5) ?? 0.5,
       voicePitch: DataBroker.getValue<double>(0, 'VoicePitch', 1.0) ?? 1.0,
+      voiceOutputGain: DataBroker.getValue<double>(0, 'VoiceOutputGain', 1.5) ?? 1.5,
       winlinkPassword:
           DataBroker.getValue<String>(0, 'WinlinkPassword', '') ?? '',
       winlinkUseStationId:
@@ -414,6 +424,8 @@ class AppSettings {
       webServerPort: DataBroker.getValue<int>(0, 'webServerPort', 8080) ?? 8080,
       agwpeServerEnabled:
           (DataBroker.getValue<int>(0, 'agwpeServerEnabled', 0) ?? 0) == 1,
+      agwpeServerLanAccess:
+          (DataBroker.getValue<int>(0, 'agwpeServerLanAccess', 0) ?? 0) == 1,
       agwpeServerPort:
           DataBroker.getValue<int>(0, 'agwpeServerPort', 8000) ?? 8000,
       homeAssistantEnabled:
@@ -523,6 +535,7 @@ class AppSettings {
       data: voiceSpeechRate,
     );
     DataBroker.dispatch(deviceId: 0, name: 'VoicePitch', data: voicePitch);
+    DataBroker.dispatch(deviceId: 0, name: 'VoiceOutputGain', data: voiceOutputGain);
     DataBroker.dispatch(
       deviceId: 0,
       name: 'WinlinkPassword',
@@ -582,6 +595,11 @@ class AppSettings {
       deviceId: 0,
       name: 'agwpeServerEnabled',
       data: agwpeServerEnabled ? 1 : 0,
+    );
+    DataBroker.dispatch(
+      deviceId: 0,
+      name: 'agwpeServerLanAccess',
+      data: agwpeServerLanAccess ? 1 : 0,
     );
     DataBroker.dispatch(
       deviceId: 0,

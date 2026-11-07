@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:fake_async/fake_async.dart';
@@ -75,6 +76,93 @@ void main() {
     expect(server.boundPort, isNull);
     server.dispose();
   });
+  test('remote server accepts IPv6 LAN clients', () async {
+    final server = WebServer(
+      0,
+      remoteConfig: const RemoteAccessConfig(
+        enabled: true,
+        password: 'a-long-test-password',
+      ),
+    );
+    expect(await server.start(), true);
+    final http = HttpClient();
+    try {
+      final request = await http.getUrl(
+        Uri(
+          scheme: 'http',
+          host: '::1',
+          port: server.boundPort!,
+          path: '/login',
+        ),
+      );
+      final response = await request.close();
+      expect(response.statusCode, HttpStatus.ok);
+      expect(await utf8.decoder.bind(response).join(), contains('HTCommander'));
+    } finally {
+      http.close(force: true);
+      await server.stop();
+      server.dispose();
+    }
+  });
+  test(
+    'remote server refreshes its host allowlist after an IP change',
+    () async {
+      var localAddresses = <String>{'192.0.2.10'};
+      var addressRefreshes = 0;
+      final server = WebServer(
+        0,
+        remoteConfig: const RemoteAccessConfig(
+          enabled: true,
+          password: 'a-long-test-password',
+        ),
+        networkAddressProvider: () async {
+          addressRefreshes++;
+          return localAddresses;
+        },
+      );
+      expect(await server.start(), true);
+      expect(addressRefreshes, 1);
+
+      final http = HttpClient();
+      Future<int> getLoginStatus(String host) async {
+        final request = await http.getUrl(
+          Uri(
+            scheme: 'http',
+            host: '127.0.0.1',
+            port: server.boundPort!,
+            path: '/login',
+          ),
+        );
+        request.headers.set(
+          HttpHeaders.hostHeader,
+          '$host:${server.boundPort}',
+        );
+        final response = await request.close();
+        await response.drain<void>();
+        return response.statusCode;
+      }
+
+      try {
+        expect(await getLoginStatus('192.0.2.10'), HttpStatus.ok);
+
+        // Simulate Android moving to another Wi-Fi network while its server
+        // process stays alive. The first request to the new local address
+        // forces an interface refresh without restarting the server.
+        localAddresses = {'192.0.2.11'};
+        expect(await getLoginStatus('192.0.2.11'), HttpStatus.ok);
+        expect(addressRefreshes, 2);
+
+        // The old address is removed as part of the refresh, so stale DNS/IP
+        // entries cannot continue to access the listener after the move.
+        expect(await getLoginStatus('192.0.2.10'), HttpStatus.forbidden);
+        expect(addressRefreshes, 2);
+      } finally {
+        http.close(force: true);
+        await server.stop();
+        server.dispose();
+      }
+    },
+  );
   test('real HTTP login protects static files, websocket and logout', () async {
     final server = WebServer(
       0,
@@ -132,7 +220,25 @@ void main() {
       await signed.drain<void>();
       final page = await get('/remote.html', cookie: session);
       expect(page.statusCode, 200);
-      await page.drain<void>();
+      final pageText = await utf8.decoder.bind(page).join();
+      // Chromium's manifest loader omits the login cookie without this
+      // attribute, even though a direct authenticated fetch returns 200.
+      expect(
+        pageText,
+        contains('href="/remote.webmanifest" crossorigin="use-credentials"'),
+      );
+      final manifest = await get('/remote.webmanifest', cookie: session);
+      expect(manifest.statusCode, 200);
+      final data = jsonDecode(await utf8.decoder.bind(manifest).join()) as Map;
+      expect(data['start_url'], '/remote.html');
+      expect(data['display'], 'standalone');
+      final worker = await get('/remote-worker.js', cookie: session);
+      final workerText = await utf8.decoder.bind(worker).join();
+      expect(workerText, contains('activate'));
+      expect(workerText, isNot(contains('fetch')));
+      final protectedManifest = await get('/remote.webmanifest');
+      expect(protectedManifest.statusCode, 303);
+      await protectedManifest.drain<void>();
       final ws = '${base.replaceFirst('http:', 'ws:')}/websocket.aspx';
       await expectLater(
         WebSocket.connect(ws, headers: {'Origin': base}),
@@ -253,7 +359,7 @@ void main() {
   test(
     'PTT requires both permissions and valid radio; ownership is exclusive',
     () {
-      final controls = RemoteRadioController(target: () => 2);
+      final controls = RemoteRadioController(target: () => 2)..grantControl(1);
       expect(controls.command(1, {'op': 'pttStart'}), isNotNull);
       readyRadio();
       expect(controls.command(1, {'op': 'pttStart'}), isNull);
@@ -273,7 +379,7 @@ void main() {
       final controls = RemoteRadioController(
         target: () => 2,
         clock: () => time.getClock(DateTime(2026)).now(),
-      );
+      )..grantControl(1);
       final broker = DataBrokerClient();
       var cancelled = 0;
       broker.subscribe(
@@ -298,7 +404,7 @@ void main() {
   });
   test('permissions revoked or malformed/oversized PCM releases owner', () {
     readyRadio();
-    final controls = RemoteRadioController(target: () => 2);
+    final controls = RemoteRadioController(target: () => 2)..grantControl(1);
     controls.command(1, {'op': 'pttStart'});
     expect(controls.microphone(1, Uint8List(9000)), false);
     expect(controls.snapshot()['txOwner'], isNull);

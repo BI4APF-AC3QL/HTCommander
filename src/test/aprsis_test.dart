@@ -322,10 +322,7 @@ void main() {
     test('gates a message to a locally-heard station down to RF', () {
       final aprs = _parseTnc2('W1AW>APRS,TCPIP*::K7VZT    :Hello{1');
       expect(aprs.messageData.addressee.trim(), 'K7VZT');
-      expect(
-        AprsIsClient.shouldGateToRf(aprs, {'K7VZT'}),
-        isTrue,
-      );
+      expect(AprsIsClient.shouldGateToRf(aprs, {'K7VZT'}), isTrue);
       // Not heard locally -> not gated.
       expect(AprsIsClient.shouldGateToRf(aprs, {'N0ONE'}), isFalse);
     });
@@ -333,6 +330,11 @@ void main() {
     test('does not gate a position packet down to RF', () {
       final aprs = _parseTnc2('W1AW>APRS,TCPIP*:!4737.14N/12220.09W>Hi');
       expect(AprsIsClient.shouldGateToRf(aprs, {'W1AW'}), isFalse);
+    });
+    test('does not echo an internet message from a locally heard sender', () {
+      final aprs = _parseTnc2('W1AW-7>APRS,TCPIP*::K7VZT    :Hello{1');
+      expect(AprsIsClient.shouldGateToRf(aprs, {'K7VZT', 'W1AW'}), isFalse);
+      expect(AprsIsClient.shouldGateToRf(aprs, {'K7VZT', 'W1AW-7'}), isFalse);
     });
   });
 }
