@@ -26,12 +26,14 @@ typedef AgwpeClientCallback = void Function(int clientId);
 typedef AgwpeFrameCallback = void Function(int clientId, AgwpeFrame frame);
 
 /// A TCP server that listens for AGWPE clients, frames the protocol, and
-/// broadcasts monitoring frames. Bound to all interfaces (`anyIPv4`) to match
-/// the C# `IPAddress.Any` behaviour.
+/// broadcasts monitoring frames. It stays on loopback unless LAN access is
+/// explicitly enabled in settings; the protocol has no authentication.
 class AgwpeServer {
-  AgwpeServer(this.port) : _broker = DataBrokerClient();
+  AgwpeServer(this.port, {this.allowLanClients = false})
+    : _broker = DataBrokerClient();
 
   final int port;
+  final bool allowLanClients;
   final DataBrokerClient _broker;
 
   ServerSocket? _listener;
@@ -51,11 +53,18 @@ class AgwpeServer {
   /// Whether the server is currently listening.
   bool get isRunning => _running;
 
+  /// The actual address and port selected by the operating system.
+  String? get boundAddress => _listener?.address.address;
+  int? get boundPort => _listener?.port;
+
   /// Starts the AGWPE server. Returns `true` on success.
   Future<bool> start() async {
     if (_running) return true;
     try {
-      _listener = await ServerSocket.bind(InternetAddress.loopbackIPv4, port);
+      final bindAddress = allowLanClients
+          ? InternetAddress.anyIPv4
+          : InternetAddress.loopbackIPv4;
+      _listener = await ServerSocket.bind(bindAddress, port);
       _running = true;
       _listener!.listen(
         _onConnection,

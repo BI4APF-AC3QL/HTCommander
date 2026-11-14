@@ -18,13 +18,12 @@ typedef PcmFeedCallback = void Function(int remainingFrames);
 
 /// Cross-platform 16-bit PCM playback sink.
 ///
-/// flutter_pcm_sound only ships Android / iOS implementations that route to the
-/// OS default device, so on Windows, Linux and macOS we use a native player
-/// (see windows/runner/pcm_player_plugin, linux/runner/pcm_player_plugin and the
-/// macOS PcmPlayerHandler) exposing the same small surface over the
-/// `com.htcommander/pcm_player` channels, which also supports output-device
-/// selection. Unsupported platforms (web) are
-/// no-ops so callers degrade gracefully instead of crashing.
+/// Android uses a native AudioTrack player so output can be routed to a
+/// selected speaker/headset; iOS uses flutter_pcm_sound. Windows, Linux and
+/// macOS use native players (see windows/runner/pcm_player_plugin,
+/// linux/runner/pcm_player_plugin and the macOS PcmPlayerHandler) exposing the
+/// same surface over `com.htcommander/pcm_player`. Unsupported platforms (web)
+/// are no-ops so callers degrade gracefully instead of crashing.
 abstract class PcmPlayer {
   /// Optional tap invoked with every 16-bit PCM buffer fed to the shared output
   /// device, alongside its current sample rate and channel count. Used to mirror
@@ -55,10 +54,13 @@ abstract class PcmPlayer {
   /// created for the whole process (see [_RefCountedPcmPlayer._shared]).
   static PcmPlayer _createReal() {
     if (!kIsWeb &&
-        (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+        (Platform.isWindows ||
+            Platform.isLinux ||
+            Platform.isMacOS ||
+            Platform.isAndroid)) {
       return _NativeChannelPcmPlayer();
     }
-    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    if (!kIsWeb && Platform.isIOS) {
       return _FlutterPcmSoundPlayer();
     }
     return _NoopPcmPlayer();
@@ -69,10 +71,9 @@ abstract class PcmPlayer {
 
   /// Configure the output format and open the audio device.
   ///
-  /// [deviceId] selects a specific output device where supported (currently the
-  /// native Linux player, using a PulseAudio sink name); null or empty means the
-  /// operating-system default device. Implementations that cannot select a
-  /// device ignore it and use the default.
+  /// [deviceId] selects a specific output device where supported (Android,
+  /// Linux, Windows and macOS); null or empty means the operating-system
+  /// default device. Implementations that cannot select a device ignore it.
   Future<void> setup({
     required int sampleRate,
     required int channelCount,
@@ -95,7 +96,7 @@ abstract class PcmPlayer {
   Future<void> release();
 }
 
-/// Android / iOS / macOS implementation backed by flutter_pcm_sound.
+/// iOS implementation backed by flutter_pcm_sound.
 class _FlutterPcmSoundPlayer implements PcmPlayer {
   @override
   Future<void> setLogLevelError() async {
@@ -143,13 +144,16 @@ class _FlutterPcmSoundPlayer implements PcmPlayer {
   Future<void> release() => FlutterPcmSound.release();
 }
 
-/// Windows / Linux implementation backed by a native plugin exposing the
-/// `com.htcommander/pcm_player` method channel and `..._feed` event channel.
+/// Android / Windows / Linux implementation backed by a native player
+/// exposing the `com.htcommander/pcm_player` method channel and `..._feed`
+/// event channel.
 class _NativeChannelPcmPlayer implements PcmPlayer {
-  static const MethodChannel _method =
-      MethodChannel('com.htcommander/pcm_player');
-  static const EventChannel _feedEvents =
-      EventChannel('com.htcommander/pcm_player_feed');
+  static const MethodChannel _method = MethodChannel(
+    'com.htcommander/pcm_player',
+  );
+  static const EventChannel _feedEvents = EventChannel(
+    'com.htcommander/pcm_player_feed',
+  );
 
   StreamSubscription<dynamic>? _feedSub;
   PcmFeedCallback? _callback;
@@ -333,7 +337,8 @@ class _RefCountedPcmPlayer implements PcmPlayer {
         _owners.add(this);
         _refCount++;
       }
-      final bool paramsChanged = _deviceOpen &&
+      final bool paramsChanged =
+          _deviceOpen &&
           (_rate != sampleRate ||
               _channels != channelCount ||
               (_deviceId ?? '') != dev);

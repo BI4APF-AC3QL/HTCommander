@@ -7,8 +7,12 @@ Ported from the C# `HTCommander.Gps.GpsSerialHandler` class.
 */
 
 import 'dart:async';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'package:flutter_serial_communication/flutter_serial_communication.dart';
+import 'package:flutter_serial_communication/models/device_info.dart';
 
 import '../services/serial/serial_port.dart';
 import '../services/data_broker_client.dart';
@@ -21,9 +25,15 @@ import 'gps_data.dart';
 /// dispatches a [GpsData] object on device 1 under key `GpsData`, along with a
 /// `GpsStatus` string describing the current connection state.
 ///
-/// Serial port access is only available on desktop platforms (Windows, macOS
-/// and Linux). On other platforms the handler is inert.
+/// Serial port access is available on desktop platforms and, on Android, USB
+/// host serial adapters supported by the USB serial plugin.
 class GpsSerialHandler {
+  GpsSerialHandler({
+    FlutterSerialCommunication? androidUsbSerial,
+    this._androidUsbData,
+    this._androidUsbConnectionStatus,
+  }) : _androidUsbSerial = androidUsbSerial ?? FlutterSerialCommunication();
+
   /// Device id that owns persisted application settings.
   static const int _settingsDeviceId = 0;
 
@@ -31,10 +41,15 @@ class GpsSerialHandler {
   static const int _gpsDeviceId = 1;
 
   final DataBrokerClient _broker = DataBrokerClient();
+  final FlutterSerialCommunication _androidUsbSerial;
+  final Stream<Uint8List> Function()? _androidUsbData;
+  final Stream<bool> Function()? _androidUsbConnectionStatus;
 
   SerialPort? _port;
+  bool _androidUsbConnected = false;
   SerialPortReader? _reader;
   StreamSubscription<Uint8List>? _readerSub;
+  StreamSubscription<bool>? _usbConnectionSub;
 
   /// Identifies the open attempt currently in progress so a stale async open
   /// can detect that the settings changed underneath it.
@@ -46,6 +61,7 @@ class GpsSerialHandler {
   GpsData _gpsData = GpsData();
   bool _isCommunicating = false;
   bool _disposed = false;
+  Future<void> _androidUsbClose = Future<void>.value();
 
   /// True while the user has selected a manual location (License tab). The
   /// serial port stays closed so the manual fix is the only source of `GpsData`.
@@ -54,18 +70,20 @@ class GpsSerialHandler {
           0) ==
       1;
 
-  /// Whether serial port access is available on the current platform.
-  static bool get _serialSupported =>
+  /// Whether serial GPS access is available on the current platform.
+  /// Keep UI visibility and handler registration on the same platform matrix.
+  static bool get isSupported =>
       !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.windows ||
           defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.linux);
+          defaultTargetPlatform == TargetPlatform.linux ||
+          defaultTargetPlatform == TargetPlatform.android);
 
   /// Initializes the handler: subscribes to broker events and applies the
   /// current settings. Safe to call once at startup.
   void init() {
-    if (!_serialSupported) {
-      // Serial GPS is only supported on desktop platforms.
+    if (!isSupported) {
+      // Serial GPS is supported on desktop and Android USB host.
       _broker.dispatch(
         deviceId: _gpsDeviceId,
         name: 'GpsStatus',
@@ -179,6 +197,11 @@ class GpsSerialHandler {
   void _startPort(String portName, int baudRate) {
     if (portName.isEmpty || portName == 'None') return;
 
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      _startAndroidUsbPort(portName, baudRate);
+      return;
+    }
+
     final token = ++_openToken;
 
     // Open after a short delay so the UI never blocks on a slow open, and so
@@ -256,6 +279,113 @@ class GpsSerialHandler {
     });
   }
 
+  Future<void> _startAndroidUsbPort(String portName, int baudRate) async {
+    final token = ++_openToken;
+    await _androidUsbClose;
+    if (_disposed || token != _openToken) return;
+    final deviceId = _androidUsbDeviceId(portName);
+    if (deviceId == null) {
+      _broker.dispatch(
+        deviceId: _gpsDeviceId,
+        name: 'GpsStatus',
+        data: 'PortError',
+        store: true,
+      );
+      return;
+    }
+
+    try {
+      final devices = await _androidUsbSerial.getAvailableDevices();
+      if (_disposed || token != _openToken) return;
+      DeviceInfo? device;
+      for (final candidate in devices) {
+        if (candidate.deviceId == deviceId) {
+          device = candidate;
+          break;
+        }
+      }
+      if (device == null) throw StateError('USB GPS receiver is not attached');
+      final connectionStatus = _androidUsbConnectionStatus?.call() ??
+          _androidUsbSerial
+              .getDeviceConnectionListener()
+              .receiveBroadcastStream()
+              .map((event) => event == true);
+      _usbConnectionSub = connectionStatus.listen(
+        (connected) {
+          if (!connected && _androidUsbConnected) _onUsbPortEnded(token);
+        },
+        onError: (_) => _onUsbPortEnded(token),
+      );
+      if (!await _androidUsbSerial.connect(device, baudRate)) {
+        throw StateError('Could not open USB GPS receiver');
+      }
+      _androidUsbConnected = true;
+      await _androidUsbSerial.setParameters(baudRate, 8, 1, 0);
+      await _androidUsbSerial.setDTR(true);
+      await _androidUsbSerial.setRTS(true);
+
+      if (_disposed || token != _openToken) {
+        await _closeAndroidUsb();
+        return;
+      }
+      final input = _androidUsbData?.call() ??
+          _androidUsbSerial
+              .getSerialMessageListener()
+              .receiveBroadcastStream()
+              .map(_asUsbBytes);
+      _readerSub = input.listen(
+        (event) {
+          _onDataReceived(event);
+        },
+        onError: (_) => _onUsbPortEnded(token),
+        onDone: () => _onUsbPortEnded(token),
+        cancelOnError: true,
+      );
+    } catch (_) {
+      await _usbConnectionSub?.cancel();
+      _usbConnectionSub = null;
+      if (_androidUsbConnected) await _closeAndroidUsb();
+      if (!_disposed && token == _openToken) {
+        _broker.dispatch(
+          deviceId: _gpsDeviceId,
+          name: 'GpsStatus',
+          data: 'PortError',
+          store: true,
+        );
+      }
+    }
+  }
+
+  static int? _androidUsbDeviceId(String portName) {
+    const prefix = 'USB:';
+    if (!portName.startsWith(prefix)) return null;
+    return int.tryParse(portName.substring(prefix.length));
+  }
+
+  static Uint8List _asUsbBytes(Object? event) {
+    if (event is Uint8List) return event;
+    if (event is List) return Uint8List.fromList(event.cast<int>());
+    throw const FormatException('Invalid USB serial data');
+  }
+
+  void _onUsbPortEnded(int token) {
+    if (_disposed || token != _openToken) return;
+    _stopPort();
+    _broker.dispatch(
+      deviceId: _gpsDeviceId,
+      name: 'GpsStatus',
+      data: 'PortError',
+      store: true,
+    );
+  }
+
+  Future<void> _closeAndroidUsb() {
+    if (!_androidUsbConnected) return _androidUsbClose;
+    _androidUsbConnected = false;
+    _androidUsbClose = _androidUsbSerial.disconnect().catchError((Object _) {});
+    return _androidUsbClose;
+  }
+
   void _stopPort() {
     // Invalidate any in-flight open.
     _openToken++;
@@ -264,6 +394,10 @@ class GpsSerialHandler {
       _readerSub?.cancel();
     } catch (_) {}
     _readerSub = null;
+    try {
+      _usbConnectionSub?.cancel();
+    } catch (_) {}
+    _usbConnectionSub = null;
 
     try {
       _reader?.close();
@@ -284,6 +418,10 @@ class GpsSerialHandler {
           port.dispose();
         } catch (_) {}
       });
+    }
+
+    if (_androidUsbConnected) {
+      unawaited(_closeAndroidUsb());
     }
 
     _lineBuffer.clear();
@@ -310,7 +448,7 @@ class GpsSerialHandler {
   // ------------------------------------------------------------------
 
   void _onDataReceived(Uint8List data) {
-    if (_disposed || _port == null) return;
+    if (_disposed || (_port == null && !_androidUsbConnected)) return;
 
     try {
       for (final byte in data) {
@@ -518,7 +656,7 @@ class GpsSerialHandler {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    if (_serialSupported) _stopPort();
+    if (isSupported) _stopPort();
     _broker.dispose();
   }
 }

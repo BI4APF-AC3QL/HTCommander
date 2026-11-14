@@ -1,0 +1,1 @@
+These certificate/key fixtures are public, synthetic test material for a loopback TLS server. They authenticate no real service. The certificate is self-signed for localhost/127.0.0.1 and must be rejected by the production diagnostic probe; tests never add it to a trust store. Do not use this key for a deployed service.

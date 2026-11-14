@@ -6,6 +6,11 @@ Handi-Talky Commander has support for the AGWPE protocol, which is a popular pro
 
 To activate this feature, go the "File" -> "Settings" menu, "Services" tab and "Enable AGWPE Server". You will generally keep the default port of 8000.
 
+The server listens on the local computer by default. To accept AGWPE clients from
+other devices, enable **Allow AGWPE clients on the LAN** in the same settings
+section. AGWPE has no password protection; only enable LAN access on a trusted
+local network or VPN, and do not forward the port directly to the public internet.
+
 Then, you can run your own packet application and connect it to port 8000. You will see a "Port1: Handi-Talky Commander" port available in your application. Sending on this port will send data on the VFO1 of the radio.
 
 You can try the following applications that are available on [this page](https://uz7.ho.ua/packetradio.htm).

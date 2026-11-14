@@ -605,6 +605,28 @@ class AppLocalizationsHi extends AppLocalizations {
       'चुनें कि आपका वर्तमान स्थान कहाँ से आता है। इसे रेडियो को भेजा जाता है और APRS-IS तथा उपग्रह ट्रैकिंग के लिए उपयोग किया जाता है।';
 
   @override
+  String get settingsLocationUsePhoneGps => 'इस फ़ोन का GPS उपयोग करें';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'एक वर्तमान स्थान प्राप्त करके उसे रेडियो, APRS-IS और उपग्रह ट्रैकिंग के लिए मैन्युअल स्थान के रूप में सहेजता है।';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'इस फ़ोन के GPS को लगातार ट्रैक करें';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'HTCommander के चलने पर, बैकग्राउंड में भी, सहेजा गया स्थान अपडेट करता है। इससे बैटरी खर्च होती है और अनुमति होने पर रेडियो/APRS स्थान बीकन अपडेट हो सकते हैं।';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => 'फ़ोन का स्थान सहेजा गया।';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'फ़ोन का स्थान नहीं मिल सका। स्थान अनुमति जाँचें और स्थान सेवाएँ चालू करें।';
+
+  @override
   String get settingsLocationSourceGps => 'GPS से (रेडियो या सीरियल GPS)';
 
   @override
@@ -788,6 +810,14 @@ class AppLocalizationsHi extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       'प्राप्त रेडियो ऑडियो को टेक्स्ट में लिखता है। इस डिवाइस पर पूरी तरह ऑफ़लाइन काम करता है; ऑडियो कभी डिस्क पर सहेजा नहीं जाता।';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Android 12 और पुराने संस्करणों पर नीचे से ऑफ़लाइन मॉडल डाउनलोड करें। Android 13+ उपलब्ध होने पर सिस्टम पहचान का उपयोग करता है; डाउनलोड किए गए मॉडल के लिए 64-बिट ARM या x86_64 आवश्यक है।';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'ऑफ़लाइन वाक् पहचान उपलब्ध नहीं है: इस डिवाइस को Android 13+ सिस्टम समर्थन या डाउनलोड किए गए मॉडल के लिए 64-बिट ARM/x86_64 प्रोसेसर चाहिए।';
 
   @override
   String get settingsModel => 'मॉडल';
@@ -1057,6 +1087,13 @@ class AppLocalizationsHi extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'AGWPE सर्वर सक्षम करें';
 
   @override
+  String get settingsAgwpeLanAccess => 'LAN पर AGWPE क्लाइंट की अनुमति दें';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE में पासवर्ड सुरक्षा नहीं है। इसे केवल भरोसेमंद LAN या VPN पर चालू करें।';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1252,6 +1289,10 @@ class AppLocalizationsHi extends AppLocalizations {
       'कोई संगत रेडियो डिवाइस नहीं मिला।\n\nसुनिश्चित करें कि आपका रेडियो चालू है और ब्लूटूथ सक्षम है।';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android समर्थित BLE रेडियो खोजता है। Bluetooth Classic रेडियो को पहले Android Bluetooth सेटिंग में पेयर करें। Android 12 या नए संस्करण में Nearby devices की अनुमति दें; पुराने संस्करणों में BLE स्कैन के लिए लोकेशन अनुमति भी आवश्यक हो सकती है।';
+
+  @override
   String get connectAllConnectedTitle => 'सभी कनेक्ट हैं';
 
   @override
@@ -1263,7 +1304,16 @@ class AppLocalizationsHi extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'ब्लूटूथ उपलब्ध नहीं है या अक्षम है।\n\nकृपया अपने डिवाइस की सेटिंग्स में ब्लूटूथ सक्षम करें और पुनः प्रयास करें।';
+      'ब्लूटूथ उपलब्ध नहीं है या बंद है।\n\nडिवाइस सेटिंग में ब्लूटूथ चालू करें। Android 12 या उसके बाद के संस्करण में ऐप अनुमतियों में HTCommander को आस-पास के डिवाइस देखने की अनुमति भी दें, फिर पुनः प्रयास करें।';
+
+  @override
+  String get connectOpenAppSettings => 'ऐप सेटिंग खोलें';
+
+  @override
+  String get connectOpenBluetoothSettings => 'ब्लूटूथ सेटिंग';
+
+  @override
+  String get connectScanAgain => 'फिर से खोजें';
 
   @override
   String get radioConnectionTitle => 'रेडियो कनेक्शन';

@@ -79,3 +79,8 @@ jobs:
       - name: Run unit tests
         working-directory: src
         run: flutter test --coverage
+
+      - name: Stress bounded native Bluetooth receive queue
+        run: |
+          c++ -std=c++17 -O2 src/windows/tests/bluetooth_receive_queue_test.cpp -o /tmp/htcommander-receive-test
+          /tmp/htcommander-receive-test

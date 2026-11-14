@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'tab_visibility.dart';
 import '../dialogs/aprs_symbols_dialog.dart';
+import '../dialogs/link_diagnostics_dialog.dart';
 import '../dialogs/radio_settings_dialog.dart';
 import '../echolink/echolink_client.dart' show echoLinkDeviceId;
 import '../l10n/app_localizations.dart';
@@ -14,6 +15,7 @@ import '../dialogs/raw_command_dialog.dart';
 import '../models/radio_models.dart';
 import '../services/bluetooth_service.dart';
 import '../services/crash_logger.dart';
+import '../services/diagnostic_log.dart';
 import '../services/data_broker_client.dart';
 import '../services/window_service.dart';
 
@@ -325,14 +327,18 @@ class _DebugTabState extends State<DebugTab>
       pos += 8 + size + (size & 1);
     }
     if (dataOffset < 0 || audioFormat != 1) return null;
-    if (dataOffset + dataLen > bytes.length) dataLen = bytes.length - dataOffset;
+    if (dataOffset + dataLen > bytes.length) {
+      dataLen = bytes.length - dataOffset;
+    }
     final pcm = Uint8List.sublistView(bytes, dataOffset, dataOffset + dataLen);
     return (pcm: pcm, sampleRate: sampleRate, channels: channels, bits: bits);
   }
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// Opens the raw command test dialog for the currently connected radio.
@@ -380,17 +386,14 @@ class _DebugTabState extends State<DebugTab>
   }
 
   Future<void> _onSaveToFile() async {
-    // Build the log content as text
-    final StringBuffer buffer = StringBuffer();
-    for (final entry in _logEntries) {
-      final timeStr = _formatTime(entry.time);
-      if (entry.isError) {
-        buffer.writeln('[$timeStr] [Error] ${entry.message}');
-      } else {
-        buffer.writeln('[$timeStr] ${entry.message}');
-      }
-    }
-    final logContent = buffer.toString();
+    final logContent = DiagnosticLog.export(
+      _logEntries.map(
+        (entry) => {
+          'time': entry.time.toUtc().toIso8601String(),
+          'isError': entry.isError,
+        },
+      ),
+    );
 
     // Generate filename with current date/time
     final now = DateTime.now();
@@ -398,7 +401,7 @@ class _DebugTabState extends State<DebugTab>
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
-    final defaultFileName = 'debug_log_${dateStr}_$timeStr.txt';
+    final defaultFileName = 'debug_metadata_${dateStr}_$timeStr.json';
 
     // Show file save dialog
     String? outputPath;
@@ -504,6 +507,28 @@ class _DebugTabState extends State<DebugTab>
 
     const menuItemPadding = EdgeInsets.symmetric(horizontal: 12, vertical: 4);
     const menuItemHeight = 32.0;
+    Widget menuItemLabel(
+      String label, {
+      bool checked = false,
+      TextStyle? style,
+    }) => Row(
+      children: [
+        SizedBox(
+          width: 20,
+          child: checked
+              ? const Text('✓', style: TextStyle(fontSize: 14))
+              : null,
+        ),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
+        ),
+      ],
+    );
 
     // The experimental Radio Settings dialog is only available when the
     // preferred radio is a connected Bluetooth radio (never EchoLink).
@@ -522,126 +547,85 @@ class _DebugTabState extends State<DebugTab>
           value: 'saveToFile',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [const SizedBox(width: 20), Text(l10n.tabSaveToFile)],
-          ),
+          child: menuItemLabel(l10n.tabSaveToFile),
         ),
         PopupMenuItem<String>(
           value: 'reportCrash',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [const SizedBox(width: 20), Text('Report a Crash...')],
-          ),
+          child: menuItemLabel('Report a Crash...'),
         ),
         const PopupMenuDivider(height: 8),
         PopupMenuItem<String>(
           value: 'showBluetoothFrames',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [
-              SizedBox(
-                width: 20,
-                child: _showBluetoothFrames
-                    ? const Text('✓', style: TextStyle(fontSize: 14))
-                    : null,
-              ),
-              Text(l10n.debugShowBluetoothFrames),
-            ],
+          child: menuItemLabel(
+            l10n.debugShowBluetoothFrames,
+            checked: _showBluetoothFrames,
           ),
         ),
         PopupMenuItem<String>(
           value: 'loopbackMode',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [
-              SizedBox(
-                width: 20,
-                child: _loopbackMode
-                    ? const Text('✓', style: TextStyle(fontSize: 14))
-                    : null,
-              ),
-              Text(l10n.debugLoopbackMode),
-            ],
-          ),
+          child: menuItemLabel(l10n.debugLoopbackMode, checked: _loopbackMode),
         ),
         const PopupMenuDivider(height: 8),
         PopupMenuItem<String>(
           value: 'queryDeviceNames',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [const SizedBox(width: 20), Text(l10n.debugQueryDeviceNames)],
-          ),
+          child: menuItemLabel(l10n.debugQueryDeviceNames),
         ),
         PopupMenuItem<String>(
           value: 'rawCommand',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [const SizedBox(width: 20), Text(l10n.debugRawCommand)],
-          ),
+          child: menuItemLabel(l10n.debugRawCommand),
+        ),
+        PopupMenuItem<String>(
+          value: 'linkDiagnostics',
+          height: menuItemHeight,
+          padding: menuItemPadding,
+          child: menuItemLabel('链路诊断 / Link'),
         ),
         PopupMenuItem<String>(
           value: 'radioSettings',
           enabled: radioSettingsEnabled,
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [
-              const SizedBox(width: 20),
-              Text(
-                'Radio Settings...',
-                style: radioSettingsEnabled
-                    ? null
-                    : TextStyle(color: Theme.of(context).disabledColor),
-              ),
-            ],
+          child: menuItemLabel(
+            'Radio Settings...',
+            style: radioSettingsEnabled
+                ? null
+                : TextStyle(color: Theme.of(context).disabledColor),
           ),
         ),
         PopupMenuItem<String>(
           value: 'aprsSymbols',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [const SizedBox(width: 20), Text('APRS Symbols...')],
-          ),
+          child: menuItemLabel('APRS Symbols...'),
         ),
         PopupMenuItem<String>(
           value: 'playWavRx',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [
-              const SizedBox(width: 20),
-              Text('Play WAV to VFO A (Test RX)...'),
-            ],
-          ),
+          child: menuItemLabel('Play WAV to VFO A (Test RX)...'),
         ),
         const PopupMenuDivider(height: 8),
         PopupMenuItem<String>(
           value: 'autoScroll',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(
-            children: [
-              SizedBox(
-                width: 20,
-                child: _autoScroll
-                    ? const Text('✓', style: TextStyle(fontSize: 14))
-                    : null,
-              ),
-              Text(l10n.debugAutoScroll),
-            ],
-          ),
+          child: menuItemLabel(l10n.debugAutoScroll, checked: _autoScroll),
         ),
         PopupMenuItem<String>(
           value: 'clear',
           height: menuItemHeight,
           padding: menuItemPadding,
-          child: Row(children: [const SizedBox(width: 20), Text(l10n.tabClear)]),
+          child: menuItemLabel(l10n.tabClear),
         ),
         // macOS-only option to show built-in menus (skip on web)
         if (!kIsWeb && Platform.isMacOS) ...[
@@ -650,16 +634,9 @@ class _DebugTabState extends State<DebugTab>
             value: 'showBuiltInMenus',
             height: menuItemHeight,
             padding: menuItemPadding,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 20,
-                  child: widget.showBuiltInMenus
-                      ? const Text('✓', style: TextStyle(fontSize: 14))
-                      : null,
-                ),
-                Text(l10n.debugShowBuiltInMenus),
-              ],
+            child: menuItemLabel(
+              l10n.debugShowBuiltInMenus,
+              checked: widget.showBuiltInMenus,
             ),
           ),
         ],
@@ -669,9 +646,7 @@ class _DebugTabState extends State<DebugTab>
             value: 'detach',
             height: menuItemHeight,
             padding: menuItemPadding,
-            child: Row(
-              children: [const SizedBox(width: 20), Text(l10n.tabDetach)],
-            ),
+            child: menuItemLabel(l10n.tabDetach),
           ),
         ],
       ],
@@ -704,6 +679,14 @@ class _DebugTabState extends State<DebugTab>
           break;
         case 'rawCommand':
           _onRawCommand();
+          break;
+        case 'linkDiagnostics':
+          if (context.mounted) {
+            await showDialog<void>(
+              context: context,
+              builder: (_) => const LinkDiagnosticsDialog(),
+            );
+          }
           break;
         case 'radioSettings':
           _onRadioSettings();

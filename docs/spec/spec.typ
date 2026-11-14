@@ -487,8 +487,8 @@ and an adaptive next-generation waveform.
   [Torrent File Exchange], yes, yes, yes, yes, yes, yes,
   [Bluetooth Audio & Recording], yes, yes, yes, yes, no, no,
   [SSTV], yes, yes, yes, yes, no, no,
-  [Speech-to-Text / TTS], yes, yes, yes, no, no, no,
-  [AGWPE Protocol Server], yes, yes, yes, no, no, no,
+  [Speech-to-Text / TTS], yes, yes, yes, yes, no, no,
+  [AGWPE Protocol Server], yes, yes, yes, yes, no, no,
 )
 #v(3pt)
 #text(8.5pt, fill: muted)[● Supported #h(10pt) ◐ Partial #h(10pt) ○ Not available]

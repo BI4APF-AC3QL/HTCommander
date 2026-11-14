@@ -9,9 +9,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../services/data_broker_client.dart';
+import '../services/data_broker.dart';
 import '../gps/gps_data.dart';
 import 'radio_models.dart';
 import 'radio_transport.dart';
+import 'link_diagnostics.dart';
 import 'tnc_data_fragment.dart';
 import 'tnc_fragment_assembler.dart';
 import 'read_timing.dart';
@@ -136,7 +138,14 @@ class Radio implements FirmwareRadio {
   String _friendlyName = '';
 
   final DataBrokerClient _broker;
+  final DateTime Function() _queueClock;
+  late final RadioLinkDiagnostics _linkDiagnostics;
+  Timer? _diagnosticsTimer;
   RadioTransport? _transport;
+  StreamSubscription<TransportState>? _transportStateSub;
+  StreamSubscription<Uint8List>? _transportDataSub;
+  Timer? _initialCommandTimer;
+  bool _disposedRadio = false;
   TncDataFragment? _frameAccumulator;
   final TncFragmentAssembler _fragmentAssembler = TncFragmentAssembler();
   DateTime? _lastFragmentWarning;
@@ -165,6 +174,10 @@ class Radio implements FirmwareRadio {
   // Transmit queue
   final List<_FragmentInQueue> _tncFragmentQueue = [];
   bool _tncFragmentInFlight = false;
+  Timer? _tncResponseTimer;
+  Timer? _tncQueueTimer;
+  int _tncSendGeneration = 0;
+  static const int _maxTncFragments = 256;
 
   // Clear channel timer
   Timer? _clearChannelTimer;
@@ -290,8 +303,13 @@ class Radio implements FirmwareRadio {
   bool get _allowTransmit =>
       (_broker.getValue<int>(0, 'AllowTransmit', 0) ?? 0) == 1;
 
-  Radio({required this.deviceId, required this.macAddress})
-    : _broker = DataBrokerClient() {
+  Radio({
+    required this.deviceId,
+    required this.macAddress,
+    DateTime Function()? queueClock,
+  }) : _broker = DataBrokerClient(),
+       _queueClock = queueClock ?? DateTime.now {
+    _linkDiagnostics = RadioLinkDiagnostics(clock: _queueClock);
     _setupSubscriptions();
   }
 
@@ -353,6 +371,29 @@ class Radio implements FirmwareRadio {
       deviceId: deviceId,
       name: 'TransmitDataFrame',
       callback: _onTransmitDataFrameEvent,
+    );
+    _broker.subscribe(
+      deviceId: deviceId,
+      name: 'CancelRemoteAprsFrame',
+      callback: (_, _, tag) {
+        if (tag is String && tag.startsWith('remote-aprs:')) {
+          deleteTransmitByTag(tag);
+        }
+      },
+    );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelGatewayFrames',
+      callback: (_, _, tag) {
+        if (tag == 'aprs-is-gate') deleteTransmitByTag('aprs-is-gate');
+      },
+    );
+    _broker.subscribe(
+      deviceId: DataBroker.allDevices,
+      name: 'CancelSoftwareBeaconFrames',
+      callback: (_, _, tag) {
+        if (tag == 'software-beacon') deleteTransmitByTag('software-beacon');
+      },
     );
 
     // Track the live general software-modem mode. This fires even for session
@@ -1208,17 +1249,29 @@ class Radio implements FirmwareRadio {
 
   // Connection management
   Future<void> connect(RadioTransport transport) async {
+    if (_disposedRadio) return;
     if (_state == RadioState.connected || _state == RadioState.connecting) {
       return;
     }
 
     _transport = transport;
     _updateState(RadioState.connecting);
+    await _transportStateSub?.cancel();
+    await _transportDataSub?.cancel();
+    if (_disposedRadio || _state != RadioState.connecting) return;
     _debug('Attempting to connect to radio MAC: $macAddress');
 
     // Listen to transport events
-    _transport!.stateStream.listen(_onTransportStateChanged);
-    _transport!.dataStream.listen(_onDataReceived);
+    _transportStateSub = transport.stateStream.listen((state) {
+      if (!_disposedRadio && identical(_transport, transport)) {
+        _onTransportStateChanged(state);
+      }
+    });
+    _transportDataSub = transport.dataStream.listen((data) {
+      if (!_disposedRadio && identical(_transport, transport)) {
+        if (_state == RadioState.connected) _onDataReceived(data);
+      }
+    });
 
     // If the transport is already connected, trigger connected handling
     if (_transport!.state == TransportState.connected) {
@@ -1246,6 +1299,14 @@ class Radio implements FirmwareRadio {
   }
 
   void _onTransportConnected() {
+    if (_disposedRadio || _state == RadioState.connected) return;
+    _linkDiagnostics.start();
+    _diagnosticsTimer?.cancel();
+    _publishLinkDiagnostics();
+    _diagnosticsTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _publishLinkDiagnostics(),
+    );
     _updateState(RadioState.connected);
     _receivedAnyData = false;
     _initRetryCount = 0;
@@ -1260,7 +1321,8 @@ class Radio implements FirmwareRadio {
 
     // Add a small delay before sending initial commands
     // Some radios need time to initialize the RFCOMM channel
-    Future.delayed(const Duration(milliseconds: 200), () {
+    _initialCommandTimer?.cancel();
+    _initialCommandTimer = Timer(const Duration(milliseconds: 200), () {
       if (_transport?.state != TransportState.connected) return;
       _sendInitialCommands();
     });
@@ -1409,11 +1471,25 @@ class Radio implements FirmwareRadio {
     String? message,
     RadioState newState = RadioState.disconnected,
   ]) {
+    _diagnosticsTimer?.cancel();
+    _diagnosticsTimer = null;
+    _linkDiagnostics.stop(
+      _disposedRadio
+          ? 'disposed'
+          : newState == RadioState.unableToConnect
+          ? 'unableToConnect'
+          : 'disconnected',
+    );
     if (message != null) _debug(message);
 
     _updateState(newState);
     _initRetryTimer?.cancel();
-    _transport?.disconnect();
+    _initialCommandTimer?.cancel();
+    // A disconnected event must not recursively request another disconnect.
+    if (_transport?.state == TransportState.connected ||
+        _transport?.state == TransportState.connecting) {
+      _transport?.disconnect();
+    }
 
     // Clear data via broker
     _dispatch('Info', null);
@@ -1444,6 +1520,10 @@ class Radio implements FirmwareRadio {
     _fragmentAssembler.reset();
     _tncFragmentQueue.clear();
     _tncFragmentInFlight = false;
+    _tncSendGeneration++;
+    _tncResponseTimer?.cancel();
+    _tncQueueTimer?.cancel();
+    _tncQueueTimer = null;
     _lockState = null;
     _gpsEnabled = false;
     _positionNotifyRegistered = false;
@@ -1457,6 +1537,7 @@ class Radio implements FirmwareRadio {
     _trustedDeviceTimer = null;
     _trustedDeviceQueryActive = false;
     _trustedDevices.clear();
+    _publishLinkDiagnostics();
   }
 
   void _updateState(RadioState newState) {
@@ -1952,7 +2033,7 @@ class Radio implements FirmwareRadio {
     final r = _readInFlight;
     if (r == null) return;
     _readTimeoutTimer?.cancel();
-    _readSentAt = DateTime.now();
+    _readSentAt = _queueClock();
     final sent = await _sendCommand(
       RadioCommandGroup.basic,
       r.cmd,
@@ -1979,6 +2060,7 @@ class Radio implements FirmwareRadio {
       _readQueue.clear();
       return;
     }
+    _linkDiagnostics.timeout(retry: _readRetryCount < _maxReadRetries);
     if (_readRetryCount < _maxReadRetries) {
       _readRetryCount++;
       _debug(
@@ -2001,9 +2083,11 @@ class Radio implements FirmwareRadio {
     final r = _readInFlight;
     if (r == null) return;
     if (r.cmd != cmd || r.index != index) return;
-    if (_readRetryCount == 0 && _readSentAt != null) {
-      _readTiming.observe(DateTime.now().difference(_readSentAt!));
-    }
+    final elapsed = _readRetryCount == 0 && _readSentAt != null
+        ? _queueClock().difference(_readSentAt!)
+        : null;
+    _linkDiagnostics.readReply(elapsed);
+    if (elapsed != null) _readTiming.observe(elapsed);
     _readSentAt = null;
     _readTimeoutTimer?.cancel();
     _readTimeoutTimer = null;
@@ -2189,6 +2273,9 @@ class Radio implements FirmwareRadio {
     );
 
     final String softwareMode = _activeSoftwareModemModeFor(fragment);
+    fragment.transmitTag = tag;
+    fragment.transmitDeadline = deadline;
+    if (deadline != null && !deadline.isAfter(_queueClock())) return 0;
 
     if (_loopbackMode) {
       _transmitLoopback(
@@ -2224,14 +2311,16 @@ class Radio implements FirmwareRadio {
           hwChannelName,
         );
       }
-      _transmitHardwareModem(
+      if (!_transmitHardwareModem(
         hwFragment,
         outboundData,
         hwChannelId,
         regionId,
         tag,
         deadline ?? DateTime(9999),
-      );
+      )) {
+        return 0;
+      }
     }
 
     return outboundData.length;
@@ -2406,7 +2495,7 @@ class Radio implements FirmwareRadio {
     _dispatchDataFrame(fragment2);
   }
 
-  void _transmitHardwareModem(
+  bool _transmitHardwareModem(
     TncDataFragment fragment,
     Uint8List outboundData,
     int channelId,
@@ -2414,6 +2503,19 @@ class Radio implements FirmwareRadio {
     String? tag,
     DateTime deadline,
   ) {
+    _clearTransmitQueue();
+    final count = (outboundData.length + _maxMtu - 1) ~/ _maxMtu;
+    if (_transport?.state != TransportState.connected ||
+        count == 0 ||
+        count > 64 || // The wire fragment ID has only six bits.
+        _tncFragmentQueue.length + count > _maxTncFragments ||
+        !deadline.isAfter(_queueClock())) {
+      _broker.logError(
+        '[Radio $deviceId] TNC packet rejected: '
+        'disconnected, expired or transmit queue full',
+      );
+      return false;
+    }
     fragment.encoding = FragmentEncodingType.hardwareAfsk1200;
     fragment.frameType = FragmentFrameType.ax25;
     _dispatchDataFrame(fragment);
@@ -2451,6 +2553,15 @@ class Radio implements FirmwareRadio {
     }
 
     _trySendNextFragment();
+    _tncQueueTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      _clearTransmitQueue();
+      _trySendNextFragment();
+      if (_tncFragmentQueue.isEmpty) {
+        _tncQueueTimer?.cancel();
+        _tncQueueTimer = null;
+      }
+    });
+    return true;
   }
 
   void _trySendNextFragment() {
@@ -2458,10 +2569,35 @@ class Radio implements FirmwareRadio {
     if (htStatus == null || htStatus!.rssi != 0 || htStatus!.isInTx) return;
 
     _tncFragmentInFlight = true;
-    _sendCommand(
-      RadioCommandGroup.basic,
-      RadioBasicCommand.htSendData,
-      _tncFragmentQueue.first.fragment,
+    final generation = ++_tncSendGeneration;
+    void fail(String reason) {
+      if (!_tncFragmentInFlight || generation != _tncSendGeneration) return;
+      _broker.logError(
+        '[Radio $deviceId] $reason; clearing TNC queue '
+        'and disconnecting without replay',
+      );
+      // ACK has no transaction ID: restarting the queue on this same stream
+      // could mistake a late ACK for the next packet. Reconnect is required.
+      _handleDisconnect(reason);
+    }
+
+    _tncResponseTimer?.cancel();
+    _tncResponseTimer = Timer(const Duration(seconds: 10), () {
+      fail('TNC Bluetooth response timed out');
+    });
+    unawaited(
+      _sendCommand(
+        RadioCommandGroup.basic,
+        RadioBasicCommand.htSendData,
+        _tncFragmentQueue.first.fragment,
+      ).then(
+        (ok) {
+          if (!ok) fail('TNC Bluetooth write failed');
+        },
+        onError: (Object _) {
+          fail('TNC Bluetooth write failed');
+        },
+      ),
     );
   }
 
@@ -2472,12 +2608,13 @@ class Radio implements FirmwareRadio {
   }
 
   void _clearTransmitQueue() {
+    if (_tncFragmentInFlight) return;
     if (_tncFragmentQueue.isEmpty || _tncFragmentQueue.first.fragId != 0) {
       return;
     }
 
-    final now = DateTime.now();
-    _tncFragmentQueue.removeWhere((f) => f.deleted || f.deadline.isBefore(now));
+    final now = _queueClock();
+    _tncFragmentQueue.removeWhere((f) => f.deleted || !f.deadline.isAfter(now));
   }
 
   void _dispatchDataFrame(TncDataFragment fragment) {
@@ -2618,7 +2755,7 @@ class Radio implements FirmwareRadio {
       _debug('TX: ${RadioUtils.bytesToHex(gaiaFrame)}');
     }
 
-    return _transport!.send(gaiaFrame);
+    return _sendObserved(gaiaFrame);
   }
 
   /// Sends a GAIA extended command (command group [RadioCommandGroup.extended]).
@@ -2639,7 +2776,7 @@ class Radio implements FirmwareRadio {
     if (_packetTrace) {
       _debug('TX VM ${cmd.name}: ${RadioUtils.bytesToHex(frame)}');
     }
-    _transport!.send(frame);
+    _sendObserved(frame);
   }
 
   /// Sends a raw, un-framed GATT command frame to the radio. [data] is the
@@ -2652,7 +2789,7 @@ class Radio implements FirmwareRadio {
     if (_transport == null || _state != RadioState.connected) return;
     if (data is! Uint8List || data.length < 4) return;
     final framed = _useGattFraming ? data : GaiaProtocol.encode(data);
-    _transport!.send(framed);
+    _sendObserved(framed);
   }
 
   bool _tryHandleWebCompactResponse(Uint8List data) {
@@ -2796,6 +2933,7 @@ class Radio implements FirmwareRadio {
   }
 
   void _onDataReceived(Uint8List data) {
+    _linkDiagnostics.received(data.length);
     if (_tryHandleWebDirectResponse(data)) {
       return;
     }
@@ -2839,7 +2977,8 @@ class Radio implements FirmwareRadio {
       );
 
       if (result.consumed == -1) {
-        // Error, skip one byte
+        // A framing resync byte is not a lost RF packet.
+        _linkDiagnostics.framingSkippedBytes++;
         offset++;
       } else if (result.consumed == 0) {
         // Need more data
@@ -2849,6 +2988,9 @@ class Radio implements FirmwareRadio {
         offset += result.consumed;
         if (result.command != null) {
           _handleCommand(result.command!);
+          // A rejected command can disconnect and clear this buffer during
+          // decoding. Do not compact it using the old cursor afterwards.
+          if (_state != RadioState.connected) return;
         }
       }
     }
@@ -2860,6 +3002,7 @@ class Radio implements FirmwareRadio {
 
   void _handleCommand(Uint8List cmd) {
     if (cmd.length < 4) return;
+    _linkDiagnostics.commandsReceived++;
 
     // Bridge: forward the raw, un-framed GATT command frame
     // (`[group_hi, group_lo, cmd_hi, cmd_lo, payload...]`) to any listeners.
@@ -3442,6 +3585,16 @@ class Radio implements FirmwareRadio {
   }
 
   void _handleHtSendData(Uint8List data) {
+    if (!_tncFragmentInFlight) return;
+    _tncResponseTimer?.cancel();
+    if (data.isEmpty || data[0] != 0) {
+      _broker.logError(
+        '[Radio $deviceId] TNC response rejected; '
+        'clearing queue without replay',
+      );
+      _handleDisconnect('TNC response rejected');
+      return;
+    }
     // Fragment sent successfully
     if (_tncFragmentQueue.isNotEmpty) {
       _tncFragmentQueue.removeAt(0);
@@ -3520,6 +3673,35 @@ class Radio implements FirmwareRadio {
     }
   }
 
+  void _publishLinkDiagnostics() {
+    _dispatch(
+      'RadioLinkDiagnostics',
+      _linkDiagnostics.snapshot(
+        queuedReads: _readQueue.length + (_readInFlight == null ? 0 : 1),
+        queuedTncFragments: _tncFragmentQueue.length,
+      ),
+    );
+  }
+
+  Future<bool> _sendObserved(Uint8List bytes) async {
+    final transport = _transport;
+    if (transport == null) return false;
+    final ticket = _linkDiagnostics.beginWrite(), started = _queueClock();
+    try {
+      final ok = await transport.send(bytes);
+      _linkDiagnostics.endWrite(ticket, _queueClock().difference(started), ok);
+      return ok;
+    } catch (_) {
+      _linkDiagnostics.endWrite(
+        ticket,
+        _queueClock().difference(started),
+        false,
+      );
+      // Fire-and-forget controls must not surface unhandled writer errors.
+      return false;
+    }
+  }
+
   void _debug(String message) {
     // If packet tracing is enabled, dispatch to DataBroker for debug tab
     if (_packetTrace) {
@@ -3528,6 +3710,12 @@ class Radio implements FirmwareRadio {
   }
 
   void dispose() {
+    if (_disposedRadio) return;
+    _disposedRadio = true;
+    _transportStateSub?.cancel();
+    _transportDataSub?.cancel();
+    _transportStateSub = null;
+    _transportDataSub = null;
     _handleDisconnect('Disposing radio');
     _vmEventController.close();
     _broker.dispose();

@@ -603,6 +603,28 @@ class AppLocalizationsEn extends AppLocalizations {
       'Choose where your current location comes from. It is sent to the radio and used for APRS-IS and satellite tracking.';
 
   @override
+  String get settingsLocationUsePhoneGps => 'Use this phone\'s GPS';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Gets one current fix and saves it as your manual location for the radio, APRS-IS and satellite tracking.';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'Continuously track this phone\'s GPS';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Keeps updating your saved location while HTCommander runs, including in the background. This uses battery and may update radio or APRS position beacons when their send permissions are enabled.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => 'Phone location saved.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'Could not get phone location. Check location permission and turn on location services.';
+
+  @override
   String get settingsLocationSourceGps => 'From GPS (radio or serial GPS)';
 
   @override
@@ -783,6 +805,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       'Transcribes received radio audio to text. Runs fully offline on this device; audio is never written to disk.';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'On Android 12 and earlier, download an offline model below. Android 13+ uses the system recognizer when available; the downloadable model fallback requires a 64-bit ARM or x86_64 device.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Offline speech recognition is unavailable: this device needs Android 13+ system support or a 64-bit ARM/x86_64 processor for the downloadable model fallback.';
 
   @override
   String get settingsModel => 'Model';
@@ -1049,6 +1079,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'Enable AGWPE Server';
 
   @override
+  String get settingsAgwpeLanAccess => 'Allow AGWPE clients on the LAN';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE has no password protection. Use only on a trusted LAN or VPN.';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1244,6 +1281,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'No compatible radio devices were found.\n\nMake sure your radio is powered on and Bluetooth is enabled.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android scans for supported BLE radios. Pair Classic radios in Android Bluetooth settings. Allow Nearby devices on Android 12 or later; BLE scanning on older versions may also require location permission.';
+
+  @override
   String get connectAllConnectedTitle => 'All Connected';
 
   @override
@@ -1255,7 +1296,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Bluetooth is not available or is turned off.\n\nPlease enable Bluetooth in your device settings and try again.';
+      'Bluetooth is not available or is turned off.\n\nPlease turn on Bluetooth in your device settings. On Android 12 or later, also allow HTCommander access to Nearby devices in app permissions, then try again.';
+
+  @override
+  String get connectOpenAppSettings => 'App settings';
+
+  @override
+  String get connectOpenBluetoothSettings => 'Bluetooth settings';
+
+  @override
+  String get connectScanAgain => 'Scan again';
 
   @override
   String get radioConnectionTitle => 'Radio Connection';
