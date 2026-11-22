@@ -10,7 +10,7 @@ assert.ok(source.includes('<p>连接 HTCommander 电台</p>'));
 assert.ok(source.includes('<h2 id="radio">主机电台</h2>'));
 assert.doesNotMatch(source, /Windows|电脑/);
 assert.ok(source.includes('设备静噪'));
-assert.ok(source.includes('卫星多普勒（接收跟踪）'));
+assert.ok(source.includes('卫星多普勒（收发跟踪）'));
 assert.ok(source.includes('env(safe-area-inset-top'));
 assert.ok(source.includes('env(safe-area-inset-bottom'));
 assert.match(source, /id="pageTitle"[^>]*aria-live="polite"/);
@@ -87,9 +87,9 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   state.settings.squelchLevel=5;update();assert.equal(element('squelch').value,5);assert.equal(element('squelch').disabled,false);
   element('squelch').value='7';element('squelch').onchange();assert.equal(commands().at(-1),'squelch');
   state.readOnly=true;update();assert.equal(element('squelch').disabled,true);state.readOnly=false;update();
-  state.satellite={enabled:true,observerKnown:true,catalog:[{id:25544,name:'ISS',usages:[{index:0,name:'Voice',downlinkHz:145800000}]}],positions:[{id:25544,azimuthDeg:90,elevationDeg:30,rangeRateKmS:1,fresh:true}]};update();
+  state.satellite={enabled:true,observerKnown:true,catalog:[{id:25544,name:'ISS',usages:[{index:0,name:'Voice',downlinkHz:145800000,uplinkHz:435000000}]}],positions:[{id:25544,azimuthDeg:90,elevationDeg:30,rangeRateKmS:1,fresh:true}]};update();
   assert.equal(element('satelliteStart').disabled,false);element('satelliteStart').onclick();assert.equal(commands().at(-1),'satelliteStart');
-  state.satellite.tracking={name:'ISS',remoteClientId:1};state.frequencyModeActive=true;state.frequencyModeHz=145799600;update();assert.equal(element('frequency').textContent,'145.79960 MHz');assert.equal(element('ptt').disabled,true);delete state.satellite.tracking;state.frequencyModeActive=false;update();
+  state.satellite.tracking={name:'ISS',remoteClientId:1,receiveOnly:true};state.frequencyModeActive=true;state.frequencyModeHz=145799600;update();assert.equal(element('frequency').textContent,'145.79960 MHz');assert.equal(element('ptt').disabled,true);state.satellite.tracking.receiveOnly=false;update();assert.equal(element('ptt').disabled,false);delete state.satellite.tracking;state.frequencyModeActive=false;update();
   state.satellite.positions[0].fresh=false;update();assert.equal(element('satelliteStart').disabled,true);state.satellite={};update();
 
   assert.ok(element('dashboardRadio').textContent.includes('电台 未知'));
