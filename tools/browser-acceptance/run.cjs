@@ -87,13 +87,13 @@ async function exercise(){
   evidence.nativeGeolocation={permissionDeniedAndGranted:true,syntheticCoordinates:true,previewCancelAndEmergencyZeroFrames:true,confirmedMockFrameRequests:1,voiceAndAprsMessageDenied:true};
   await page.locator('#menuRadio').click();await page.getByText('电台音量与静噪',{exact:true}).click();
   await page.locator('#squelch').focus();await page.locator('#squelch').press('ArrowRight');await until(()=>state().squelchRequests.length===1);assert.deepEqual(state().squelchRequests,[6]);
-  await page.getByText('卫星多普勒（接收跟踪）',{exact:true}).click();await host({op:'orbitFresh'});await page.waitForFunction(()=>!document.querySelector('#satelliteStart').disabled);
-  await page.locator('#satelliteStart').click();await until(()=>state().satelliteRequests.length===1);assert.equal(state().satelliteRequests[0].receiveOnly,true);assert.equal(state().satelliteRequests[0].noradId,25544);
-  await page.waitForFunction(()=>!document.querySelector('#satelliteStop').disabled);assert.equal(await page.locator('#ptt').isDisabled(),true);assert.equal(await page.locator('#channel').isDisabled(),true);
+  await page.getByText('卫星多普勒（收发跟踪）',{exact:true}).click();await host({op:'orbitFresh'});await page.waitForFunction(()=>!document.querySelector('#satelliteStart').disabled);
+  await page.locator('#satelliteStart').click();await until(()=>state().satelliteRequests.length===1);assert.equal(state().satelliteRequests[0].receiveOnly,false);assert.equal(state().satelliteRequests[0].noradId,25544);
+  await page.waitForFunction(()=>!document.querySelector('#satelliteStop').disabled);assert.equal(await page.locator('#ptt').isDisabled(),false);assert.equal(await page.locator('#channel').isDisabled(),true);
   await page.locator('#satelliteStop').click();await until(()=>state().satelliteRequests.length===2);assert.equal(state().satelliteRequests[1],null);
   await host({op:'orbitFresh'});await page.waitForFunction(()=>!document.querySelector('#satelliteStart').disabled);await page.locator('#satelliteStart').click();await until(()=>state().satelliteRequests.length===3);
   await host({op:'role',id:client,readOnly:true});await until(()=>state().satelliteRequests.length===4);assert.equal(state().satelliteRequests[3],null);await page.waitForFunction(()=>state.readOnly);assert.equal(await page.locator('#squelch').isDisabled(),true);
-  evidence.radioControls={squelch:6,receiveOnlySatellite:true,stopAndRoleRevocationRelease:true,noAdditionalRfRequests:state().events.length===1};
+  evidence.radioControls={squelch:6,satelliteUplinkModeEnabled:true,remotePttControlReady:true,stopAndRoleRevocationRelease:true,noAdditionalRfRequests:state().events.length===1};
   // Validate actual browser service-worker/manifest/icon decoding; do not infer
   // a phone installation from this inspection.
   await page.evaluate(()=>navigator.serviceWorker.ready);

@@ -73,7 +73,12 @@ void main() {
             'id': 25544,
             'name': 'ISS',
             'usages': [
-              {'index': 0, 'name': 'Voice', 'downlinkHz': 145800000},
+              {
+                'index': 0,
+                'name': 'Voice',
+                'downlinkHz': 145800000,
+                'uplinkHz': 435000000,
+              },
             ],
           },
         ],
