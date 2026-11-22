@@ -24,7 +24,12 @@ void main() {
           'id': 25544,
           'name': 'ISS',
           'usages': [
-            {'index': 0, 'name': 'Voice', 'downlinkHz': 145800000},
+            {
+              'index': 0,
+              'name': 'Voice',
+              'downlinkHz': 145800000,
+              'uplinkHz': 435000000,
+            },
           ],
         },
       ],
@@ -70,7 +75,7 @@ void main() {
     expect(control.command(1, {'op': 'squelch', 'value': 5}), isNotNull);
     expect(levels, [7]);
   });
-  test('satellite request uses known catalogue and forces receive-only', () {
+  test('satellite request uses known catalogue and enables configured uplink', () {
     setupOrbit();
     final requests = <Object?>[];
     broker.subscribe(
@@ -88,8 +93,7 @@ void main() {
       }),
       isNull,
     );
-    expect((requests.single as Map)['receiveOnly'], true);
-    expect((requests.single as Map)['uplinkHz'], isNull);
+    expect((requests.single as Map)['receiveOnly'], false);
     expect(
       control.command(1, {'op': 'channel', 'value': 0}),
       contains('Stop satellite'),
@@ -97,6 +101,31 @@ void main() {
     control.disconnected(1);
     expect(requests.last, isNull);
     expect(DataBroker.getValueDynamic(0, 'SatelliteTrackingMarker'), isNull);
+  });
+  test('satellite mode without an uplink remains receive-only', () {
+    setupOrbit();
+    final state = DataBroker.getValueDynamic(0, 'SatelliteRemoteState') as Map;
+    final catalog = state['catalog'] as List;
+    final satellite = catalog.single as Map;
+    final usages = satellite['usages'] as List;
+    final usage = usages.single as Map;
+    set(0, 'SatelliteRemoteState', {
+      ...state,
+      'catalog': [
+        {
+          ...satellite,
+          'usages': [Map<String, Object?>.from(usage)..remove('uplinkHz')],
+        },
+      ],
+    });
+    expect(
+      control.command(1, {
+        'op': 'satelliteStart',
+        'noradId': 25544,
+        'usageIndex': 0,
+      }),
+      contains('no configured uplink'),
+    );
   });
   test(
     'stale orbit, missing observer, busy radio and unknown selection deny',
