@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:htcommander/services/data_broker.dart';
@@ -75,33 +76,36 @@ void main() {
     expect(control.command(1, {'op': 'squelch', 'value': 5}), isNotNull);
     expect(levels, [7]);
   });
-  test('satellite request uses known catalogue and enables configured uplink', () {
-    setupOrbit();
-    final requests = <Object?>[];
-    broker.subscribe(
-      deviceId: 0,
-      name: 'SatelliteTrackTarget',
-      callback: (_, _, v) => requests.add(v),
-    );
-    expect(
-      control.command(1, {
-        'op': 'satelliteStart',
-        'noradId': 25544,
-        'usageIndex': 0,
-        'receiveOnly': false,
-        'uplinkHz': 435000000,
-      }),
-      isNull,
-    );
-    expect((requests.single as Map)['receiveOnly'], false);
-    expect(
-      control.command(1, {'op': 'channel', 'value': 0}),
-      contains('Stop satellite'),
-    );
-    control.disconnected(1);
-    expect(requests.last, isNull);
-    expect(DataBroker.getValueDynamic(0, 'SatelliteTrackingMarker'), isNull);
-  });
+  test(
+    'satellite request uses known catalogue and enables configured uplink',
+    () {
+      setupOrbit();
+      final requests = <Object?>[];
+      broker.subscribe(
+        deviceId: 0,
+        name: 'SatelliteTrackTarget',
+        callback: (_, _, v) => requests.add(v),
+      );
+      expect(
+        control.command(1, {
+          'op': 'satelliteStart',
+          'noradId': 25544,
+          'usageIndex': 0,
+          'receiveOnly': false,
+          'uplinkHz': 435000000,
+        }),
+        isNull,
+      );
+      expect((requests.single as Map)['receiveOnly'], false);
+      expect(
+        control.command(1, {'op': 'channel', 'value': 0}),
+        contains('Stop satellite'),
+      );
+      control.disconnected(1);
+      expect(requests.last, isNull);
+      expect(DataBroker.getValueDynamic(0, 'SatelliteTrackingMarker'), isNull);
+    },
+  );
   test('satellite mode without an uplink remains receive-only', () {
     setupOrbit();
     final state = DataBroker.getValueDynamic(0, 'SatelliteRemoteState') as Map;
@@ -127,6 +131,56 @@ void main() {
       contains('no configured uplink'),
     );
   });
+  test(
+    'satellite PTT routes voice only with fresh Doppler uplink readback',
+    () {
+      setupOrbit();
+      const uplinkHz = 435000000;
+      final expectedTxHz = (uplinkHz * (1 + 1 / 299792.458)).round();
+      set(0, 'webServerAllowTransmit', 1);
+      set(0, 'AllowTransmit', 1);
+      set(0, 'SatelliteTrackingMarker', {
+        'noradId': 25544,
+        'usageIndex': 0,
+        'radioDeviceId': 2,
+        'remoteClientId': 1,
+        'receiveOnly': false,
+      });
+      set(2, 'AudioState', true);
+      set(2, 'HtStatus', {'isPowerOn': true, 'isInTx': false, 'isScan': false});
+      set(2, 'Settings', {'channelA': 1, 'doubleChannel': 0});
+      set(2, 'LockState', {'isLocked': true, 'usage': 'Satellite'});
+      set(2, 'FreqModeActive', true);
+      set(2, 'FreqModeReadback', {
+        'rxHz': 145799514,
+        'txHz': expectedTxHz + 2000,
+        'receivedAt': now.toIso8601String(),
+      });
+      expect(
+        control.command(1, {'op': 'pttStart'}),
+        contains('busy or its status is not ready'),
+      );
+
+      set(2, 'FreqModeReadback', {
+        'rxHz': 145799514,
+        'txHz': expectedTxHz + 500,
+        'receivedAt': now.toIso8601String(),
+      });
+      final routedFrames = <Object?>[];
+      broker.subscribe(
+        deviceId: 2,
+        name: 'TransmitVoicePCM',
+        callback: (_, _, frame) => routedFrames.add(frame),
+      );
+      expect(control.command(1, {'op': 'pttStart'}), isNull);
+      final frame = Uint8List.fromList([0xf2, 1, 0, 125, 1, 0, 2, 0]);
+      expect(control.microphone(1, frame), true);
+      expect(routedFrames, hasLength(1));
+      expect((routedFrames.single as Map)['hold'], true);
+      expect((routedFrames.single as Map)['playLocally'], false);
+      control.command(1, {'op': 'pttStop'});
+    },
+  );
   test(
     'stale orbit, missing observer, busy radio and unknown selection deny',
     () {
