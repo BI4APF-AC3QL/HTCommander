@@ -75,7 +75,7 @@ async function exercise(){
   const client=state().clients[0].id;
   await host({op:'role',id:client,readOnly:false});await host({op:'grant',id:client});
   await page.waitForFunction(()=>state.controlOwner===clientId&&!state.readOnly);
-  assert.equal(await page.locator('#aprsSend').isDisabled(),true);assert.equal(await page.locator('#ptt').isDisabled(),true);
+  assert.equal(await page.locator('#aprsSend').isDisabled(),true);assert.equal(await page.locator('#ptt').isDisabled(),false);
   await page.locator('#positionAcquire').click();await page.waitForFunction(()=>!document.querySelector('#positionSend').disabled);
   await page.locator('#positionSend').click();await page.locator('#positionCancel').click();assert.deepEqual(state().events,[]);
   await page.locator('#positionSend').click();await host({op:'emergency'});

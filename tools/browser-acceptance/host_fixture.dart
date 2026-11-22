@@ -45,7 +45,7 @@ void main() {
       'webServerPassword': 'synthetic-test-password',
       'webServerDefaultReadOnly': 1,
       'webServerRequireControlApproval': 1,
-      'webServerAllowTransmit': 0,
+      'webServerAllowTransmit': 1,
       'webServerAllowAprs': 0,
       'webServerAllowPosition': 1,
       'AllowTransmit': 1,
