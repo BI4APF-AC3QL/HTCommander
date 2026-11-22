@@ -136,6 +136,45 @@ class RemoteRadioController {
       RemoteAccessConfig.current.allowTransmit &&
       DataBroker.getValue<int>(0, 'AllowTransmit', 0) == 1;
 
+  bool _satelliteTransmitReady(int clientId, int radioId) {
+    final state = _satellite.snapshot(_clock().toUtc());
+    final marker = state['tracking'];
+    if (marker is! Map ||
+        marker['remoteClientId'] != clientId ||
+        marker['radioDeviceId'] != radioId ||
+        marker['receiveOnly'] != false) {
+      return false;
+    }
+    final id = marker['noradId'], index = marker['usageIndex'];
+    if (id is! int || index is! int) return false;
+    final satellites = (state['catalog'] as List).whereType<Map>();
+    final satellite = satellites.where((s) => s['id'] == id);
+    if (satellite.isEmpty) return false;
+    final usages = (satellite.first['usages'] as List).whereType<Map>();
+    final usage = usages.where((u) => u['index'] == index);
+    final positions = (state['positions'] as List).whereType<Map>();
+    final position = positions.where(
+      (p) => p['id'] == id && p['fresh'] == true,
+    );
+    if (usage.isEmpty || position.isEmpty) return false;
+    final uplink = usage.first['uplinkHz'];
+    final rate = position.first['rangeRateKmS'];
+    if (uplink is! int || uplink <= 0 || rate is! num) return false;
+    final expectedTx = (uplink * (1 + rate / 299792.458)).round();
+    final readback = DataBroker.getValueDynamic(radioId, 'FreqModeReadback');
+    if (readback is! Map || readback['txHz'] is! int) return false;
+    final receivedAt = DateTime.tryParse('${readback['receivedAt']}');
+    final now = _clock().toUtc();
+    if (receivedAt == null ||
+        now.difference(receivedAt) > const Duration(seconds: 3) ||
+        now.isBefore(receivedAt)) {
+      return false;
+    }
+    return DataBroker.getValue<bool>(radioId, 'FreqModeActive', false) ==
+            true &&
+        ((readback['txHz'] as int) - expectedTx).abs() <= 1000;
+  }
+
   Map<String, Object?> snapshot([int? clientId]) {
     final id = target();
     final bounds = _viewports[clientId];
@@ -336,24 +375,33 @@ class RemoteRadioController {
       if (DataBroker.getValue<bool>(id, 'AudioState', false) != true) {
         return 'Enable the radio audio channel on the host first.';
       }
+      final satelliteTx = _satelliteTransmitReady(clientId, id);
+      final tracking = _satellite.snapshot(_clock().toUtc())['tracking'];
+      final ownsSatelliteLock =
+          satelliteTx &&
+          tracking is Map &&
+          tracking['remoteClientId'] == clientId &&
+          tracking['radioDeviceId'] == id;
       final status = DataBroker.getValueDynamic(id, 'HtStatus', null);
       final lock = DataBroker.getValueDynamic(id, 'LockState', null);
       if (status is! Map ||
           status['isPowerOn'] != true ||
           status['isInTx'] == true ||
-          (lock is Map && lock['isLocked'] == true)) {
+          (lock is Map && lock['isLocked'] == true && !ownsSatelliteLock)) {
         return 'Radio is busy or its status is not ready.';
       }
       final settings = DataBroker.getValueDynamic(id, 'Settings', null);
       if (settings is! Map) return 'Radio settings are not ready.';
-      if (settings['doubleChannel'] == 2 || settings['doubleChannel'] == 3) {
+      if (!satelliteTx &&
+          (settings['doubleChannel'] == 2 || settings['doubleChannel'] == 3)) {
         return 'Select a channel in VFO A on the mobile page before PTT.';
       }
       final vfo = settings['doubleChannel'] == 2 ? 'channelB' : 'channelA';
       final channel = _channels(
         id,
       ).where((c) => c['channelId'] == settings[vfo]);
-      if (channel.isEmpty || channel.first['txDisable'] != false) {
+      if (!satelliteTx &&
+          (channel.isEmpty || channel.first['txDisable'] != false)) {
         return 'Selected channel does not allow transmission.';
       }
       _owner = clientId;
@@ -543,10 +591,14 @@ class RemoteRadioController {
         target() != _txRadio ||
         DataBroker.getValue<bool>(_txRadio, 'AudioState', false) != true ||
         settings is! Map ||
-        settings['channelA'] != _txChannel ||
-        settings['doubleChannel'] == 2 ||
-        settings['doubleChannel'] == 3 ||
-        (lock is Map && lock['isLocked'] == true) ||
+        (!_satelliteTransmitReady(clientId, _txRadio) &&
+            settings['channelA'] != _txChannel) ||
+        (!_satelliteTransmitReady(clientId, _txRadio) &&
+            (settings['doubleChannel'] == 2 ||
+                settings['doubleChannel'] == 3)) ||
+        (lock is Map &&
+            lock['isLocked'] == true &&
+            !_satelliteTransmitReady(clientId, _txRadio)) ||
         frame.length < 6 ||
         frame.length > 8196 ||
         (frame.length - 4).isOdd ||

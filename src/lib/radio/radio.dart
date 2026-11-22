@@ -3276,6 +3276,18 @@ class Radio implements FirmwareRadio {
   void _handleFreqModeStatusChanged(Uint8List data) {
     if (data.length < 19) return;
     final active = data[18] != 0;
+    // Publish the frequencies together so a consumer cannot pair values
+    // from different VFO notifications.
+    _dispatch(
+      'FreqModeReadback',
+      active
+          ? {
+              'rxHz': RadioUtils.getInt(data, 5) & 0x3FFFFFFF,
+              'txHz': RadioUtils.getInt(data, 9) & 0x3FFFFFFF,
+              'receivedAt': DateTime.now().toUtc().toIso8601String(),
+            }
+          : null,
+    );
     _dispatch('FreqModeActive', active);
     if (active) {
       final freqHz = RadioUtils.getInt(data, 5) & 0x3FFFFFFF;

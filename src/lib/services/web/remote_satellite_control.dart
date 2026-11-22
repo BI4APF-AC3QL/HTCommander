@@ -60,6 +60,10 @@ class RemoteSatelliteControl {
       (u) => u['index'] == index,
     );
     if (usages.isEmpty) return 'Unknown satellite mode.';
+    final usage = usages.first;
+    if (usage['uplinkHz'] is! int || (usage['uplinkHz'] as int) <= 0) {
+      return 'This satellite mode has no configured uplink frequency.';
+    }
     final pos = (state['positions'] as List).whereType<Map>().where(
       (p) => p['id'] == id && p['fresh'] == true,
     );
@@ -92,7 +96,7 @@ class RemoteSatelliteControl {
       'radioDeviceId': radioId,
       'remoteClientId': clientId,
       'name': catalog.first['name'],
-      'receiveOnly': true,
+      'receiveOnly': false,
     };
     DataBroker.dispatch(
       deviceId: radioId,
@@ -109,7 +113,7 @@ class RemoteSatelliteControl {
     DataBroker.dispatch(
       deviceId: 0,
       name: 'SatelliteTrackTarget',
-      data: {...marker, 'receiveOnly': true},
+      data: {...marker, 'receiveOnly': false},
       store: false,
     );
     return null;

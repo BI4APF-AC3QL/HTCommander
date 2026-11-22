@@ -874,6 +874,7 @@ class SatelliteHandler {
                         'index': i,
                         'name': s.transponders[i].name,
                         'downlinkHz': s.transponders[i].downlinkHz,
+                        'uplinkHz': s.transponders[i].uplinkHz,
                       },
                 ],
               },

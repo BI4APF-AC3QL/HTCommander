@@ -220,6 +220,13 @@ const commands = () => socket.sent.filter(v => typeof v === 'string' && v.starts
   const received=new ArrayBuffer(4+2048*2),rx=new DataView(received);
   rx.setUint8(0,241);rx.setUint8(1,1);rx.setUint16(2,32000,true);
   for(let i=0;i<2048;i++)rx.setInt16(4+i*2,16384,true);
+  // Short SBC-derived blocks must survive the initial playback buffer.
+  const shortBlock = received.slice(0, 4 + 128 * 2);
+  const resetsBefore = vm.runInNewContext('audioResets', context);
+  for (let i = 0; i < 48; i++) socket.onmessage({data: shortBlock});
+  assert.equal(vm.runInNewContext('audioResets', context), resetsBefore);
+  assert.equal(vm.runInNewContext('scheduledAudio.size', context), 48);
+  vm.runInNewContext('stopPlayback()', context);
   for(let i=0;i<100;i++)socket.onmessage({data:received});
   assert.ok(vm.runInNewContext('scheduledAudio.size',context)<=32);
   assert.ok(vm.runInNewContext('audioResets',context)>0);
