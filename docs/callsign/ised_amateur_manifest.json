@@ -8,12 +8,12 @@
   "md5": "5890ffbabd3c8660c4ce420a875397a4",
   "recordCount": 92142,
   "overlay": {
-    "version": "2026.11.18",
-    "sourceDate": 20261118,
+    "version": "2026.11.25",
+    "sourceDate": 20261125,
     "url": "https://github.com/BI4APF-AC3QL/HTCommander/releases/download/callsign-db-ca/ised_amateur_overlay.cdb.xz",
     "compressed": true,
-    "sizeBytes": 5044,
-    "md5": "837b2b010ad71b2f85506e8434deecb5",
-    "recordCount": 241
+    "sizeBytes": 5964,
+    "md5": "9cf844e813c6af93842618a4ad56f2ac",
+    "recordCount": 300
   }
 }
