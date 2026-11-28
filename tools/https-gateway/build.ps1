@@ -27,6 +27,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Gateway compilation failed' }
 $selfTest = Start-Process -FilePath $exe -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
 if ($selfTest.ExitCode -ne 0) { throw "Gateway self-test failed: $($selfTest.ExitCode)" }
 $adapted = [IO.File]::ReadAllText((Join-Path $OutputDirectory 'HTCommander-Gateway-Data/self-test.txt'))
-if (-not $adapted.Contains('127.0.0.1:18080') -or -not $adapted.Contains('radio.example.com') -or -not $adapted.Contains('same-origin')) { throw 'Unexpected adapted gateway configuration' }
+$config = ($adapted -split "`r?`n" | Where-Object { $_.TrimStart().StartsWith('{') } | Select-Object -First 1) | ConvertFrom-Json
+$server = $config.apps.http.servers.srv0
+$upstream = $server.routes[0].handle[0].routes[0].handle[0].upstreams[0].dial
+$httpChallengeDisabled = $config.apps.tls.automation.policies[0].issuers[0].challenges.http.disabled
+if ($upstream -ne '127.0.0.1:18080' -or $server.listen -notcontains ':443' -or $server.listen -contains ':80' -or -not $server.automatic_https.disable_redirects -or -not $httpChallengeDisabled -or -not $adapted.Contains('radio.example.com') -or -not $adapted.Contains('same-origin')) { throw 'Unexpected adapted gateway configuration' }
 Copy-Item (Join-Path $caddyDirectory 'LICENSE') (Join-Path $OutputDirectory 'CADDY-LICENSE.txt')
 Write-Output "Built and verified: $exe"
