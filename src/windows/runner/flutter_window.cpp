@@ -1,7 +1,11 @@
 #include "flutter_window.h"
 
 #include <optional>
-#include <vector>
+
+#include "bluetooth_classic_plugin.h"
+#include "pcm_player_plugin.h"
+#include "tts_plugin.h"
+#include "engine_owned_native_plugin.h"
 
 #include "flutter/generated_plugin_registrant.h"
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
@@ -42,12 +46,10 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
-  bluetooth_plugin_ = std::make_unique<BluetoothClassicPlugin>(
-      flutter_controller_->engine()->messenger());
-  pcm_player_plugin_ = std::make_unique<PcmPlayerPlugin>(
-      flutter_controller_->engine()->messenger());
-  tts_plugin_ = std::make_unique<TtsPlugin>(
-      flutter_controller_->engine()->messenger());
+  auto* main_engine = flutter_controller_->engine();
+  RegisterEngineOwnedNativePlugin<BluetoothClassicPlugin>(main_engine, "HTCommanderBluetoothClassic");
+  RegisterEngineOwnedNativePlugin<PcmPlayerPlugin>(main_engine, "HTCommanderPcmPlayer");
+  RegisterEngineOwnedNativePlugin<TtsPlugin>(main_engine, "HTCommanderTts");
 
   // Detached tabs open in secondary windows created by desktop_multi_window.
   // Those windows run in their own Flutter engine, which does NOT get plugins
@@ -94,14 +96,8 @@ bool FlutterWindow::OnCreate() {
     UrlLauncherWindowsRegisterWithRegistrar(
         engine->GetRegistrarForPlugin("UrlLauncherWindows"));
 
-    // Keep the app-specific plugin instances alive for the sub-window's
-    // lifetime.
-    static std::vector<std::unique_ptr<BluetoothClassicPlugin>> bt_plugins;
-    static std::vector<std::unique_ptr<PcmPlayerPlugin>> pcm_plugins;
-    bt_plugins.push_back(
-        std::make_unique<BluetoothClassicPlugin>(engine->messenger()));
-    pcm_plugins.push_back(
-        std::make_unique<PcmPlayerPlugin>(engine->messenger()));
+    RegisterEngineOwnedNativePlugin<BluetoothClassicPlugin>(engine, "HTCommanderBluetoothClassic");
+    RegisterEngineOwnedNativePlugin<PcmPlayerPlugin>(engine, "HTCommanderPcmPlayer");
   });
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());

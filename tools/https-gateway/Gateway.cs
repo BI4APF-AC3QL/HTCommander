@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Net.Sockets;
 using System.Windows.Forms;
 using System.Drawing;
 
@@ -42,8 +43,18 @@ class Gateway : Form {
         string storage=Path.Combine(root,"certificates").Replace("\\","/");
         File.WriteAllText(Path.Combine(root,"backend-port.txt"),port.Value.ToString());
         File.WriteAllText(Path.Combine(root,"gateway-domain.txt"),Domain);
-        File.WriteAllText(Path.Combine(root,"Caddyfile"), "{\n    storage file_system {\n        root \""+storage+"\"\n    }\n}\n"+Domain+" {\n    reverse_proxy 127.0.0.1:"+port.Value+" {\n        header_up Host "+Domain+"\n        header_down Referrer-Policy same-origin\n    }\n}\n",new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(root,"Caddyfile"), "{\n    auto_https disable_redirects\n    storage file_system {\n        root \""+storage+"\"\n    }\n}\n"+Domain+" {\n    tls {\n        issuer acme {\n            disable_http_challenge\n        }\n    }\n    reverse_proxy 127.0.0.1:"+port.Value+" {\n        header_up Host "+Domain+"\n        header_down Referrer-Policy same-origin\n    }\n}\n",new UTF8Encoding(false));
         return exe;
+    }
+    static void VerifyBackend(int backendPort) {
+        using(TcpClient client=new TcpClient()) {
+            IAsyncResult pending=client.BeginConnect("127.0.0.1",backendPort,null,null);
+            try {
+                if(!pending.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(2)))
+                    throw new Exception("无法连接本机 HTCommander 网页服务 127.0.0.1:"+backendPort+"。请先启动 HTCommander、开启网页服务，并确认端口一致。 / Local HTCommander web service is not reachable.");
+                client.EndConnect(pending);
+            } finally { pending.AsyncWaitHandle.Close(); }
+        }
     }
     void Append(string s) {
         if(String.IsNullOrEmpty(s)) return;
@@ -55,6 +66,7 @@ class Gateway : Form {
     void StartGateway() {
         if(child!=null && !child.HasExited) return;
         try {
+            VerifyBackend((int)port.Value);
             string exe=Prepare();
             child=new Process(); child.StartInfo=new ProcessStartInfo(exe,"run --config Caddyfile --adapter caddyfile") {
                 WorkingDirectory=root, UseShellExecute=false,CreateNoWindow=true,RedirectStandardError=true,RedirectStandardOutput=true
@@ -63,7 +75,7 @@ class Gateway : Form {
             child.OutputDataReceived+=(s,e)=>Append(e.Data); child.ErrorDataReceived+=(s,e)=>Append(e.Data);
             child.Exited+=(s,e)=> { if(!closing && IsHandleCreated) try { BeginInvoke((Action)(()=> { status.Text="HTTPS 进程已停止，请检查日志。"; start.Enabled=true; stop.Enabled=false; port.Enabled=true;domain.Enabled=true; })); } catch {} };
             child.Start(); child.BeginOutputReadLine(); child.BeginErrorReadLine();
-            status.Text="HTTPS 进程运行中；证书与外网连通性请查看日志并用手机验证。";
+            status.Text="HTTPS 入口已启动；网页重连时请确认 HTCommander 网页服务持续运行。证书与外网连通性请查看日志并用手机验证。";
             start.Enabled=false; stop.Enabled=true; port.Enabled=false;domain.Enabled=false;
             Append("启动入口 https://"+Domain+" → 127.0.0.1:"+port.Value);
         } catch(Exception ex) { Append(ex.Message); status.Text="启动失败："+ex.Message; start.Enabled=true; stop.Enabled=false; port.Enabled=true;domain.Enabled=true; }
@@ -85,7 +97,7 @@ class Gateway : Form {
         var settings=new FlowLayoutPanel { Dock=DockStyle.Fill };
         settings.Controls.Add(new Label { Text="公网域名 / Domain",AutoSize=true,Padding=new Padding(0,6,0,0) });settings.Controls.Add(domain);
         settings.Controls.Add(new Label { Text="填写自己的域名，例如 radio.example.com",AutoSize=true });layout.Controls.Add(settings,0,0);
-        layout.Controls.Add(new Label { Dock=DockStyle.Fill, Text="1. 域名 A / AAAA 记录指向电台电脑可达的公网地址。\n2. IPv4 路由器映射 TCP 80/443；IPv6 放行入站防火墙。\n3. HTCommander 开启远程网页服务，端口与下方一致，设置密码；\n   外网 HTTPS 地址填写 https://你的域名。\n关闭窗口将停止入口；程序不修改防火墙或发射权限。 / See configuration guide." },0,1);
+        layout.Controls.Add(new Label { Dock=DockStyle.Fill, Text="1. 域名 AAAA 记录指向本机可达的公网 IPv6；删除失效的 A 记录。\n2. 放行入站 TCP 443（IPv4 路由器映射或 IPv6 防火墙）。本版本仅用 TLS-ALPN 申请证书，不监听 TCP 80。\n3. 先启动 HTCommander 网页服务，端口与下方一致，设置登录密码；外网 HTTPS 地址填写 https://你的域名。\n4. 点击启动前会检查本机后端端口；若网页显示重连，请确认 HTCommander 网页服务运行中。\n关闭窗口将停止入口；程序不修改防火墙或发射权限。 / See configuration guide." },0,1);
         var buttons=new FlowLayoutPanel { Dock=DockStyle.Fill };
         buttons.Controls.Add(new Label { Text="后端端口",AutoSize=true,Padding=new Padding(0,6,0,0) });buttons.Controls.Add(port);
         start.Text="启动入口"; stop.Text="停止入口"; stop.Enabled=false;

@@ -56,6 +56,8 @@ class TtsService {
   /// Text-to-speech synthesis is never available in the web build.
   Future<bool> isAvailable() async => false;
 
+  Future<void> openModelDirectory() async {}
+
   /// Guidance shown when [isAvailable] is false.
   String get setupInstructions =>
       'Text-to-speech is not available in the web version of the app.';
@@ -66,6 +68,7 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async {}
 
   /// No-op preview stop on the web.
@@ -77,5 +80,6 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async => null;
 }

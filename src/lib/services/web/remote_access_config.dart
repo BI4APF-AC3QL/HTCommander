@@ -6,20 +6,35 @@ class RemoteAccessConfig {
     this.password = '',
     this.publicOrigin = '',
     this.allowTransmit = false,
+    this.allowAprs = false,
+    this.allowPosition = false,
+    this.defaultReadOnly = false,
+    this.requireControlApproval = false,
   });
 
   final bool enabled;
   final String password;
   final String publicOrigin;
   final bool allowTransmit;
+  final bool allowAprs;
+  final bool allowPosition;
+  final bool defaultReadOnly;
+  final bool requireControlApproval;
 
   static RemoteAccessConfig get current => RemoteAccessConfig(
+    requireControlApproval:
+        DataBroker.getValue<int>(0, 'webServerRequireControlApproval', 0) == 1,
+    defaultReadOnly:
+        DataBroker.getValue<int>(0, 'webServerDefaultReadOnly', 0) == 1,
     enabled: DataBroker.getValue<int>(0, 'webServerRemoteEnabled', 0) == 1,
     password: DataBroker.getValue<String>(0, 'webServerPassword', '') ?? '',
     publicOrigin:
         DataBroker.getValue<String>(0, 'webServerPublicOrigin', '') ?? '',
     allowTransmit:
         DataBroker.getValue<int>(0, 'webServerAllowTransmit', 0) == 1,
+    allowAprs: DataBroker.getValue<int>(0, 'webServerAllowAprs', 0) == 1,
+    allowPosition:
+        DataBroker.getValue<int>(0, 'webServerAllowPosition', 0) == 1,
   );
 
   static String? validateOrigin(String value) {
@@ -28,6 +43,7 @@ class RemoteAccessConfig {
     if (uri == null ||
         uri.scheme != 'https' ||
         uri.host.isEmpty ||
+        (uri.hasPort && (uri.port < 1 || uri.port > 65535)) ||
         uri.userInfo.isNotEmpty ||
         uri.hasQuery ||
         uri.hasFragment ||

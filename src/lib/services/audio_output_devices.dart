@@ -8,17 +8,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/services.dart';
 
 /// A selectable audio output (speaker) device.
 class AudioOutputDevice {
   const AudioOutputDevice({required this.id, required this.label});
 
-  /// Stable identifier passed to the native player to select the device (the
-  /// PulseAudio/PipeWire sink name on Linux, the waveOut device index as a
-  /// string on Windows, or the CoreAudio device UID on macOS). Empty string
-  /// means "OS default".
+  /// Identifier passed to the native player (AudioDeviceInfo id on Android,
+  /// PulseAudio/PipeWire sink name on Linux, waveOut index on Windows, or
+  /// CoreAudio UID on macOS). Empty string means "OS default".
   final String id;
 
   /// Human-readable name shown in the UI.
@@ -27,29 +27,37 @@ class AudioOutputDevice {
 
 /// Enumerates the audio output devices available for playback.
 ///
-/// Implemented on Linux (via `pactl list sinks`), Windows and macOS (via the
-/// native PCM player plugin's `listDevices` method). Other platforms return an
-/// empty list and callers should fall back to the OS default output device.
+/// Implemented on Linux (via `pactl list sinks`), Windows/macOS (via the native
+/// PCM player plugin), and Android (via AudioManager output routes). Other
+/// platforms return an empty list and callers should use the OS default.
 class AudioOutputDevices {
-  static const MethodChannel _channel =
-      MethodChannel('com.htcommander/pcm_player');
+  static const MethodChannel _channel = MethodChannel(
+    'com.htcommander/pcm_player',
+  );
 
   /// Whether specific output-device selection is supported on this platform.
   static bool get isSupported {
     if (kIsWeb) return false;
-    return Platform.isLinux || Platform.isWindows || Platform.isMacOS;
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.linux ||
+      TargetPlatform.windows ||
+      TargetPlatform.macOS ||
+      TargetPlatform.android => true,
+      _ => false,
+    };
   }
 
   /// Returns the list of output devices, or an empty list when enumeration is
   /// unsupported or fails. The returned ids match the `deviceId` accepted by
-  /// the native PCM player; use an empty id for the OS default device.
+  /// native PCM player; use an empty id for the OS default device.
   static Future<List<AudioOutputDevice>> list() async {
     if (!isSupported) return const <AudioOutputDevice>[];
-    if (Platform.isLinux) return _listLinux();
+    if (defaultTargetPlatform == TargetPlatform.linux) return _listLinux();
     return _listNative();
   }
 
-  /// Windows / macOS: queries the native PCM player plugin for output devices.
+  /// Queries native PCM playback for output devices on Android, Windows and
+  /// macOS.
   static Future<List<AudioOutputDevice>> _listNative() async {
     try {
       final result = await _channel.invokeMethod<List<dynamic>>('listDevices');
@@ -103,10 +111,7 @@ class AudioOutputDevices {
       if (n != null && n.isNotEmpty) {
         final d = description;
         devices.add(
-          AudioOutputDevice(
-            id: n,
-            label: (d != null && d.isNotEmpty) ? d : n,
-          ),
+          AudioOutputDevice(id: n, label: (d != null && d.isNotEmpty) ? d : n),
         );
       }
     }

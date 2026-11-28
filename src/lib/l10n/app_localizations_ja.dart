@@ -600,6 +600,27 @@ class AppLocalizationsJa extends AppLocalizations {
       '現在の位置の取得元を選択します。無線機に送信され、APRS-IS と衛星追跡に使用されます。';
 
   @override
+  String get settingsLocationUsePhoneGps => 'この端末の GPS を使用';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      '現在位置を一度取得し、無線機、APRS-IS、衛星追跡に使う手動位置として保存します。';
+
+  @override
+  String get settingsLocationPhoneGpsTracking => 'この端末の GPS を継続して追跡';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'HTCommander の実行中はバックグラウンドでも保存位置を更新します。電池を消費し、送信が許可されている場合は無線機または APRS の位置ビーコンが更新されることがあります。';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => '端末の位置を保存しました。';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      '端末の位置を取得できません。位置情報の権限を確認し、位置情報サービスを有効にしてください。';
+
+  @override
   String get settingsLocationSourceGps => 'GPS から（無線機またはシリアル GPS）';
 
   @override
@@ -775,6 +796,14 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       '受信した無線オーディオをテキストに変換します。このデバイス上で完全にオフラインで動作し、オーディオがディスクに保存されることはありません。';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Android 12 以前では、下からオフラインモデルをダウンロードしてください。Android 13 以降は利用可能な場合にシステム認識を使用します。ダウンロードモデルは 64 ビット ARM と x86_64 に対応します。';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'オフライン音声認識を利用できません。このデバイスには Android 13 以降のシステム対応、またはダウンロードモデル用の 64 ビット ARM/x86_64 プロセッサが必要です。';
 
   @override
   String get settingsModel => 'モデル';
@@ -1033,6 +1062,13 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'AGWPE サーバーを有効化';
 
   @override
+  String get settingsAgwpeLanAccess => 'LAN クライアントからの AGWPE 接続を許可';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE にはパスワード保護がありません。信頼できる LAN または VPN でのみ有効にしてください。';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1224,6 +1260,10 @@ class AppLocalizationsJa extends AppLocalizations {
       '対応する無線機デバイスが見つかりませんでした。\n\n無線機の電源が入っていて、Bluetooth が有効になっていることを確認してください。';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android は対応する BLE 無線機をスキャンします。Bluetooth Classic 無線機は Android の Bluetooth 設定で事前にペア設定してください。Android 12 以降では「付近のデバイス」へのアクセスを許可してください。古いバージョンでは BLE スキャンに位置情報の許可も必要な場合があります。';
+
+  @override
   String get connectAllConnectedTitle => 'すべて接続済み';
 
   @override
@@ -1234,7 +1274,16 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Bluetooth を利用できないか、無効になっています。\n\nデバイスの設定で Bluetooth を有効にしてから再試行してください。';
+      'Bluetooth を利用できないか、無効になっています。\n\nデバイスの設定で Bluetooth を有効にしてください。Android 12 以降では、アプリの権限で HTCommander に「付近のデバイス」へのアクセスも許可してから、もう一度お試しください。';
+
+  @override
+  String get connectOpenAppSettings => 'アプリの設定を開く';
+
+  @override
+  String get connectOpenBluetoothSettings => 'Bluetooth 設定';
+
+  @override
+  String get connectScanAgain => '再スキャン';
 
   @override
   String get radioConnectionTitle => '無線機の接続';

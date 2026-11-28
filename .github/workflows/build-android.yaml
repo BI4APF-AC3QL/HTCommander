@@ -1,6 +1,24 @@
 name: Build Android
 
 on:
+  push:
+    branches: [main, 'feature/remote-aprs-dashboard']
+    paths:
+      - 'src/lib/**'
+      - 'src/android/**'
+      - 'src/integration_test/**'
+      - 'src/test_driver/**'
+      - 'src/tools/android_emulator_acceptance.sh'
+      - 'src/tools/verify_android_stt_abis.py'
+      - 'src/pubspec.yaml'
+      - 'src/pubspec.lock'
+      - 'src/tools/stage_android_web_assets.py'
+      - 'src/assets/web_app/placeholder.txt'
+      - 'tools/android-hosted-browser-acceptance.cjs'
+      - 'tools/browser-acceptance/package.json'
+      - 'tools/browser-acceptance/package-lock.json'
+      - 'docs/android-radio-server.md'
+      - '.github/workflows/build-android.yaml'
   workflow_dispatch:
 
 permissions:
@@ -8,7 +26,10 @@ permissions:
 
 jobs:
   build-android:
+    if: github.repository == 'BI4APF-AC3QL/HTCommander'
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -22,31 +43,151 @@ jobs:
           channel: stable
           flutter-version: '3.47.5'
 
-      - name: Decode Android keystore
-        working-directory: src/android/app
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > upload-keystore.jks
-
-      - name: Create key.properties
-        working-directory: src/android
+      - name: Configure Android signing
         run: |
-          cat > key.properties <<EOF
-          storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}
-          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
-          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
-          storeFile=upload-keystore.jks
-          EOF
+          signing_values=(
+            "$ANDROID_KEYSTORE_BASE64"
+            "$ANDROID_STORE_PASSWORD"
+            "$ANDROID_KEY_PASSWORD"
+            "$ANDROID_KEY_ALIAS"
+          )
+          configured_count=0
+          for value in "${signing_values[@]}"; do
+            if [[ -n "$value" ]]; then
+              configured_count=$((configured_count + 1))
+            fi
+          done
+
+          if [[ "$configured_count" -eq 0 ]]; then
+            echo "Android signing secrets are not configured; test artifacts will use the debug key."
+          elif [[ "$configured_count" -ne "${#signing_values[@]}" ]]; then
+            echo "::error::Android signing secrets are incomplete. Configure all four secrets or remove them all."
+            exit 1
+          else
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > src/android/app/upload-keystore.jks
+            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=app/upload-keystore.jks\n' \
+              "$ANDROID_STORE_PASSWORD" "$ANDROID_KEY_PASSWORD" "$ANDROID_KEY_ALIAS" \
+              > src/android/key.properties
+          fi
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
 
       - name: Install dependencies
         working-directory: src
         run: flutter pub get
 
-      - name: Build signed Android APK
+      - name: Clear stale staged Android web assets
         working-directory: src
-        run: flutter build apk --release
+        run: python tools/stage_android_web_assets.py --clean
+
+      - name: Build and stage hosted web client for Android
+        working-directory: src
+        run: |
+          flutter build web --release --base-href / --dart-define=HTC_HOSTED=true --no-wasm-dry-run
+          python tools/stage_android_web_assets.py
+
+      - name: Prepare nested hosted web assets for Android
+        working-directory: src
+        run: python tools/stage_android_web_assets.py --prepare-package
+
+      - name: Build signed Android APKs by ABI
+        working-directory: src
+        run: flutter build apk --release --split-per-abi
+
+      - name: Verify Android speech-recognition ABI packaging
+        working-directory: src
+        run: python tools/verify_android_stt_abis.py build/app/outputs/flutter-apk
+
+      - name: Test bounded Android Bluetooth queues
+        working-directory: src/android
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Run Android release lint
+        working-directory: src/android
+        run: ./gradlew :app:lintRelease
 
       - name: Build signed Android App Bundle
         working-directory: src
         run: flutter build appbundle --release
+
+      - name: Verify hosted web client is packaged
+        working-directory: src
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          packages = list(Path('build/app/outputs/flutter-apk').glob('app-*-release.apk'))
+          packages.append(Path('build/app/outputs/bundle/release/app-release.aab'))
+          suffixes = (
+              'assets/flutter_assets/assets/web_app/index.html',
+              'assets/flutter_assets/assets/web_app/main.dart.js',
+              'assets/flutter_assets/assets/web_app/canvaskit/canvaskit.wasm',
+          )
+          if not packages:
+              raise SystemExit('No Android packages were produced')
+          for package in packages:
+              if not package.is_file():
+                  raise SystemExit(f'Missing Android package: {package}')
+              with ZipFile(package) as archive:
+                  entries = set(archive.namelist())
+              missing = [suffix for suffix in suffixes if not any(name.endswith(suffix) for name in entries)]
+              if missing:
+                  raise SystemExit(f'{package} is missing hosted web assets: {missing}')
+              print(f'Hosted web assets verified in {package}')
+          PY
+
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install Chromium for Android hosted-page acceptance
+        run: |
+          npm ci --prefix tools/browser-acceptance --ignore-scripts --no-audit --no-fund
+          node tools/browser-acceptance/node_modules/playwright/cli.js install --with-deps chromium
+
+      - name: Install and launch release APK on Android emulator
+        uses: ReactiveCircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
+        timeout-minutes: 30
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-boot-timeout: 600
+          script: bash src/tools/android_emulator_acceptance.sh
+        env:
+          HTC_ANDROID_BROWSER_OUTPUT: ${{ runner.temp }}/android-hosted-browser
+
+      - name: Upload Android hosted-browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-hosted-browser-acceptance
+          path: |
+            ${{ runner.temp }}/android-hosted-browser/**/evidence.json
+            ${{ runner.temp }}/android-hosted-browser/**/failure.json
+            ${{ runner.temp }}/android-hosted-browser/**/*.png
+            ${{ runner.temp }}/android-hosted-browser/android-runtime/*.txt
+
+      - name: Restore pubspec after Android packaging
+        if: always()
+        working-directory: src
+        run: python tools/stage_android_web_assets.py --restore-package
+
+      - name: Prepare Android test release
+        id: android-release
+        working-directory: src
+        run: |
+          sha256sum build/app/outputs/flutter-apk/app-*-release.apk \
+            build/app/outputs/bundle/release/app-release.aab > SHA256SUMS.txt
+          echo "tag=test-android-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Clean up signing secrets
         if: always()
@@ -56,11 +197,48 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: android-apk
-          path: src/build/app/outputs/flutter-apk/app-release.apk
+          name: android-apks-by-abi
+          path: src/build/app/outputs/flutter-apk/app-*-release.apk
+
+      - name: Upload Android APK checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android-apk-checksums
+          path: src/SHA256SUMS.txt
 
       - name: Upload Android AAB
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: android-aab
           path: src/build/app/outputs/bundle/release/app-release.aab
+
+      - name: Publish Android test prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_TAG: ${{ steps.android-release.outputs.tag }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          sha = os.environ['BUILD_SHA']
+          notes = f'''自动生成的 Android 测试包，提交：{sha}
+
+          下载 APK 并按处理器架构安装：大多数手机选 `app-arm64-v8a-release.apk`；较旧的 32 位 ARM 设备选 `app-armeabi-v7a-release.apk`；x86_64 设备或模拟器选 `app-x86_64-release.apk`。AAB 仅供测试分发流程使用。
+
+          包含与桌面主机一致的 Flutter 远控界面资源，并通过 Android 蓝牙队列单测和包内网页资源校验。首次连接、权限说明及服务端配置见 [Android 电台连接与远控服务器文档](https://github.com/BI4APF-AC3QL/HTCommander/blob/{sha}/docs/android-radio-server.md)；真实手机和电台的验收步骤见[实机清单](https://github.com/BI4APF-AC3QL/HTCommander/blob/{sha}/docs/android-device-acceptance.md)。
+
+          测试包可能使用临时 debug 签名，不能保证覆盖应用商店版或其他签名版本。安装前请备份数据，不要为安装测试包直接卸载正式版。真实手机、电台连接、后台长时运行和射频行为仍需现场验收。本项目测试不执行真实 RF/PTT/信标发射。
+          '''
+          Path('src/android-release-notes.md').write_text(notes, encoding='utf-8')
+          PY
+          gh release create "$BUILD_TAG" \
+            src/build/app/outputs/flutter-apk/app-*-release.apk \
+            src/build/app/outputs/bundle/release/app-release.aab \
+            src/SHA256SUMS.txt \
+            --target "$BUILD_SHA" \
+            --title "Android 测试版 ${BUILD_SHA:0:8}" \
+            --notes-file src/android-release-notes.md \
+            --prerelease \
+            --latest=false

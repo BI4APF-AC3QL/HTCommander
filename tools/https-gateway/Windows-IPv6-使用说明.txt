@@ -1,0 +1,8 @@
+修复版 Windows 公网 HTTPS 转发器（x64）
+
+1. 解压到单独文件夹。
+2. 先启动 HTCommander 并开启本地网页服务（默认 127.0.0.1:18080）。
+3. 按 Windows-IPv6-配置.md 设置域名、IPv6 和 TCP 443。
+4. 运行 BI4APF-HTTPS-Gateway-v4.exe，填写域名及后端端口后点击“启动入口”。
+
+此版不监听 TCP 80。Caddy 官方许可证见 CADDY-LICENSE.txt。证书数据首次运行时生成在程序旁的 HTCommander-Gateway-Data 文件夹。

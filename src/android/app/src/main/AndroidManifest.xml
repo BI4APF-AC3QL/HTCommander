@@ -1,7 +1,11 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Bluetooth permissions for flutter_blue_plus -->
     <!-- Android 12+ (API 31+) permissions -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Legacy permissions for Android < 12 -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
@@ -11,6 +15,19 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Internet permission required for network access (Winlink/Dump1090) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keep Wi-Fi active while the user-enabled remote web server is running. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Keep connected radios and explicitly enabled server tasks available
+         while the Android app is in the background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Use the platform's connected-device service type while a Bluetooth
+         radio is connected or an explicit reconnect attempt is active. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Required by SpeechRecognizer even when audio is fed via a file
          descriptor (EXTRA_AUDIO_SOURCE) rather than the microphone. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -25,9 +42,10 @@
 
     <application
         android:label="HTCommander"
-        android:name="${applicationName}"
+        android:name=".HTCommanderApplication"
         android:icon="@mipmap/ic_launcher"
-        android:localeConfig="@xml/locales_config">
+        android:localeConfig="@xml/locales_config"
+        tools:targetApi="33">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -50,6 +68,22 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".RadioWebServerService"
+            android:description="@string/radio_web_server_service_description"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice|specialUse|microphone"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps an explicitly connected radio, radio control server, network integration, or local receive recorder active in the background." />
+        </service>
+        <service
+            android:name=".PhoneLocationService"
+            android:description="@string/phone_location_service_description"
+            android:exported="false"
+            android:foregroundServiceType="location"
+            android:stopWithTask="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -65,10 +99,11 @@
             android:resource="@xml/automotive_app_desc" />
 
         <!-- Android Auto entry point (androidx.car.app.CarAppService, IOT
-             category); see RadioCarAppService / RadioStatusScreen in Kotlin. -->
+             category); its HostValidator checks the host signing certificate. -->
         <service
             android:name=".RadioCarAppService"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
                 <category android:name="androidx.car.app.category.IOT" />

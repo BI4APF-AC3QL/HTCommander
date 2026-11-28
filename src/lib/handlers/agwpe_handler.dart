@@ -15,8 +15,8 @@ Flutter radio stack:
     info (`G`), sends UNPROTO frames (`M`), and bridges connected-mode sessions
     (`C` / `d` / `D`) to an [AX25Session].
 
-The AGWPE feature is desktop-only; on the web the [AgwpeServer] facade resolves
-to an inert stub.
+The AGWPE feature is available on desktop and Android; on the web and iOS the
+[AgwpeServer] facade is not started (the web build uses an inert stub).
 */
 
 import 'dart:typed_data';
@@ -54,6 +54,7 @@ class AgwpeHandler {
 
   AgwpeServer? _server;
   bool _enabled = false;
+  bool _allowLanClients = false;
   int _port = 8000;
 
   /// Device IDs of the currently connected radios. The first entry is used as
@@ -70,13 +71,19 @@ class AgwpeHandler {
   void init() {
     _enabled =
         (_broker.getValue<int>(0, 'agwpeServerEnabled', 0) ?? 0) == 1;
+    _allowLanClients =
+        (_broker.getValue<int>(0, 'agwpeServerLanAccess', 0) ?? 0) == 1;
     _port = _broker.getValue<int>(0, 'agwpeServerPort', 8000) ?? 8000;
 
     _refreshConnectedRadios();
 
     _broker.subscribeMultiple(
       deviceId: 0,
-      names: <String>['agwpeServerEnabled', 'agwpeServerPort'],
+      names: <String>[
+        'agwpeServerEnabled',
+        'agwpeServerLanAccess',
+        'agwpeServerPort',
+      ],
       callback: _onSettingChanged,
     );
     _broker.subscribe(
@@ -111,6 +118,14 @@ class AgwpeHandler {
         _startServer();
       } else {
         _stopServer();
+      }
+    } else if (name == 'agwpeServerLanAccess') {
+      final allowLanClients = (data is int ? data : 0) == 1;
+      if (allowLanClients == _allowLanClients) return;
+      _allowLanClients = allowLanClients;
+      if (_enabled) {
+        _stopServer();
+        _startServer();
       }
     } else if (name == 'agwpeServerPort') {
       final port = data is int ? data : _port;
@@ -149,7 +164,7 @@ class AgwpeHandler {
 
   void _startServer() {
     if (_server != null) return;
-    final server = AgwpeServer(_port);
+    final server = AgwpeServer(_port, allowLanClients: _allowLanClients);
     server.onClientConnected = _onClientConnected;
     server.onClientDisconnected = _onClientDisconnected;
     server.onFrameReceived = _onFrameReceived;

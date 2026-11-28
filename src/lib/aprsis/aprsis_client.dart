@@ -17,12 +17,7 @@ import '../radio/ax25_packet.dart';
 const int aprsIsDeviceId = 201;
 
 /// High-level connection state of the APRS-IS client.
-enum AprsIsConnectionState {
-  disconnected,
-  connecting,
-  loggingIn,
-  connected,
-}
+enum AprsIsConnectionState { disconnected, connecting, loggingIn, connected }
 
 /// Abstraction over the raw TCP transport so [AprsIsClient] can be unit tested
 /// against a fake network. The real implementation lives in
@@ -94,7 +89,12 @@ class AprsIsClient {
   bool get canTransmit => passcode.trim() != '-1' && passcode.trim().isNotEmpty;
 
   StreamSubscription<String>? _sub;
+  bool _closed = false;
   final StringBuffer _lineBuffer = StringBuffer();
+  static const int maxIncomingLineLength = 512;
+  bool _discardingLine = false;
+  int oversizedLines = 0;
+  int get bufferedCharacters => _lineBuffer.length;
 
   /// Builds the APRS-IS login line (without CR/LF), e.g.
   /// `user K7VZT-5 pass 12345 vers HTCommander 0.1.21 filter r/47/-122/50`.
@@ -110,15 +110,25 @@ class AprsIsClient {
 
   /// Connects, sends the login line, and begins processing inbound lines.
   Future<void> open(String host, int port) async {
+    if (_closed) return;
     _state = AprsIsConnectionState.connecting;
     await network.connect(host, port);
+    if (_closed) {
+      await network.close();
+      return;
+    }
     _state = AprsIsConnectionState.loggingIn;
-    _sub = network.incoming.listen(_onData, onError: (Object e) {
-      onDiagnostic?.call('[APRS-IS] Stream error: $e');
-    });
+    _sub = network.incoming.listen(
+      _onData,
+      onError: (Object e) {
+        onDiagnostic?.call('[APRS-IS] Stream error: $e');
+      },
+    );
     network.sendLine(buildLoginLine());
-    onDiagnostic?.call('[APRS-IS] Connected to $host:$port, logging in as '
-        '$callsign');
+    onDiagnostic?.call(
+      '[APRS-IS] Connected to $host:$port, logging in as '
+      '$callsign',
+    );
   }
 
   /// Sends a raw TNC2 packet line to APRS-IS. No-op on a receive-only login.
@@ -137,30 +147,52 @@ class AprsIsClient {
   }
 
   Future<void> close() async {
+    _closed = true;
+    _verified = false;
+    _state = AprsIsConnectionState.disconnected;
     await _sub?.cancel();
     _sub = null;
     _lineBuffer.clear();
+    _discardingLine = false;
     _state = AprsIsConnectionState.disconnected;
     await network.close();
   }
 
   void _onData(String chunk) {
-    _lineBuffer.write(chunk);
-    final text = _lineBuffer.toString();
     var start = 0;
-    for (var i = 0; i < text.length; i++) {
-      final c = text.codeUnitAt(i);
-      if (c == 0x0A) {
-        var line = text.substring(start, i);
+    while (start < chunk.length) {
+      final newline = chunk.indexOf('\n', start);
+      final end = newline < 0 ? chunk.length : newline;
+      // Keep at most one bounded partial line. Never concatenate or rescan a
+      // growing unterminated server response. Allow a trailing CR at the cap.
+      if (!_discardingLine) {
+        if (_lineBuffer.length + end - start > maxIncomingLineLength + 1) {
+          _discardingLine = true;
+          _lineBuffer.clear();
+          oversizedLines++;
+          if (oversizedLines == 1) {
+            onDiagnostic?.call('[APRS-IS] Oversized input line discarded');
+          }
+        } else {
+          _lineBuffer.write(chunk.substring(start, end));
+        }
+      }
+      if (newline < 0) return;
+      if (!_discardingLine) {
+        var line = _lineBuffer.toString();
         if (line.isNotEmpty && line.codeUnitAt(line.length - 1) == 0x0D) {
           line = line.substring(0, line.length - 1);
         }
-        _handleLine(line);
-        start = i + 1;
+        if (line.length <= maxIncomingLineLength) {
+          _handleLine(line);
+        } else {
+          oversizedLines++;
+        }
       }
+      _lineBuffer.clear();
+      _discardingLine = false;
+      start = newline + 1;
     }
-    _lineBuffer.clear();
-    if (start < text.length) _lineBuffer.write(text.substring(start));
   }
 
   void _handleLine(String line) {
@@ -180,7 +212,9 @@ class AprsIsClient {
     if (lower.contains('logresp')) {
       _verified = lower.contains(' verified');
       _state = AprsIsConnectionState.connected;
-      onDiagnostic?.call('[APRS-IS] Login response: ${line.substring(1).trim()}');
+      onDiagnostic?.call(
+        '[APRS-IS] Login response: ${line.substring(1).trim()}',
+      );
       onLogin?.call(_verified);
     }
   }
@@ -214,8 +248,7 @@ class AprsIsClient {
     // Never gate a packet that already came from the internet.
     if (aprsPacket.fromAprsIs) return false;
     // Must be a UI frame with at least source + destination.
-    if (packet.type != FrameType.uFrameUi &&
-        packet.type != FrameType.uFrame) {
+    if (packet.type != FrameType.uFrameUi && packet.type != FrameType.uFrame) {
       return false;
     }
     if (packet.addresses.length < 2) return false;
@@ -233,6 +266,7 @@ class AprsIsClient {
     // Reject if any address in the path carries a no-gate marker.
     for (final addr in packet.addresses) {
       final call = addr.address.toUpperCase();
+      if (RegExp(r'^QA[A-Z]$').hasMatch(call)) return false;
       for (final marker in _noGateMarkers) {
         if (call == marker) return false;
       }
@@ -273,6 +307,20 @@ class AprsIsClient {
     AprsPacket aprsPacket,
     Set<String> heardCallsigns,
   ) {
+    final packet = aprsPacket.packet;
+    if (packet == null || packet.dataStr?.startsWith('}') != false) {
+      return false;
+    }
+    for (final hop in packet.addresses.skip(2)) {
+      if (const [
+        'TCPXX',
+        'NOGATE',
+        'RFONLY',
+        'QAX',
+      ].contains(hop.address.toUpperCase())) {
+        return false;
+      }
+    }
     if (aprsPacket.dataType != PacketDataType.message) return false;
     final md = aprsPacket.messageData;
     if (md.msgType == MessageType.mtAck || md.msgType == MessageType.mtRej) {
@@ -280,6 +328,12 @@ class AprsIsClient {
     }
     final addressee = md.addressee.trim().toUpperCase();
     if (addressee.isEmpty) return false;
+    final source = aprsPacket.sourceCallsignWithId.toUpperCase();
+    final sourceBase = source.replaceFirst(RegExp(r'-\d+$'), '');
+    if (heardCallsigns.contains(source) ||
+        heardCallsigns.contains(sourceBase)) {
+      return false;
+    }
     return heardCallsigns.contains(addressee);
   }
 }

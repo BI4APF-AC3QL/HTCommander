@@ -1,6 +1,7 @@
 part of 'bluetooth_service.dart';
 
 Future<bool> _checkBluetoothAndroid() async {
+  if (!await _ensureAndroidBluetoothPermissions()) return false;
   return _checkBluetoothBleAdapter();
 }
 
@@ -12,43 +13,87 @@ Future<List<DiscoveredDevice>> _findCompatibleDevicesAndroid(
   BluetoothService service, {
   required Duration timeout,
 }) async {
-  // Android 12+ (API 31+) requires the BLUETOOTH_CONNECT (and BLUETOOTH_SCAN)
-  // runtime permissions before paired devices can be enumerated. On first run
-  // these are not yet granted, so request them up-front and await the user's
-  // response. Without this the native plugin returns an empty list on the same
-  // call that triggers the permission dialog, and the user sees "No compatible
-  // radios found" with no chance to retry.
-  await _ensureAndroidBluetoothPermissions();
-
-  // Android uses Bluetooth Classic (RFCOMM/SPP) for the radio control channel.
-  // Compatible radios must be paired (bonded) in the Android Bluetooth settings;
-  // they are enumerated from the bonded device list by the native plugin.
-  return _findCompatibleDevicesClassic(service);
-}
-
-/// Requests the runtime Bluetooth permissions needed to enumerate and connect
-/// to paired Classic devices on Android 12+, waiting for the user's response.
-///
-/// Failures are swallowed: if the plugin is unavailable or throws, the native
-/// side still requests permissions as a fallback and the caller handles the
-/// resulting (possibly empty) device list.
-Future<void> _ensureAndroidBluetoothPermissions() async {
-  try {
-    await [
-      Permission.bluetoothConnect,
-      Permission.bluetoothScan,
-    ].request();
-  } catch (_) {
-    // Ignore; the native plugin requests permissions as a fallback.
+  // Android 12+ (API 31+) requires BLUETOOTH_CONNECT before paired Classic
+  // devices can be enumerated. BLE scanning is attempted separately below so
+  // a denied scan permission does not hide bonded Classic radios.
+  if (!await _ensureAndroidBluetoothPermissions()) {
+    service._broker.logError(
+      '[Android] Bluetooth Connect permission was not granted',
+    );
+    return const [];
   }
+
+  // Keep bonded Classic radios (including the VR-N7500) available, then add
+  // compatible BLE radios for devices that expose the GATT control service.
+  final classic = await _findCompatibleDevicesClassic(service);
+  final sdkInt = await AndroidBluetoothPermissions.sdkInt();
+  if (sdkInt == null) {
+    service._broker.logInfo(
+      '[Android] Could not read API level; keeping Classic results only',
+    );
+    return classic;
+  }
+
+  final scanAllowed = await AndroidBluetoothPermissions.ensureScan(
+    sdkInt: sdkInt,
+    scanStatus: () => Permission.bluetoothScan.status,
+    requestScan: () => Permission.bluetoothScan.request(),
+    locationStatus: () => Permission.locationWhenInUse.status,
+    requestLocation: () => Permission.locationWhenInUse.request(),
+  );
+  if (!scanAllowed) {
+    service._broker.logInfo(
+      '[Android] BLE scan permission not granted; keeping Classic results',
+    );
+    return classic;
+  }
+
+  final ble = await _findCompatibleDevicesBle(
+    service,
+    timeout: timeout,
+    useServiceScanFilter: true,
+    matchByName: false,
+    returnEarlyOnFirstMatch: false,
+    androidUsesFineLocation: sdkInt < 31,
+  );
+  // Classic has priority when the same physical radio is visible through both
+  // transports. This preserves N7500's bonded RFCOMM control path.
+  return AndroidBluetoothDiscovery.merge(classic: classic, ble: ble);
 }
+
+/// Requests the runtime Bluetooth Connect permission needed to enumerate and
+/// connect to paired Classic devices on Android 12+, waiting for the user's
+/// response. Bluetooth Scan is not required for bonded-device enumeration.
+///
+/// A missing permission plugin or a denied request is reported as unavailable;
+/// callers can then show their normal Bluetooth-unavailable guidance.
+Future<bool> _ensureAndroidBluetoothPermissions() =>
+    AndroidBluetoothPermissions.ensureConnect(
+      status: () => Permission.bluetoothConnect.status,
+      request: () => Permission.bluetoothConnect.request(),
+    );
 
 Future<int?> _connectToRadioAndroid(
   BluetoothService service,
   String macAddress,
   String friendlyName,
-) async {
-  // Android connects over Bluetooth Classic (RFCOMM/SPP) via the native plugin,
-  // reusing the shared Classic connect flow (control channel).
-  return _connectToRadioClassicImpl(service, macAddress, friendlyName);
-}
+  BluetoothType bluetoothType,
+) => AndroidBluetoothPermissions.withConnectPermission<int>(
+      status: () => Permission.bluetoothConnect.status,
+      request: () => Permission.bluetoothConnect.request(),
+      onDenied: () => service._broker.logError(
+        '[Android] Bluetooth Connect permission was not granted; radio '
+        'connection was not started',
+      ),
+      connect: () {
+        if (bluetoothType == BluetoothType.ble) {
+          return _connectToRadioBleImpl(
+            service,
+            macAddress,
+            friendlyName,
+            webFastMode: false,
+          );
+        }
+        return _connectToRadioClassicImpl(service, macAddress, friendlyName);
+      },
+    );

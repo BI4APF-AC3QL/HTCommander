@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
+import 'offline_tts_models.dart';
+import 'tts_audio_gain.dart';
 
 /// Converts text into 32 kHz / mono / signed 16-bit little-endian PCM suitable
 /// for transmission through the radio audio path (same format as the
@@ -39,11 +43,18 @@ class TtsService {
   static final bool _useNativeChannel =
       !kIsWeb && (Platform.isMacOS || Platform.isIOS || Platform.isWindows);
 
+  /// Android uses the platform TextToSpeech service for local previews and
+  /// the existing file-based synthesis path for radio PCM.
+  static final bool _useAndroidFlutterTts = !kIsWeb && Platform.isAndroid;
+
   /// Whether this is a Linux desktop build. `flutter_tts` has no Linux plugin,
   /// so synthesis is delegated to the `espeak-ng` / `espeak` command line tool.
   static final bool _isLinux = !kIsWeb && Platform.isLinux;
 
   final FlutterTts _tts = FlutterTts();
+  AudioPlayer? _offlinePreviewPlayer;
+  bool _offlineBusy = false;
+  int _previewGeneration = 0;
   bool _initialized = false;
   bool _ttsAvailable = true;
 
@@ -148,10 +159,13 @@ class TtsService {
             }
           }
         }
+        if (Platform.isWindows) result.addAll(await OfflineTtsModels.voices());
         return result;
       } catch (e) {
         debugPrint('TtsService.getVoices (native) failed: $e');
-        return const <Map<String, String>>[];
+        return Platform.isWindows
+            ? OfflineTtsModels.voices()
+            : const <Map<String, String>>[];
       }
     }
 
@@ -248,14 +262,25 @@ class TtsService {
     }
   }
 
-  /// Whether on-device preview playback is supported (Apple platforms only).
-  bool get isPreviewSupported => _useNativeChannel;
+  /// Whether on-device preview playback is supported by this platform's TTS.
+  /// Linux's espeak fallback only synthesizes files for radio transmission.
+  bool get isPreviewSupported => _useNativeChannel || _useAndroidFlutterTts;
 
   /// Ensures the one-time platform probe has run (e.g. locating `espeak-ng` on
   /// Linux) and reports whether text-to-speech synthesis is usable right now.
   Future<bool> isAvailable() async {
     await _ensureInit();
+    if (Platform.isWindows && !_ttsAvailable) {
+      return (await OfflineTtsModels.voices()).isNotEmpty;
+    }
     return _ttsAvailable;
+  }
+
+  /// Opens the optional offline model folder on Windows.
+  Future<void> openModelDirectory() async {
+    if (!Platform.isWindows) return;
+    final dir = await OfflineTtsModels.directory(create: true);
+    await Process.start('explorer.exe', [dir.path]);
   }
 
   /// User-facing guidance explaining how to enable text-to-speech when
@@ -287,8 +312,47 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async {
-    if (!_useNativeChannel || text.trim().isEmpty) return;
+    if (text.trim().isEmpty) return;
+    final generation = ++_previewGeneration;
+    if (Platform.isWindows) {
+      try {
+        await _offlinePreviewPlayer?.stop();
+        await _channel.invokeMethod<void>('stopPreview');
+      } catch (_) {}
+      final pcm = await synthesizeToPcm(
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+        outputGain: outputGain,
+      );
+      if (pcm == null || pcm.isEmpty || generation != _previewGeneration) {
+        return;
+      }
+      try {
+        final player = _offlinePreviewPlayer ??= AudioPlayer();
+        await player.stop();
+        await player.play(BytesSource(_wavFromPcm(pcm)));
+      } catch (e) {
+        debugPrint('TtsService: offline preview failed: $e');
+      }
+      return;
+    }
+    if (_useAndroidFlutterTts) {
+      await _ensureInit();
+      if (!_ttsAvailable) return;
+      await previewWithFlutterTts(
+        _tts,
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+      return;
+    }
+    if (!_useNativeChannel) return;
     String voiceIdentifier = '';
     String locale = '';
     if (voiceJson != null && voiceJson.isNotEmpty) {
@@ -315,10 +379,58 @@ class TtsService {
 
   /// Stops any in-progress [preview] playback.
   Future<void> stopPreview() async {
+    _previewGeneration++;
+    await _offlinePreviewPlayer?.stop();
+    if (_useAndroidFlutterTts) {
+      try {
+        await _tts.stop();
+      } catch (_) {}
+      return;
+    }
     if (!_useNativeChannel) return;
     try {
       await _channel.invokeMethod<void>('stopPreview');
     } catch (_) {}
+  }
+
+  /// Plays a local FlutterTts preview using the selected voice, rate, and
+  /// pitch. Kept separate so the Android preview path can be tested without
+  /// transmitting audio or requiring an attached radio.
+  @visibleForTesting
+  static Future<void> previewWithFlutterTts(
+    FlutterTts tts,
+    String text, {
+    String? voiceJson,
+    double? rate,
+    double? pitch,
+  }) async {
+    if (text.trim().isEmpty) return;
+    try {
+      // Android TTS can queue utterances. Replace an earlier preview so rapid
+      // taps do not build a speech backlog.
+      await tts.stop();
+      await tts.setSpeechRate(rate ?? 0.5);
+      await tts.setPitch(pitch ?? 1.0);
+      await tts.clearVoice();
+      if (voiceJson != null && voiceJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(voiceJson);
+          if (decoded is Map) {
+            final voice = <String, String>{
+              for (final key in const ['name', 'locale', 'identifier'])
+                if (decoded[key]?.toString().isNotEmpty == true)
+                  key: decoded[key].toString(),
+            };
+            if (voice.isNotEmpty) await tts.setVoice(voice);
+          }
+        } catch (_) {
+          // An invalid saved voice falls back to the system voice.
+        }
+      }
+      await tts.speak(text);
+    } catch (e) {
+      debugPrint('TtsService: FlutterTts preview failed: $e');
+    }
   }
 
   /// Synthesizes [text] and returns 32 kHz / mono / signed 16-bit LE PCM, or
@@ -331,30 +443,55 @@ class TtsService {
     String? voiceJson,
     double? rate,
     double? pitch,
+    double outputGain = 1.0,
   }) async {
     if (text.trim().isEmpty) return null;
-    if (_useNativeChannel) {
-      return _synthesizeNative(
+    Uint8List? pcm;
+    final identifier = _offlineIdentifier(voiceJson);
+    if (identifier != null) {
+      if (_offlineBusy) return null;
+      _offlineBusy = true;
+      try {
+        final audio = await OfflineTtsModels.synthesize(
+          identifier,
+          text,
+          rate ?? 0.5,
+        );
+        if (audio == null) return null;
+        pcm = await Isolate.run(
+          () => _toPcm16Mono(audio.samples, audio.sampleRate),
+        );
+      } catch (e) {
+        debugPrint('TtsService: offline synthesis failed: $e');
+        return null;
+      } finally {
+        _offlineBusy = false;
+      }
+    } else if (_useNativeChannel) {
+      pcm = await _synthesizeNative(
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+    } else if (_isLinux) {
+      pcm = await _synthesizeViaEspeak(
+        text,
+        voiceJson: voiceJson,
+        rate: rate,
+        pitch: pitch,
+      );
+    } else {
+      pcm = await _synthesizeViaFile(
         text,
         voiceJson: voiceJson,
         rate: rate,
         pitch: pitch,
       );
     }
-    if (_isLinux) {
-      return _synthesizeViaEspeak(
-        text,
-        voiceJson: voiceJson,
-        rate: rate,
-        pitch: pitch,
-      );
-    }
-    return _synthesizeViaFile(
-      text,
-      voiceJson: voiceJson,
-      rate: rate,
-      pitch: pitch,
-    );
+    final result = pcm;
+    if (result == null || outputGain == 1.0) return result;
+    return Isolate.run(() => applyTtsOutputGain(result, outputGain));
   }
 
   /// In-memory synthesis on Apple platforms. The native plugin streams mono
@@ -421,8 +558,7 @@ class TtsService {
       try {
         final decoded = jsonDecode(voiceJson);
         if (decoded is Map) {
-          voice =
-              (decoded['identifier']?.toString().isNotEmpty ?? false)
+          voice = (decoded['identifier']?.toString().isNotEmpty ?? false)
               ? decoded['identifier'].toString()
               : (decoded['locale']?.toString() ?? '');
         }
@@ -443,9 +579,12 @@ class TtsService {
     final File file = File(filePath);
 
     final args = <String>[
-      '-w', filePath,
-      '-s', '$wpm',
-      '-p', '$pitchArg',
+      '-w',
+      filePath,
+      '-s',
+      '$wpm',
+      '-p',
+      '$pitchArg',
       if (voice.isNotEmpty) ...['-v', voice],
       text,
     ];
@@ -757,7 +896,7 @@ class TtsService {
 
   /// Resamples mono float samples to [targetSampleRate] and packs them into
   /// signed 16-bit little-endian PCM bytes.
-  Uint8List _toPcm16Mono(Float32List samples, int srcRate) {
+  static Uint8List _toPcm16Mono(Float32List samples, int srcRate) {
     if (samples.isEmpty || srcRate <= 0) return Uint8List(0);
     Float32List resampled;
     if (srcRate == targetSampleRate) {
@@ -783,6 +922,36 @@ class TtsService {
       bd.setInt16(i * 2, (s * 32767).round(), Endian.little);
     }
     return out;
+  }
+
+  static String? _offlineIdentifier(String? voiceJson) {
+    if (voiceJson == null || voiceJson.isEmpty) return null;
+    try {
+      final voice = jsonDecode(voiceJson);
+      final id = voice is Map ? voice['identifier']?.toString() : null;
+      return id != null && id.startsWith(OfflineTtsModels.prefix) ? id : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Uint8List _wavFromPcm(Uint8List pcm) {
+    final wav = Uint8List(44 + pcm.length);
+    final header = ByteData.sublistView(wav);
+    wav.setRange(0, 4, 'RIFF'.codeUnits);
+    header.setUint32(4, 36 + pcm.length, Endian.little);
+    wav.setRange(8, 16, 'WAVEfmt '.codeUnits);
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little);
+    header.setUint16(22, 1, Endian.little);
+    header.setUint32(24, targetSampleRate, Endian.little);
+    header.setUint32(28, targetSampleRate * 2, Endian.little);
+    header.setUint16(32, 2, Endian.little);
+    header.setUint16(34, 16, Endian.little);
+    wav.setRange(36, 40, 'data'.codeUnits);
+    header.setUint32(40, pcm.length, Endian.little);
+    wav.setRange(44, wav.length, pcm);
+    return wav;
   }
 }
 

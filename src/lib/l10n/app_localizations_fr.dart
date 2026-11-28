@@ -605,6 +605,29 @@ class AppLocalizationsFr extends AppLocalizations {
       'Choisissez la provenance de votre position actuelle. Elle est envoyée à la radio et utilisée pour l\'APRS-IS et le suivi des satellites.';
 
   @override
+  String get settingsLocationUsePhoneGps => 'Utiliser le GPS de ce téléphone';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Récupère une position actuelle et l\'enregistre comme position manuelle pour la radio, APRS-IS et le suivi des satellites.';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'Suivre en continu le GPS de ce téléphone';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Met à jour la position enregistrée pendant l\'exécution de HTCommander, même en arrière-plan. Cela consomme de la batterie et peut actualiser les balises de position si l\'envoi est autorisé.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess =>
+      'Position du téléphone enregistrée.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'Impossible d\'obtenir la position du téléphone. Vérifiez l\'autorisation et activez les services de localisation.';
+
+  @override
   String get settingsLocationSourceGps => 'Depuis le GPS (radio ou GPS série)';
 
   @override
@@ -790,6 +813,14 @@ class AppLocalizationsFr extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       'Transcrit en texte l\'audio radio reçu. Fonctionne entièrement hors ligne sur cet appareil ; l\'audio n\'est jamais enregistré sur le disque.';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Sous Android 12 et versions antérieures, téléchargez ci-dessous un modèle hors ligne. Android 13+ utilise le moteur système s\'il est disponible ; le modèle téléchargeable prend en charge ARM 64 bits et x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'La reconnaissance vocale hors ligne est indisponible : cet appareil nécessite Android 13+ avec le moteur système ou un processeur ARM 64 bits/x86_64 pour le modèle téléchargeable.';
 
   @override
   String get settingsModel => 'Modèle';
@@ -1066,6 +1097,14 @@ class AppLocalizationsFr extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'Activer le serveur AGWPE';
 
   @override
+  String get settingsAgwpeLanAccess =>
+      'Autoriser les clients AGWPE sur le réseau local';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE ne demande pas de mot de passe. À activer uniquement sur un réseau local ou VPN de confiance.';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1261,6 +1300,10 @@ class AppLocalizationsFr extends AppLocalizations {
       'Aucun appareil radio compatible n\'a été trouvé.\n\nAssurez-vous que votre radio est allumée et que le Bluetooth est activé.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android recherche les radios BLE compatibles. Les radios Bluetooth Classic doivent d\'abord être associées dans les paramètres Bluetooth d\'Android. Sous Android 12 ou version ultérieure, autorisez l\'accès aux appareils à proximité ; les versions antérieures peuvent aussi demander l\'autorisation de localisation pour le scan BLE.';
+
+  @override
   String get connectAllConnectedTitle => 'Toutes connectées';
 
   @override
@@ -1272,7 +1315,16 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Le Bluetooth n\'est pas disponible ou est désactivé.\n\nVeuillez activer le Bluetooth dans les paramètres de votre appareil et réessayer.';
+      'Le Bluetooth n\'est pas disponible ou est désactivé.\n\nActivez le Bluetooth dans les paramètres de l\'appareil. Sous Android 12 ou version ultérieure, autorisez aussi HTCommander à accéder aux appareils à proximité dans les autorisations de l\'application, puis réessayez.';
+
+  @override
+  String get connectOpenAppSettings => 'Ouvrir les paramètres de l’application';
+
+  @override
+  String get connectOpenBluetoothSettings => 'Paramètres Bluetooth';
+
+  @override
+  String get connectScanAgain => 'Relancer la recherche';
 
   @override
   String get radioConnectionTitle => 'Connexion radio';

@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:record/record.dart' show InputDevice;
 
 import '../l10n/app_localizations.dart';
+import '../dialogs/rolling_voice_dialog.dart';
 import '../audio_rx/audio_rx_device.dart';
 import '../echolink/echolink_client.dart' show echoLinkDeviceId;
 import '../echolink/pcm_resampler.dart';
@@ -1560,12 +1561,21 @@ class _AudioTabState extends State<AudioTab>
     required List<DropdownMenuItem<String>> items,
     required ValueChanged<String?> onChanged,
   }) {
+    // The default choice is represented by the empty id. Some native
+    // enumerators also return that route, and buggy/stacked audio backends can
+    // report duplicate ids; DropdownButton requires every value to be unique.
+    final seenIds = <String>{''};
+    final selectableItems = <DropdownMenuItem<String>>[];
+    for (final item in items) {
+      final id = item.value;
+      if (id != null && seenIds.add(id)) selectableItems.add(item);
+    }
     final allItems = <DropdownMenuItem<String>>[
       DropdownMenuItem<String>(
         value: '',
         child: Text(AppLocalizations.of(context).audioDefault),
       ),
-      ...items,
+      ...selectableItems,
     ];
     final bool present = allItems.any((item) => item.value == value);
     final String effectiveValue = present ? value : '';
@@ -1712,7 +1722,7 @@ class _AudioTabState extends State<AudioTab>
                 const SizedBox(width: 8),
               // The only sub-menu items are spectrograph sources, which are not
               // supported on web/iOS, so the menu button is hidden there.
-              if (_audioChannelSupported)
+              if (_audioChannelSupported || (!kIsWeb && Platform.isWindows))
                 Builder(
                   builder: (context) => InkWell(
                     onTap: () => _showMenu(context),
@@ -1820,6 +1830,13 @@ class _AudioTabState extends State<AudioTab>
             ),
           ),
         ],
+        if (!kIsWeb && (Platform.isWindows || Platform.isAndroid)) ...[
+          const PopupMenuDivider(height: 8),
+          const PopupMenuItem<String>(
+            value: 'rollingVoice',
+            child: Text('接收语音循环录音…'),
+          ),
+        ],
         if (windowService.canDetach) ...[
           const PopupMenuDivider(height: 8),
           PopupMenuItem<String>(
@@ -1847,6 +1864,12 @@ class _AudioTabState extends State<AudioTab>
         return;
       }
       switch (value) {
+        case 'rollingVoice':
+          if (!context.mounted) return;
+          showDialog<void>(
+            context: context, builder: (_) => const RollingVoiceDialog(),
+          );
+          break;
         case 'sourceNone':
           _setSpectrogramSource(SpectrogramSource.none);
           break;

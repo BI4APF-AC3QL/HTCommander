@@ -27,7 +27,12 @@ import 'tls_ca_bundle.dart';
 
 /// Recognizer family a model belongs to; selects the sherpa-onnx config the
 /// recognition isolate builds.
-enum SttModelFamily { senseVoice, whisper, streamingZipformer }
+enum SttModelFamily {
+  senseVoice,
+  whisper,
+  streamingZipformer,
+  fireRedAsrCtc,
+}
 
 /// A speech-to-text model the user can download and use.
 class SttModel {
@@ -156,6 +161,59 @@ class SherpaModelManager {
         'tokens.txt': 'base.en-tokens.txt',
       },
       primaryFile: 'decoder.int8.onnx',
+    ),
+    SttModel(
+      id: 'whisper-small',
+      name: 'Whisper Small — multilingual',
+      description:
+          'Chinese and English supported. A stronger multilingual option; '
+          'uses more CPU and memory than Tiny/Base.',
+      downloadLabel: '~375 MB download',
+      family: SttModelFamily.whisper,
+      archiveUrl: '${_releaseBase}sherpa-onnx-whisper-small.tar.bz2',
+      dirName: 'whisper-small',
+      files: {
+        'encoder.int8.onnx': 'small-encoder.int8.onnx',
+        'decoder.int8.onnx': 'small-decoder.int8.onnx',
+        'tokens.txt': 'small-tokens.txt',
+      },
+      primaryFile: 'decoder.int8.onnx',
+      languages: ['auto', 'zh', 'en'],
+    ),
+    SttModel(
+      id: 'whisper-medium',
+      name: 'Whisper Medium — multilingual',
+      description:
+          'Chinese and English supported. Highest-capacity Whisper option '
+          'here; needs substantially more memory and processing time.',
+      downloadLabel: '~1.5 GB download',
+      family: SttModelFamily.whisper,
+      archiveUrl: '${_releaseBase}sherpa-onnx-whisper-medium.tar.bz2',
+      dirName: 'whisper-medium',
+      files: {
+        'encoder.int8.onnx': 'medium-encoder.int8.onnx',
+        'decoder.int8.onnx': 'medium-decoder.int8.onnx',
+        'tokens.txt': 'medium-tokens.txt',
+      },
+      primaryFile: 'decoder.int8.onnx',
+      languages: ['auto', 'zh', 'en'],
+    ),
+    SttModel(
+      id: 'firered-asr2-ctc-zh-en',
+      name: 'FireRed ASR 2 CTC — Chinese / English',
+      description:
+          'Chinese and English recognition with support for 20+ Chinese '
+          'dialects and accents. Designed for fast CPU decoding.',
+      downloadLabel: '~740 MB download',
+      family: SttModelFamily.fireRedAsrCtc,
+      archiveUrl:
+          '${_releaseBase}sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25.tar.bz2',
+      dirName: 'firered-asr2-ctc-zh-en',
+      files: {
+        'model.int8.onnx': 'model.int8.onnx',
+        'tokens.txt': 'tokens.txt',
+      },
+      primaryFile: 'model.int8.onnx',
     ),
     SttModel(
       id: 'streaming-zipformer-en',

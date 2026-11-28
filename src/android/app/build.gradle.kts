@@ -3,7 +3,7 @@ import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // The Flutter Gradle Plugin must be applied after the Android plugin.
     id("dev.flutter.flutter-gradle-plugin")
     // Firebase Cloud Messaging (push notifications for APRS cloud messages).
     id("com.google.gms.google-services")
@@ -80,4 +80,5 @@ dependencies {
     implementation("androidx.car.app:app:1.7.0")
     // Core-library desugaring support for flutter_local_notifications.
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    testImplementation("junit:junit:4.13.2")
 }

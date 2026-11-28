@@ -14,10 +14,11 @@ import androidx.car.app.validation.HostValidator
  */
 class RadioCarAppService : CarAppService() {
     override fun createHostValidator(): HostValidator {
-        // Allow any host so the app works in the Desktop Head Unit and on real
-        // head units during development. For a production release, switch to the
-        // default validator backed by an allowlist (res/xml/hosts_allowlist).
-        return HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+        // The exported CarAppService is reachable only by hosts whose signing
+        // certificates are in AndroidX's maintained Android Auto/Automotive list.
+        return HostValidator.Builder(this)
+            .addAllowedHosts(R.array.car_host_allowlist)
+            .build()
     }
 
     override fun onCreateSession(): Session = RadioSession()

@@ -3,10 +3,10 @@ Copyright 2026 Ylian Saint-Hilaire
 Licensed under the Apache License, Version 2.0 (the "License");
 http://www.apache.org/licenses/LICENSE-2.0
 
-sherpa-onnx (SenseVoice) speech-to-text engine.
+sherpa-onnx speech-to-text engine.
 
 This implements the shared [SpeechToTextEngine] contract used by the
-CommsHandler. Two model families are supported: batch models (SenseVoice,
+CommsHandler. Offline models (SenseVoice,
 Whisper) accumulate a segment's audio and decode it once at the segment
 boundary, while streaming Zipformer transducer models feed audio into a
 persistent online stream and emit live partial results as words arrive. Each
@@ -28,7 +28,7 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import '../services/sherpa_model_manager.dart';
 import 'speech_to_text_engine.dart';
 
-/// Speech-to-text engine backed by sherpa-onnx with the SenseVoice model.
+/// Speech-to-text engine backed by selectable sherpa-onnx models.
 ///
 /// Works on every native platform (macOS, iOS, Android, Windows, Linux). The
 /// model must be downloaded by the user in Settings before use.
@@ -105,6 +105,7 @@ class SherpaSpeechToTextEngine implements SpeechToTextEngine {
         'family': paths.family.name,
         'files': paths.files,
         'language': _languageFromLocale(localeId),
+        'multilingual': model.multilingual,
         'numThreads': 2,
       };
       _pendingInit = initArgs;
@@ -211,8 +212,8 @@ class SherpaSpeechToTextEngine implements SpeechToTextEngine {
     if (!_processing.isClosed) await _processing.close();
   }
 
-  /// Maps a BCP-47 locale (e.g. "en-US") to a SenseVoice language code.
-  /// SenseVoice accepts: auto, zh, en, ja, ko, yue. Anything else -> auto.
+  /// Maps a BCP-47 locale (e.g. "en-US") to a model language code.
+  /// Supported hints: auto, zh, en, ja, ko, yue. Anything else -> auto.
   static String _languageFromLocale(String localeId) {
     if (localeId.isEmpty || localeId == 'auto') return 'auto';
     final lang = localeId.split(RegExp('[-_]')).first.toLowerCase();
@@ -401,9 +402,23 @@ void _sherpaWorkerEntry(SendPort mainSend) {
               whisper: sherpa.OfflineWhisperModelConfig(
                 encoder: files['encoder.int8.onnx'] ?? '',
                 decoder: files['decoder.int8.onnx'] ?? '',
-                // These models are English-only; let it auto otherwise.
-                language: lang == 'auto' ? '' : lang,
+                // English-only variants must use auto regardless of a language
+                // hint left over from a previously selected multilingual model.
+                language: (message['multilingual'] as bool? ?? false) &&
+                        lang != 'auto'
+                    ? lang
+                    : '',
                 task: 'transcribe',
+              ),
+              tokens: tokens,
+              numThreads: threads,
+              provider: 'cpu',
+              debug: false,
+            );
+          } else if (family == 'fireRedAsrCtc') {
+            modelConfig = sherpa.OfflineModelConfig(
+              fireRedAsrCtc: sherpa.OfflineFireRedAsrCtcModelConfig(
+                model: files['model.int8.onnx'] ?? '',
               ),
               tokens: tokens,
               numThreads: threads,

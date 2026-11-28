@@ -592,6 +592,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsLocationInfo => '选择当前位置的来源。它会发送到电台，并用于 APRS-IS 和卫星跟踪。';
 
   @override
+  String get settingsLocationUsePhoneGps => '使用本机 GPS 定位';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      '获取一次当前位置，并将其保存为手动位置，供电台、APRS-IS 和卫星跟踪使用。';
+
+  @override
+  String get settingsLocationPhoneGpsTracking => '持续使用手机 GPS 定位';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'HTCommander 运行期间持续更新保存的位置，包括切到后台时。此功能会增加耗电；若已允许电台或 APRS 信标发送，位置更新可能影响信标内容。';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => '已保存手机位置。';
+
+  @override
+  String get settingsLocationPhoneGpsFailure => '无法获取手机位置。请检查定位权限并开启系统定位服务。';
+
+  @override
   String get settingsLocationSourceGps => '来自 GPS（电台或串行 GPS）';
 
   @override
@@ -766,6 +786,14 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       '将接收到的电台音频转录为文本。完全在本设备上离线运行；音频绝不会保存到磁盘。';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Android 12 及更早版本请下载下方的离线模型；Android 13 及以上在系统识别器可用时优先使用。下载模型回退支持 64 位 ARM 或 x86_64 设备。';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      '当前设备无法使用语音识别：需要 Android 13 及以上的系统识别支持，或使用 64 位 ARM/x86_64 设备运行下载的离线模型。';
 
   @override
   String get settingsModel => '模型';
@@ -1019,6 +1047,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsEnableAgwpeServer => '启用 AGWPE 服务器';
 
   @override
+  String get settingsAgwpeLanAccess => '允许局域网客户端连接';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE 不提供密码保护，仅在可信局域网或 VPN 中启用。';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1208,6 +1243,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connectNoRadiosBody => '未找到兼容的电台设备。\n\n请确保您的电台已开机且蓝牙已启用。';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android 会扫描支持的 BLE 电台。使用经典蓝牙的电台需先在 Android 蓝牙设置中配对。Android 12 及以上请允许访问“附近的设备”；较早版本扫描 BLE 可能还需要定位权限。';
+
+  @override
   String get connectAllConnectedTitle => '全部已连接';
 
   @override
@@ -1217,7 +1256,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get connectBluetoothOffTitle => '蓝牙不可用';
 
   @override
-  String get connectBluetoothOffBody => '蓝牙不可用或已禁用。\n\n请在设备设置中启用蓝牙后重试。';
+  String get connectBluetoothOffBody =>
+      '蓝牙不可用或已禁用。\n\n请在设备设置中打开蓝牙；如果使用 Android 12 或更高版本，请在应用权限中允许 HTCommander 访问“附近的设备”，然后重试。';
+
+  @override
+  String get connectOpenAppSettings => '打开应用设置';
+
+  @override
+  String get connectOpenBluetoothSettings => '蓝牙设置';
+
+  @override
+  String get connectScanAgain => '重新扫描';
 
   @override
   String get radioConnectionTitle => '电台连接';

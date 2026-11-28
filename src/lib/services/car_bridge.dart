@@ -332,6 +332,7 @@ class CarBridge {
       final deviceId = await _bluetoothService.connectToRadio(
         selected.id,
         _friendlyName(selected),
+        bluetoothType: selected.type,
       );
       if (deviceId == null) {
         _radioConnectionErrorId = selected.id;

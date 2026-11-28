@@ -607,6 +607,28 @@ class AppLocalizationsDe extends AppLocalizations {
       'Wählen Sie, woher Ihr aktueller Standort stammt. Er wird an das Funkgerät gesendet und für APRS-IS und die Satellitenverfolgung verwendet.';
 
   @override
+  String get settingsLocationUsePhoneGps => 'GPS dieses Telefons verwenden';
+
+  @override
+  String get settingsLocationUsePhoneGpsHint =>
+      'Ermittelt einmal den aktuellen Standort und speichert ihn als manuellen Standort für Funkgerät, APRS-IS und Satellitenverfolgung.';
+
+  @override
+  String get settingsLocationPhoneGpsTracking =>
+      'GPS dieses Telefons kontinuierlich verfolgen';
+
+  @override
+  String get settingsLocationPhoneGpsTrackingHint =>
+      'Aktualisiert den gespeicherten Standort, solange HTCommander läuft, auch im Hintergrund. Dies verbraucht Akku und kann Positionsbaken aktualisieren, wenn das Senden erlaubt ist.';
+
+  @override
+  String get settingsLocationPhoneGpsSuccess => 'Telefonstandort gespeichert.';
+
+  @override
+  String get settingsLocationPhoneGpsFailure =>
+      'Telefonstandort konnte nicht ermittelt werden. Prüfen Sie die Standortberechtigung und aktivieren Sie die Standortdienste.';
+
+  @override
   String get settingsLocationSourceGps =>
       'Vom GPS (Funkgerät oder serielles GPS)';
 
@@ -795,6 +817,14 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get settingsSpeechToTextInfo =>
       'Transkribiert empfangenes Funk-Audio in Text. Funktioniert vollständig offline auf diesem Gerät; Audio wird niemals auf der Festplatte gespeichert.';
+
+  @override
+  String get settingsAndroidSttFallbackInfo =>
+      'Lade unter Android 12 und älter unten ein Offline-Modell herunter. Android 13+ verwendet nach Möglichkeit die Systemerkennung; das herunterladbare Modell unterstützt 64-Bit-ARM und x86_64.';
+
+  @override
+  String get settingsAndroidSttUnsupported =>
+      'Offline-Spracherkennung ist nicht verfügbar: Dieses Gerät benötigt Android 13+ mit Systemunterstützung oder einen 64-Bit-ARM-/x86_64-Prozessor für das herunterladbare Modell.';
 
   @override
   String get settingsModel => 'Modell';
@@ -1068,6 +1098,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settingsEnableAgwpeServer => 'AGWPE-Server aktivieren';
 
   @override
+  String get settingsAgwpeLanAccess => 'AGWPE-Clients im LAN zulassen';
+
+  @override
+  String get settingsAgwpeLanAccessDescription =>
+      'AGWPE verwendet kein Passwort. Nur in einem vertrauenswürdigen LAN oder VPN aktivieren.';
+
+  @override
   String get settingsHomeAssistant => 'Home Assistant';
 
   @override
@@ -1268,6 +1305,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Es wurde kein kompatibles Funkgerät gefunden.\n\nStellen Sie sicher, dass Ihr Funkgerät eingeschaltet und Bluetooth aktiviert ist.';
 
   @override
+  String get connectNoRadiosAndroidBody =>
+      'Android sucht nach unterstützten BLE-Funkgeräten. Bluetooth-Classic-Funkgeräte müssen zuerst in den Android-Bluetooth-Einstellungen gekoppelt werden. Erlauben Sie unter Android 12 oder höher den Zugriff auf Geräte in der Nähe; bei älteren Versionen kann für BLE-Scans zusätzlich der Standortzugriff erforderlich sein.';
+
+  @override
   String get connectAllConnectedTitle => 'Alle verbunden';
 
   @override
@@ -1279,7 +1320,16 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get connectBluetoothOffBody =>
-      'Bluetooth ist nicht verfügbar oder deaktiviert.\n\nBitte aktivieren Sie Bluetooth in den Einstellungen Ihres Geräts und versuchen Sie es erneut.';
+      'Bluetooth ist nicht verfügbar oder deaktiviert.\n\nAktivieren Sie Bluetooth in den Geräteeinstellungen. Erlauben Sie unter Android 12 oder höher außerdem in den App-Berechtigungen den Zugriff auf Geräte in der Nähe und versuchen Sie es erneut.';
+
+  @override
+  String get connectOpenAppSettings => 'App-Einstellungen öffnen';
+
+  @override
+  String get connectOpenBluetoothSettings => 'Bluetooth-Einstellungen';
+
+  @override
+  String get connectScanAgain => 'Erneut suchen';
 
   @override
   String get radioConnectionTitle => 'Funkgerät-Verbindung';

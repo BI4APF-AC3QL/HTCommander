@@ -7,10 +7,13 @@ Captures application log messages from application startup so the Debug tab does
 not need to be opened first for messages to be recorded.
 */
 
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform, kIsWeb;
+import 'dart:async';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:package_info_plus/package_info_plus.dart';
 import '../services/data_broker.dart';
 import '../services/data_broker_client.dart';
+import '../services/diagnostic_log.dart';
 
 /// Collects `LogInfo` / `LogError` messages (device 1) into the
 /// `DebugLogEntries` Data Broker value starting at application launch,
@@ -21,6 +24,31 @@ class DebugLogHandler {
   final DataBrokerClient _broker = DataBrokerClient();
   final List<Map<String, dynamic>> _entries = <Map<String, dynamic>>[];
   bool _initialized = false;
+  bool _disposed = false;
+  Timer? _publishTimer;
+
+  List<Map<String, Object>> get exportMetadata =>
+      _entries.map(DiagnosticLog.metadata).toList(growable: false);
+
+  Iterable<String> get _secrets sync* {
+    for (final key in [
+      'webServerPassword',
+      'WinlinkPassword',
+      'EchoLinkPassword',
+      'EchoLinkProxyPassword',
+      'homeAssistantPassword',
+      'RepeaterBookToken',
+      'AprsFiApiKey',
+      'AllStarPassword',
+      'AllStarWtToken',
+      'AllStarNodePassword',
+      'CallSign',
+      'webServerPublicOrigin',
+    ]) {
+      final value = DataBroker.getValue<String>(0, key);
+      if (value != null && value.isNotEmpty) yield value;
+    }
+  }
 
   String get _platformLabel {
     if (kIsWeb) return 'web';
@@ -41,13 +69,35 @@ class DebugLogHandler {
   }
 
   void init() {
-    if (_initialized) return;
+    if (_initialized || _disposed) return;
     _initialized = true;
 
     // Restore any entries already stored in the broker (e.g. from a sub-window).
     final stored = DataBroker.getValue<List<dynamic>>(1, 'DebugLogEntries');
     if (stored != null) {
-      _entries.addAll(stored.whereType<Map<String, dynamic>>());
+      for (final entry
+          in stored
+              .skip(
+                (stored.length - DiagnosticLog.maxEntries).clamp(
+                  0,
+                  stored.length,
+                ),
+              )
+              .whereType<Map>()
+              .take(DiagnosticLog.maxEntries)) {
+        if (entry['message'] is! String) continue;
+        _entries.add({
+          'time': entry['time'] is String
+              ? entry['time']
+              : DateTime.now().toUtc().toIso8601String(),
+          'message': DiagnosticLog.localText(
+            entry['message'] as String,
+            secrets: _secrets,
+          ),
+          'isError': entry['isError'] == true,
+        });
+      }
+      _dispatchEntries();
     }
 
     // Start capturing log messages right away.
@@ -67,25 +117,32 @@ class DebugLogHandler {
     // Emit the startup banner only on a fresh start.
     if (_entries.isEmpty) {
       PackageInfo.fromPlatform().then((info) {
+        if (_disposed) return;
         _broker.logInfo(
           'HTCommander ${info.version} started on $_platformLabel',
         );
-      });
+      }, onError: (Object _) {});
     }
   }
 
   void _onLogMessage(int deviceId, String name, Object? data) {
-    if (data is! String) return;
+    if (_disposed || data is! String) return;
     _entries.add(<String, dynamic>{
-      'time': DateTime.now().toIso8601String(),
-      'message': data,
+      'time': DateTime.now().toUtc().toIso8601String(),
+      'message': DiagnosticLog.localText(data, secrets: _secrets),
       'isError': name == 'LogError',
     });
-    _dispatchEntries();
+    if (_entries.length > DiagnosticLog.maxEntries) _entries.removeAt(0);
+    _publishTimer ??= Timer(const Duration(milliseconds: 250), () {
+      _publishTimer = null;
+      if (!_disposed) _dispatchEntries();
+    });
   }
 
   void _onClearDebugLog(int deviceId, String name, Object? data) {
     _entries.clear();
+    _publishTimer?.cancel();
+    _publishTimer = null;
     _dispatchEntries();
   }
 
@@ -93,8 +150,17 @@ class DebugLogHandler {
     _broker.dispatch(
       deviceId: 1,
       name: 'DebugLogEntries',
-      data: List<Map<String, dynamic>>.from(_entries),
+      data: List<Map<String, dynamic>>.unmodifiable(
+        _entries.map((entry) => Map<String, dynamic>.unmodifiable(entry)),
+      ),
       store: true,
     );
+  }
+
+  void dispose() {
+    _disposed = true;
+    _publishTimer?.cancel();
+    _broker.dispose();
+    _entries.clear();
   }
 }
